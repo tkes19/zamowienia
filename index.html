@@ -44,6 +44,44 @@
         <p id="status-message" class="status status--info">Wpisz frazę i kliknij „Szukaj”.</p>
       </section>
 
+      <section class="panel panel--gallery" id="gallery-panel">
+        <div class="panel__header panel__header--stacked">
+          <div>
+            <h2>Podgląd projektów</h2>
+            <p class="panel__hint">Wybierz miejscowość i produkt, aby natychmiast zobaczyć grafikę podglądową.</p>
+          </div>
+        </div>
+        <div class="gallery-controls">
+          <label class="field field--gallery">
+            <span class="field__label">Miejscowość</span>
+            <select id="gallery-city" class="field__input" aria-label="Wybierz miejscowość">
+              <option value="">Ładowanie…</option>
+            </select>
+          </label>
+          <label class="field field--gallery">
+            <span class="field__label field__label--inline">
+              <span>Produkt</span>
+              <label class="gallery-lock">
+                <input type="checkbox" id="gallery-lock-product" />
+                <span class="gallery-lock__text">Trzymaj produkt przy zmianie miejscowości</span>
+              </label>
+            </span>
+            <select id="gallery-product" class="field__input" aria-label="Wybierz produkt" disabled>
+              <option value="">Wybierz miejscowość</option>
+            </select>
+          </label>
+        </div>
+        <div class="gallery-preview">
+          <div class="gallery-preview__frame">
+            <img id="gallery-preview-image" class="gallery-preview__image" alt="Podgląd wybranego produktu" hidden />
+            <p id="gallery-preview-placeholder" class="gallery-preview__placeholder">
+              Wybierz miejscowość i produkt, aby zobaczyć grafikę.
+            </p>
+          </div>
+          <p id="gallery-errors" class="status status--error" hidden></p>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="panel__header">
           <h2>Wyniki wyszukiwania</h2>

@@ -1,10 +1,17 @@
 import { EMBEDDED_FONTS } from '../assets/fonts/embedded-fonts.js';
 
-// Użyj lokalnego serwera w trybie developerskim, w przeciwnym razie użyj produkcji
-const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const API_BASE = isLocalhost 
-  ? 'http://localhost:3001/api/v1/products' 
-  : 'https://rezon-api.vercel.app/api/v1/products';
+// Wszystkie zapytania produktowe idą na ten sam origin (proxy /api/v1/products w backend/server.js)
+const API_BASE = '/api/v1/products';
+
+const GALLERY_API_BASE = (() => {
+  const isGalleryLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const defaultBase = isGalleryLocal
+    ? 'http://192.168.0.30:81/home'
+    : 'https://rezon.myqnapcloud.com:81/home';
+  return window.__GALLERY_API_BASE__ ?? defaultBase;
+})();
+
+let galleryFilesCache = [];
 
 // Inicjalizacja elementów DOM
 const resultsBody = document.getElementById('results-body');
@@ -14,6 +21,12 @@ const clearCartBtn = document.getElementById('clear-cart');
 const exportBtn = document.getElementById('export-json');
 const statusMessage = document.getElementById('status-message');
 const downloadLink = document.getElementById('download-link');
+const galleryCitySelect = document.getElementById('gallery-city');
+const galleryProductSelect = document.getElementById('gallery-product');
+const galleryPreviewImage = document.getElementById('gallery-preview-image');
+const galleryPreviewPlaceholder = document.getElementById('gallery-preview-placeholder');
+const galleryErrors = document.getElementById('gallery-errors');
+const galleryLockCheckbox = document.getElementById('gallery-lock-product');
 
 const EMBEDDED_FONTS_STATE = {
   'NotoSans-Regular.ttf': (EMBEDDED_FONTS && EMBEDDED_FONTS['NotoSans-Regular.ttf']) || null,
@@ -33,7 +46,6 @@ function arrayBufferToBase64(buffer) {
     const chunk = bytes.subarray(offset, offset + chunkSize);
     binary += String.fromCharCode.apply(null, chunk);
   }
-
   if (typeof globalThis !== 'undefined' && typeof globalThis.btoa === 'function') {
     return globalThis.btoa(binary);
   }
@@ -43,6 +55,99 @@ function arrayBufferToBase64(buffer) {
   }
 
   return null;
+}
+
+async function fetchGalleryJSON(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`${response.status} ${response.statusText}${text ? ` – ${text}` : ''}`);
+  }
+  return response.json();
+}
+
+function formatGalleryProductLabel(slug = '') {
+  return slug.replace(/_/g, ' ').toUpperCase();
+}
+
+async function loadGalleryCities() {
+  if (!galleryCitySelect) return;
+  try {
+    galleryCitySelect.disabled = true;
+    galleryCitySelect.innerHTML = '<option value="">Ładowanie…</option>';
+    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/list_cities.php`);
+    const visibleCities = Array.isArray(data.cities)
+      ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
+      : [];
+    if (!visibleCities.length) {
+      galleryCitySelect.innerHTML = '<option value="">Brak danych</option>';
+      setGalleryPlaceholder('Brak dostępnych miejscowości.');
+      return;
+    }
+    galleryCitySelect.innerHTML = visibleCities
+      .map((city) => `<option value="${city}">${city}</option>`)
+      .join('');
+    galleryCitySelect.disabled = false;
+    await loadGalleryProducts(visibleCities[0]);
+  } catch (error) {
+    console.error('Nie udało się pobrać listy miast:', error);
+    galleryCitySelect.innerHTML = '<option value="">Błąd ładowania</option>';
+    setGalleryPlaceholder('Nie udało się pobrać danych.');
+    setGalleryError('Nie udało się pobrać listy miejscowości.');
+  }
+}
+
+async function loadGalleryProducts(city) {
+  if (!galleryProductSelect) return;
+  const targetCity = city ?? galleryCitySelect?.value;
+  if (!targetCity) {
+    galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
+    galleryProductSelect.disabled = true;
+    setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć produkty.');
+    return;
+  }
+
+  try {
+    const lockedSlug = galleryLockCheckbox?.checked ? galleryProductSelect?.value || '' : '';
+    galleryProductSelect.disabled = true;
+    galleryProductSelect.innerHTML = '<option value="">Ładowanie…</option>';
+    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/list_products.php?city=${encodeURIComponent(targetCity)}`);
+    galleryFilesCache = Array.isArray(data.files) ? data.files : [];
+    const products = Array.isArray(data.products) ? data.products : [];
+    const productOptions = ['<option value="">Wszystkie produkty</option>',
+      ...products.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+    ];
+    galleryProductSelect.innerHTML = productOptions.join('');
+
+    // jeśli blokada włączona i dany produkt istnieje w nowej miejscowości – przywróć go
+    if (lockedSlug && products.includes(lockedSlug)) {
+      galleryProductSelect.value = lockedSlug;
+    }
+    galleryProductSelect.disabled = false;
+    setGalleryError(null);
+    if (Array.isArray(data.errors) && data.errors.length) {
+      setGalleryError(`Błędne pliki: ${data.errors.map((e) => e.file).join(', ')}`);
+    }
+    renderGalleryPreview();
+  } catch (error) {
+    console.error('Nie udało się pobrać produktów:', error);
+    galleryProductSelect.innerHTML = '<option value="">Błąd ładowania</option>';
+    galleryProductSelect.disabled = true;
+    galleryFilesCache = [];
+    setGalleryPlaceholder('Nie udało się pobrać produktów.');
+    setGalleryError('Nie udało się pobrać listy produktów.');
+  }
+}
+
+function renderGalleryPreview() {
+  if (!galleryProductSelect) return;
+  const slug = galleryProductSelect.value;
+  const shown = slug ? galleryFilesCache.filter((file) => file.product === slug) : galleryFilesCache;
+  if (!shown.length) {
+    setGalleryPlaceholder(slug ? 'Brak obrazków dla wybranego produktu.' : 'Wybierz produkt, aby zobaczyć grafikę.');
+    return;
+  }
+  showGalleryImage(shown[0]?.url, formatGalleryProductLabel(shown[0]?.product));
 }
 
 const PDF_FONTS = [
@@ -190,6 +295,158 @@ function safeSplitText(doc, text, maxWidth) {
 function setStatus(message, type = 'info') {
   statusMessage.textContent = message;
   statusMessage.className = `status status--${type}`;
+}
+
+function setGalleryError(message) {
+  if (!galleryErrors) return;
+  if (!message) {
+    galleryErrors.hidden = true;
+    galleryErrors.textContent = '';
+    return;
+  }
+  galleryErrors.hidden = false;
+  galleryErrors.textContent = message;
+}
+
+function setGalleryPlaceholder(text) {
+  if (galleryPreviewPlaceholder) {
+    galleryPreviewPlaceholder.textContent = text;
+    galleryPreviewPlaceholder.hidden = false;
+  }
+  if (galleryPreviewImage) {
+    galleryPreviewImage.hidden = true;
+    galleryPreviewImage.removeAttribute('src');
+    galleryPreviewImage.style.transform = '';
+  }
+}
+
+function showGalleryImage(src, alt) {
+  if (!galleryPreviewImage || !galleryPreviewPlaceholder) return;
+  if (!src) {
+    setGalleryPlaceholder('Brak obrazka dla wybranego produktu.');
+    return;
+  }
+  galleryPreviewPlaceholder.hidden = true;
+  galleryPreviewImage.hidden = false;
+  galleryPreviewImage.alt = alt ?? 'Podgląd produktu';
+  galleryPreviewImage.src = src;
+
+  const frame = galleryPreviewImage.parentElement;
+  if (frame && frame.classList.contains('gallery-preview__frame')) {
+    initGalleryZoom(frame, galleryPreviewImage);
+  }
+}
+
+function initGalleryZoom(frame, img) {
+  const minScale = 1;
+  const maxScale = 4;
+  let scale = 1;
+  let panX = 0;
+  let panY = 0;
+  let startX = 0;
+  let startY = 0;
+  let isPanning = false;
+  let zoomEnabled = false;
+
+  if (frame.dataset.zoomInitialized === 'true') {
+    return;
+  }
+  frame.dataset.zoomInitialized = 'true';
+
+  const applyTransform = () => {
+    img.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    if (!zoomEnabled || scale === minScale) {
+      frame.style.cursor = 'zoom-in';
+    } else {
+      frame.style.cursor = isPanning ? 'grabbing' : 'grab';
+    }
+  };
+
+  const clampPan = () => {
+    const frameRect = frame.getBoundingClientRect();
+    const imgRectWidth = frameRect.width * scale;
+    const imgRectHeight = frameRect.height * scale;
+
+    const minX = Math.min(0, frameRect.width - imgRectWidth);
+    const minY = Math.min(0, frameRect.height - imgRectHeight);
+
+    panX = Math.min(0, Math.max(minX, panX));
+    panY = Math.min(0, Math.max(minY, panY));
+  };
+
+  const onWheel = (event) => {
+    if (!zoomEnabled) return; // pozwól normalnie przewijać stronę, gdy zoom nieaktywny
+    event.preventDefault();
+    const rect = frame.getBoundingClientRect();
+    const offsetX = (event.clientX - rect.left - panX) / scale;
+    const offsetY = (event.clientY - rect.top - panY) / scale;
+    const zoomFactor = event.deltaY < 0 ? 1.15 : 0.85;
+
+    const newScale = Math.min(maxScale, Math.max(minScale, scale * zoomFactor));
+    if (newScale === scale) return;
+
+    scale = newScale;
+    panX = event.clientX - rect.left - offsetX * scale;
+    panY = event.clientY - rect.top - offsetY * scale;
+    clampPan();
+    applyTransform();
+  };
+
+  const onPointerDown = (event) => {
+    if (!zoomEnabled || scale === minScale) return;
+
+    if (event.button === 0) {
+      isPanning = true;
+      startX = event.clientX - panX;
+      startY = event.clientY - panY;
+      frame.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      applyTransform();
+    }
+  };
+
+  const onPointerMove = (event) => {
+    if (!isPanning) return;
+    panX = event.clientX - startX;
+    panY = event.clientY - startY;
+    clampPan();
+    applyTransform();
+  };
+
+  const endPan = () => {
+    if (!isPanning) return;
+    isPanning = false;
+    applyTransform();
+  };
+
+  const onDblClick = (event) => {
+    event.preventDefault();
+    zoomEnabled = !zoomEnabled;
+
+    if (!zoomEnabled) {
+      // Wyłączenie zoomu – reset do domyślnego widoku
+      scale = 1;
+      panX = 0;
+      panY = 0;
+    }
+
+    applyTransform();
+  };
+
+  const onContextMenu = (event) => {
+    event.preventDefault();
+  };
+
+  frame.addEventListener('wheel', onWheel, { passive: false });
+  frame.addEventListener('pointerdown', onPointerDown);
+  frame.addEventListener('pointermove', onPointerMove);
+  frame.addEventListener('pointerup', endPan);
+  frame.addEventListener('pointercancel', endPan);
+  frame.addEventListener('pointerleave', endPan);
+  frame.addEventListener('dblclick', onDblClick);
+  frame.addEventListener('contextmenu', onContextMenu);
+
+  applyTransform();
 }
 
 function resetResultsPlaceholder(text = 'Brak wyników do wyświetlenia.') {
@@ -902,6 +1159,12 @@ function initialize() {
     }
 
     toggleBtn.addEventListener('click', togglePrices);
+  }
+
+  if (galleryCitySelect && galleryProductSelect) {
+    galleryCitySelect.addEventListener('change', () => loadGalleryProducts());
+    galleryProductSelect.addEventListener('change', renderGalleryPreview);
+    loadGalleryCities();
   }
 }
 

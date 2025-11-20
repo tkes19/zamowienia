@@ -164,6 +164,18 @@ header h1 {
   gap: 1.25rem;
 }
 
+.panel__header--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.panel__hint {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.95rem;
+}
+
 .panel__header {
   display: flex;
   justify-content: space-between;
@@ -227,6 +239,85 @@ header h1 {
   background: rgba(37, 99, 235, 0.03);
 }
 
+.panel--gallery {
+  gap: 1.5rem;
+}
+
+.gallery-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  align-items: end;
+}
+
+.field--gallery {
+  grid-column: auto;
+}
+
+.gallery-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--color-muted);
+}
+
+.gallery-lock input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+.gallery-lock__text {
+  user-select: none;
+}
+
+.gallery-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.gallery-preview__frame {
+  position: relative;
+  min-height: 320px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow: hidden;
+  cursor: zoom-in;
+  touch-action: none;
+}
+
+.gallery-preview__image {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  transition: transform 0.3s ease;
+  user-select: none;
+  transform-origin: 0 0;
+}
+
+.gallery-preview__image:hover {
+  transform: scale(1.01);
+}
+
+.gallery-preview__placeholder {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+#gallery-errors {
+  margin: 0;
+}
+
 .search-form {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
@@ -266,6 +357,14 @@ header h1 {
 .field__label {
   font-weight: 600;
   color: var(--color-muted);
+}
+
+.field__label--inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .field__input {
@@ -576,6 +675,14 @@ main.layout {
     padding: 1.25rem;
   }
 
+  .gallery-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-preview__frame {
+    min-height: 240px;
+  }
+
   .search-form {
     grid-template-columns: 1fr;
     gap: 0.75rem;
@@ -637,6 +744,10 @@ main.layout {
   .panel {
     padding: 1rem;
     gap: 1rem;
+  }
+
+  .gallery-preview__frame {
+    min-height: 210px;
   }
 
   .search-form {

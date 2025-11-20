@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Galeria produktów</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin:20px; background:#fafafa; color:#222; }
+    .controls { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:16px; align-items:flex-end; }
+    label { display:flex; flex-direction:column; gap:6px; font-weight:600; font-size:14px; }
+    select { font-size:15px; padding:4px 6px; }
+    #grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px,1fr)); gap:20px; }
+    .zoom-frame { position:relative; width:100%; height:460px; overflow:hidden; background:#f5f5f5; border-bottom:1px solid rgba(0,0,0,.05); cursor:zoom-in; touch-action:none; }
+    figure { margin:0; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+    figure > .zoom-frame + figcaption { padding-inline:12px; }
+    img { width:100%; height:100%; object-fit:contain; display:block; user-select:none; transform-origin:0 0; }
+    figcaption { padding:8px; font-size:13px; color:#444; text-align:center; }
+    #errors { margin-top:10px; color:#c00; font-size:13px; }
+  </style>
+</head>
+<body>
+  <h1>Galeria produktów</h1>
+  <div class="controls">
+    <label>Miejscowość:
+      <select id="city"></select>
+    </label>
+    <label>Produkt:
+      <select id="product"></select>
+    </label>
+  </div>
+  <div id="grid"></div>
+  <div id="errors"></div>
+
+  <script>
+    const citySel = document.getElementById('city');
+    const productSel = document.getElementById('product');
+    const grid = document.getElementById('grid');
+    const errorsDiv = document.getElementById('errors');
+    let filesCache = [];
+
+    const DEFAULT_API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      ? 'http://192.168.0.30:81/home'
+      : 'https://rezon.myqnapcloud.com:81/home';
+    const API_BASE = window.__GALLERY_API_BASE__ ?? DEFAULT_API_BASE;
+    async function fetchJSON(url){
+      const r = await fetch(url);
+      if(!r.ok){
+        const text = await r.text().catch(() => '');
+        const err = `${r.status} ${r.statusText}${text ? ' – ' + text : ''}`;
+        throw new Error(err);
+      }
+      return r.json();
+    }
+
+    async function loadCities(){
+      try{
+        const data = await fetchJSON(`${API_BASE}/list_cities.php`);
+        const visibleCities = data.cities.filter(name => !/^\d+\./.test(name.trim()));
+        citySel.innerHTML = visibleCities.map(c => `<option value="${c}">${c}</option>`).join('');
+        if(visibleCities.length){ await loadProducts(visibleCities[0]); }
+      }catch(e){
+        citySel.innerHTML = '<option>Błąd</option>';
+        errorsDiv.textContent = `Nie udało się pobrać listy miast: ${e.message}`;
+        console.error(e);
+      }
+    }
+
+    function formatProductLabel(slug){
+      if(!slug) return '';
+      return slug.replace(/_/g, ' ').toUpperCase();
+    }
+
+    async function loadProducts(city = citySel.value){
+      try{
+        const data = await fetchJSON(`${API_BASE}/list_products.php?city=${encodeURIComponent(city)}`);
+        filesCache = data.files || [];
+        productSel.innerHTML = `<option value="">— wszystkie —</option>` + data.products.map(p => `<option value="${p}">${formatProductLabel(p)}</option>`).join('');
+        renderGrid();
+        errorsDiv.textContent = data.errors && data.errors.length ? 'Błędne pliki: ' + data.errors.map(e => e.file).join(', ') : '';
+      }catch(e){
+        productSel.innerHTML = '<option>Błąd</option>';
+        errorsDiv.textContent = `Nie udało się pobrać produktów: ${e.message}`;
+        console.error(e);
+      }
+    }
+
+    function setupPanAndZoom(img){
+      const frame = img.parentElement;
+      const minScale = 1;
+      const maxScale = 4;
+      let scale = 1;
+      let panX = 0;
+      let panY = 0;
+      let startX = 0;
+      let startY = 0;
+      let isPanning = false;
+
+      const applyTransform = () => {
+        img.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+        frame.style.cursor = scale > 1 ? (isPanning ? 'grabbing' : 'grab') : 'zoom-in';
+      };
+
+      const clampPan = () => {
+        const frameRect = frame.getBoundingClientRect();
+        const imgRectWidth = frameRect.width * scale;
+        const imgRectHeight = frameRect.height * scale;
+
+        const minX = Math.min(0, frameRect.width - imgRectWidth);
+        const minY = Math.min(0, frameRect.height - imgRectHeight);
+
+        panX = Math.min(0, Math.max(minX, panX));
+        panY = Math.min(0, Math.max(minY, panY));
+      };
+
+      frame.addEventListener('wheel', (event) => {
+        event.preventDefault();
+        const rect = frame.getBoundingClientRect();
+        const offsetX = (event.clientX - rect.left - panX) / scale;
+        const offsetY = (event.clientY - rect.top - panY) / scale;
+        const zoomFactor = event.deltaY < 0 ? 1.15 : 0.85;
+
+        const newScale = Math.min(maxScale, Math.max(minScale, scale * zoomFactor));
+        if(newScale === scale) return;
+
+        scale = newScale;
+        panX = event.clientX - rect.left - offsetX * scale;
+        panY = event.clientY - rect.top - offsetY * scale;
+        clampPan();
+        applyTransform();
+      }, { passive:false });
+
+      frame.addEventListener('pointerdown', (event) => {
+        if(scale === minScale) return;
+        
+        // Lewy przycisk - panowanie
+        if(event.button === 0) {
+          isPanning = true;
+          startX = event.clientX - panX;
+          startY = event.clientY - panY;
+          frame.setPointerCapture(event.pointerId);
+          event.preventDefault();
+          applyTransform();
+        }
+        // Prawy przycisk - przybliżanie (zapobiega menu kontekstowemu)
+        else if(event.button === 2) {
+          event.preventDefault();
+          const rect = frame.getBoundingClientRect();
+          const offsetX = (event.clientX - rect.left - panX) / scale;
+          const offsetY = (event.clientY - rect.top - panY) / scale;
+          
+          // Przełącz między minScale a maxScale
+          const newScale = scale === minScale ? maxScale : minScale;
+          
+          if(newScale !== scale) {
+            scale = newScale;
+            panX = event.clientX - rect.left - offsetX * scale;
+            panY = event.clientY - rect.top - offsetY * scale;
+            clampPan();
+            applyTransform();
+          }
+        }
+      });
+
+      frame.addEventListener('pointermove', (event) => {
+        if(!isPanning) return;
+        panX = event.clientX - startX;
+        panY = event.clientY - startY;
+        clampPan();
+        applyTransform();
+      });
+
+      const endPan = () => {
+        if(!isPanning) return;
+        isPanning = false;
+        applyTransform();
+      };
+
+      frame.addEventListener('pointerup', endPan);
+      frame.addEventListener('pointercancel', endPan);
+      frame.addEventListener('pointerleave', endPan);
+
+      frame.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+      });
+
+      frame.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        scale = 1;
+        panX = 0;
+        panY = 0;
+        applyTransform();
+      });
+
+      applyTransform();
+    }
+
+    function initZoomForFrame(frame){
+      const img = frame.querySelector('img');
+      if(!img) return;
+      if(img.complete){
+        setupPanAndZoom(img);
+      }else{
+        img.addEventListener('load', () => setupPanAndZoom(img), { once:true });
+      }
+    }
+
+    function renderGrid(){
+      const prod = productSel.value;
+      const shown = prod ? filesCache.filter(f => f.product === prod) : filesCache;
+      grid.innerHTML = shown.map(f => `
+        <figure>
+          <div class="zoom-frame">
+            <img src="${f.url}" alt="${formatProductLabel(f.product)}" loading="lazy">
+          </div>
+          <figcaption>${formatProductLabel(f.product)}</figcaption>
+        </figure>
+      `).join('');
+
+      document.querySelectorAll('.zoom-frame').forEach(initZoomForFrame);
+    }
+
+    citySel.addEventListener('change', () => loadProducts());
+    productSel.addEventListener('change', renderGrid);
+    loadCities();
+  </script>
+</body>
+</html>

@@ -1,108 +1,191 @@
-# Dokumentacja Aplikacji do Zamówień
+# Formularz zamówień – dokumentacja
 
-## Wymagania wstępne
-- Node.js (wersja 16 lub nowsza)
-- npm (zazwyczaj dołączony do Node.js)
+Krótka instrukcja uruchamiania i utrzymania aplikacji łączącej formularz zamówień z podglądem galerii.
 
-## Instalacja
+## 1. Wymagania
 
-1. Sklonuj repozytorium:
-   ```bash
-   git clone <adres-repozytorium>
-   cd ZAMÓWIENIA
-   ```
+- Node.js 16+ (wraz z `npm`).
+- Jeśli chcesz pobierać aktualizacje repozytorium – Git (opcjonalnie).
 
-2. Zainstaluj zależności dla serwera:
-   ```bash
-   cd backend
-   npm install
-   ```
+## 2. Struktura projektu
 
-3. Zainstaluj zależności dla frontendu (jeśli są osobne):
-   ```bash
-   cd ../frontend  # jeśli istnieje osobny katalog frontend
-   npm install
-   ```
+```
+ZAMÓWIENIA/
+├─ index.html, assets/, scripts/    → frontend (statyczne pliki)
+└─ backend/                         → Express + proxy do API produktów
+```
 
-## Uruchamianie serwera
+Frontend zawsze rozmawia z backendem poprzez ścieżkę `/api/v1/products`, więc trzeba uruchamiać serwer Node.
 
-1. Przejdź do katalogu backend:
-   ```bash
-   cd backend
-   ```
+## 3. Szybki start (lokalnie)
 
-2. Uruchom serwer:
-   ```bash
-   node server.js
-   ```
-   Serwer powinien być dostępny pod adresem: `http://localhost:3001`
-
+```powershell
 cd "C:\Users\Tomek\OneDrive\000 CURSOR\ZAMÓWIENIA\backend"
-node server.js
+npm install            # tylko pierwszy raz
+npm run dev            # tryb deweloperski z nodemonem
+# lub: npm start       # zwykłe uruchomienie
+```
 
+Następnie otwórz w przeglądarce `http://localhost:3001/`. Ten adres serwuje `index.html` i obsługuje wszystkie zapytania produktu (`/api/v1/products`). Nie korzystaj z Live Servera – uruchomienie strony spod innego originu skończy się błędem CORS.
 
+## 4. Konfiguracja backendu
 
-## Uruchamianie frontendu
+Plik `backend/server.js`:
+- serwuje statyczne pliki z katalogu głównego,
+- wystawia `/api/v1/products` jako proxy do `https://rezon-api.vercel.app/api/v1/products`,
+- dodaje nagłówki CORS (`Access-Control-Allow-Origin: *`).
 
-1. Otwórz plik `index.html` w przeglądarce:
-   - Przeciągnij plik do okna przeglądarki, lub
-   - Uruchom prosty serwer HTTP (np. używając rozszerzenia VS Code "Live Server")
-
-2. (Opcjonalnie) Jeśli frontend ma własny serwer deweloperski:
-   ```bash
-   cd frontend
-   npm run dev
-   ```
-   Frontend powinien być dostępny pod adresem: `http://localhost:3000`
-
-## Testowanie API
-
-### Przykładowe zapytania do API:
-
-1. Wyszukiwanie produktów:
-   ```powershell
-   # PowerShell
-   Invoke-RestMethod -Uri 'http://localhost:3001/api/v1/products?search=chrom'
-   ```
-   ```bash
-   # Linux/macOS
-   curl 'http://localhost:3001/api/v1/products?search=chrom'
-   ```
-
-2. Pobieranie wszystkich produktów:
-   ```bash
-   curl 'http://localhost:3001/api/v1/products'
-   ```
-
-## Skrypty npm
-
-W katalogu `backend/package.json` dostępne są następujące skrypty:
-
-- `npm start` - Uruchamia serwer w trybie produkcyjnym
-- `npm run dev` - Uruchamia serwer w trybie deweloperskim z automatycznym przeładowaniem
-- `npm test` - Uruchamia testy (jeśli zdefiniowane)
-
-## Zmienne środowiskowe
-
-Utwórz plik `.env` w katalogu `backend` z następującymi zmiennymi (jeśli są wymagane):
+### Zmienne środowiskowe
+Utwórz `backend/.env` (jeśli wysyłasz PDF e-mailem):
 
 ```
 PORT=3001
-NODE_ENV=development
-# Inne zmienne środowiskowe
+SMTP_HOST=...
+SMTP_PORT=...
+SMTP_SECURE=false
+SMTP_USER=...
+SMTP_PASS=...
+EMAIL_FROM=...
+EMAIL_TO=...
 ```
 
-## Rozwiązywanie problemów
+Jeżeli e-mail nie jest potrzebny, wystarczy `PORT`.
 
-1. **Brak dostępu do API**:
-   - Sprawdź, czy serwer jest uruchomiony
-   - Sprawdź port w logach serwera
-   - Sprawdź CORS w konfiguracji serwera
+## 5. Skrypty npm (backend)
 
-2. **Brak wyników wyszukiwania**:
-   - Sprawdź połączenie z bazą danych
-   - Sprawdź logi serwera pod kątem błędów
-   - Upewnij się, że zapytanie zawiera poprawny parametr `search`
+| Komenda        | Działanie                                   |
+| -------------- | ------------------------------------------- |
+| `npm run dev`  | `nodemon server.js` – auto-restart po zmianach |
+| `npm start`    | `node server.js` – zwykłe uruchomienie       |
 
-## Wsparcie
-W razie problemów skontaktuj się z administratorem systemu.
+## 6. Testowanie API
+
+Przykład zapytania w PowerShellu:
+
+```powershell
+Invoke-RestMethod -Uri 'http://localhost:3001/api/v1/products?search=chrom'
+```
+
+Przykład w curl:
+
+```bash
+curl "http://localhost:3001/api/v1/products?search=chrom"
+```
+
+## 7. Najczęstsze problemy
+
+| Problem | Rozwiązanie |
+| --- | --- |
+| **Failed to fetch / CORS** | Upewnij się, że strona jest otwarta z `http://localhost:3001/`, a nie z Live Servera. |
+| **Brak wyników** | Sprawdź logi serwera (`npm run dev`) – czy proxy otrzymało dane z `rezon-api`. |
+| **SMTP błędy** | Zweryfikuj dane w `.env` oraz dostępność serwera pocztowego. |
+
+## 8. Deploy (skrót)
+
+1. Wybierz hosting Node.js (Railway, Render, Fly.io, VPS itp.).
+2. Zdeployuj katalog `backend/` – Express będzie serwować statyczne pliki i API jednocześnie.
+3. Ustaw zmienne środowiskowe (`PORT`, `SMTP_*`).
+4. Skieruj domenę na ten sam serwer – frontend i backend muszą być pod jednym originem.
+
+To wszystko – dokument ma być możliwie zwięzły. Jeśli potrzeba dodatkowych szczegółów (np. o galerii czy PDF), dopisuj je w dedykowanych sekcjach, ale zawsze z myślą o krótkiej, praktycznej instrukcji.
+
+---
+
+## 9. Git – pierwsza konfiguracja repozytorium (opcjonalnie)
+
+1. **Zainstaluj Git** z https://git-scm.com/download/win i w kreatorze pozostaw opcję dodania go do `PATH`.
+2. **Skonfiguruj globalną tożsamość (tylko raz):**
+   ```powershell
+   git config --global user.name "Twoje Imie"
+   git config --global user.email "twoj.email@example.com"
+   ```
+3. **Przejdź do katalogu projektu:**
+   ```powershell
+   cd "C:\Users\Tomek\OneDrive\000 CURSOR\ZAMÓWIENIA"
+   ```
+4. **Zainicjuj repozytorium i podłącz GitHub (wykonane, ale w razie ponownej konfiguracji):**
+   ```powershell
+   git init
+   git branch -M main
+   git remote add origin https://github.com/tkes19/zamowienia.git
+   ```
+
+## 10. Git – typowy cykl pracy (kopiuj i wklej)
+
+1. Sprawdź status plików:
+   ```powershell
+   git status
+   ```
+2. Dodaj wszystkie zmiany (albo konkretny plik):
+   ```powershell
+   git add .
+   ```
+3. Utwórz commit z opisem:
+   ```powershell
+   git commit -m "Krótki opis zmian"
+   ```
+4. Wyślij zmiany na GitHub:
+   ```powershell
+   git push -u origin main
+   ```
+   - Przy pierwszym `push` zaloguj się w przeglądarce.
+   - Kolejne `push` już bez dodatkowych kroków.
+5. Jeśli pracujesz na innym komputerze – pobierz aktualny kod przed zmianami:
+   ```powershell
+   git pull origin main
+   ```
+
+**Przykład pełnej sekwencji (zmiana tylko README):**
+```powershell
+git status
+git add README.md
+git commit -m "Uzupełnij instrukcję"
+git push
+```
+Oczekiwane wyjście przy braku zmian:
+```
+On branch main
+Your branch is up to date with 'origin/main'.
+
+nothing to commit, working tree clean
+```
+
+> **Wskazówka:** `git status` i `git diff` pokażą, co dokładnie zostało zmodyfikowane przed commitem.
+
+## 11. Git – cofanie zmian, gdy coś się zepsuje
+
+1. Zobacz historię commitów:
+   ```powershell
+   git log --oneline
+   ```
+   Skopiuj hash commit, do którego chcesz wrócić (np. `a1b2c3d`).
+2. Tymczasowy powrót do starej wersji (testy):
+   ```powershell
+   git checkout <hash>
+   ```
+   Po testach wróć do bieżącej gałęzi:
+   ```powershell
+   git checkout main
+   ```
+3. Przywrócenie konkretnego pliku z poprzedniego commitu:
+   ```powershell
+   git restore --source <hash> ścieżka/do/pliku
+   ```
+   Następnie wykonaj `git add`, `git commit`, `git push`.
+4. Cofnięcie ostatniego commitu bez kasowania historii:
+   ```powershell
+   git revert HEAD
+   git push origin main
+   ```
+
+> **Tip:** Przed eksperymentami warto użyć oddzielnej gałęzi – `git checkout -b nazwa-testowa` – i po weryfikacji scalić ją z `main` (`git merge`).
+
+## 12. Hosting aplikacji (skrót)
+
+Jeśli potrzebujesz pełnych instrukcji wdrożenia (Railway, Netlify, Fly.io), skorzystaj z pliku `HOSTING_GUIDE.md`. Poniżej szybkie podsumowanie:
+
+- **Railway** – prosty backend Node.js z auto-deployem po `git push`.
+- **Netlify** – hosting statycznego frontendu (wymaga backendu pod innym adresem).
+- **Fly.io** – frontend i backend w jednym miejscu, brak usypiania w darmowym tierze.
+
+W każdej opcji pamiętaj o ustawieniu zmiennych środowiskowych (`PORT`, `SMTP_*`) i aktualizacji adresu API we frontendzie.
