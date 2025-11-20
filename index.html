@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Formularz zamówień</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  </head>
+  <body class="hide-prices">
+    <main class="layout">
+      <header>
+        <div class="header-row">
+          <h1>Formularz zamówień</h1>
+          <button id="theme-toggle" class="theme-toggle" aria-label="Przełącz tryb jasny/ciemny">
+            <i class="fas fa-moon"></i>
+            <i class="fas fa-sun"></i>
+          </button>
+        </div>
+        <p class="tagline">
+          Wyszukaj produkty po nazwie lub ID, sprawdź stan magazynowy i dodaj je do koszyka zamówienia.
+        </p>
+      </header>
+
+      <section class="panel">
+        <form id="search-form" class="search-form" autocomplete="off">
+          <label class="field field--mode">
+            <span class="field__label">Tryb wyszukiwania</span>
+            <select id="mode" class="field__input">
+              <option value="name">Identyfikator</option>
+              <option value="pc_id">Indeks</option>
+            </select>
+          </label>
+
+          <label class="field field--grow field--query">
+            <span class="field__label">Fraza</span>
+            <input id="query" class="field__input" placeholder="np. koło, DK42" required />
+          </label>
+
+          <div class="search-form__actions">
+            <button type="submit" class="btn btn--primary search-form__submit">Szukaj</button>
+          </div>
+        </form>
+        <p id="status-message" class="status status--info">Wpisz frazę i kliknij „Szukaj”.</p>
+      </section>
+
+      <section class="panel">
+        <div class="panel__header">
+          <h2>Wyniki wyszukiwania</h2>
+          <div class="table-controls">
+            <button type="button" class="btn btn--outline" id="toggle-price">
+              <i class="fas fa-eye"></i> Pokaż ceny
+            </button>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table class="table" aria-live="polite">
+            <thead>
+              <tr>
+                <th>IDENTYFIKATOR i INDEKS</th>
+                <th>Nr projektów</th>
+                <th class="price-column">Cena</th>
+                <th>Stan mag.</th>
+                <th>Ilość</th>
+                <th>Dodaj</th>
+              </tr>
+            </thead>
+            <tbody id="results-body">
+              <tr class="table__placeholder"><td colspan="6">Brak wyników do wyświetlenia.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel__header">
+          <h2>Koszyk zamówienia</h2>
+          <button id="clear-cart" class="btn btn--link" type="button">Wyczyść koszyk</button>
+        </div>
+        <div class="table-wrapper">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>IDENTYFIKATOR i INDEKS</th>
+                <th>Nr projektów</th>
+                <th>Ilość</th>
+                <th class="price-column">Cena jednostkowa</th>
+                <th class="price-column">Wartość</th>
+                <th>Akcje</th>
+              </tr>
+            </thead>
+            <tbody id="cart-body">
+              <tr class="table__placeholder"><td colspan="6">Koszyk jest pusty.</td></tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="5" class="table__total-label">Suma zamówienia</td>
+                <td id="cart-total" class="table__total-value">0,00 zł</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel--note">
+        <h2>Eksport danych</h2>
+        <p>Pobierz aktualny koszyk w wybranym formacie:</p>
+        <div class="export-buttons">
+          <button id="export-json" class="btn" type="button">Pobierz koszyk (JSON)</button>
+          <button id="export-pdf" class="btn btn--primary" type="button">Pobierz zamówienie (PDF)</button>
+        </div>
+        <a id="download-link" class="visually-hidden" download="zamowienie.json">Pobierz</a>
+      </section>
+    </main>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <script src="scripts/app.js" type="module"></script>
+  </body>
+</html>
