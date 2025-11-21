@@ -12,6 +12,11 @@ const GALLERY_API_BASE = (() => {
 })();
 
 let galleryFilesCache = [];
+let galleryProducts = [];
+let selectedResultsRow = null;
+let projectFilterMode = 'with';
+let lastSearchResults = [];
+let currentFormMode = 'projekty-miejscowosci';
 
 // Inicjalizacja elementów DOM
 const resultsBody = document.getElementById('results-body');
@@ -21,8 +26,13 @@ const clearCartBtn = document.getElementById('clear-cart');
 const exportBtn = document.getElementById('export-json');
 const statusMessage = document.getElementById('status-message');
 const downloadLink = document.getElementById('download-link');
+const formModeNav = document.getElementById('form-mode-nav');
 const galleryCitySelect = document.getElementById('gallery-city');
 const galleryProductSelect = document.getElementById('gallery-product');
+const gallerySalespersonSelect = document.getElementById('gallery-salesperson');
+const galleryObjectSelect = document.getElementById('gallery-object');
+const galleryControlsCity = document.getElementById('gallery-controls-city');
+const galleryControlsSales = document.getElementById('gallery-controls-sales');
 const galleryPreviewImage = document.getElementById('gallery-preview-image');
 const galleryPreviewPlaceholder = document.getElementById('gallery-preview-placeholder');
 const galleryErrors = document.getElementById('gallery-errors');
@@ -82,18 +92,108 @@ async function loadGalleryCities() {
     if (!visibleCities.length) {
       galleryCitySelect.innerHTML = '<option value="">Brak danych</option>';
       setGalleryPlaceholder('Brak dostępnych miejscowości.');
+      galleryFilesCache = [];
+      galleryProducts = [];
+      updateProjectFilterAvailability();
       return;
     }
-    galleryCitySelect.innerHTML = visibleCities
-      .map((city) => `<option value="${city}">${city}</option>`)
-      .join('');
+    const options = ['<option value="">Wszystkie miejscowości</option>',
+      ...visibleCities.map((city) => `<option value="${city}">${city}</option>`),
+    ];
+    galleryCitySelect.innerHTML = options.join('');
     galleryCitySelect.disabled = false;
-    await loadGalleryProducts(visibleCities[0]);
+    galleryCitySelect.value = '';
+    galleryFilesCache = [];
+    galleryProducts = [];
+    setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć projekty.');
+    updateProjectFilterAvailability();
   } catch (error) {
     console.error('Nie udało się pobrać listy miast:', error);
     galleryCitySelect.innerHTML = '<option value="">Błąd ładowania</option>';
     setGalleryPlaceholder('Nie udało się pobrać danych.');
     setGalleryError('Nie udało się pobrać listy miejscowości.');
+    galleryFilesCache = [];
+    galleryProducts = [];
+    updateProjectFilterAvailability();
+  }
+}
+
+async function loadGalleryProductsForObject(salesperson, object) {
+  if (!galleryProductSelect) return;
+
+  const sp = salesperson ?? gallerySalespersonSelect?.value;
+  const obj = object ?? galleryObjectSelect?.value;
+
+  if (!sp || !obj) {
+    galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz handlowca i obiekt</option>';
+    galleryProductSelect.disabled = true;
+    galleryFilesCache = [];
+    galleryProducts = [];
+    setGalleryPlaceholder('Wybierz handlowca i obiekt, aby zobaczyć projekty.');
+    updateProjectFilterAvailability();
+    return;
+  }
+
+  try {
+    const lockedSlug = galleryLockCheckbox?.checked ? galleryProductSelect?.value || '' : '';
+    galleryProductSelect.disabled = true;
+    galleryProductSelect.innerHTML = '<option value="">Ładowanie…</option>';
+
+    const url = `${GALLERY_API_BASE}/list_products_object.php?salesperson=${encodeURIComponent(sp)}&object=${encodeURIComponent(obj)}`;
+    const data = await fetchGalleryJSON(url);
+    galleryFilesCache = Array.isArray(data.files) ? data.files : [];
+    galleryProducts = Array.isArray(data.products) ? data.products : [];
+
+    const baseOptions = ['<option value="">Wybierz produkt</option>',
+      ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+    ];
+
+    let productOptions = [...baseOptions];
+    let selectedSlug = '';
+    let lockedMissingInObject = false;
+
+    if (lockedSlug) {
+      if (galleryProducts.includes(lockedSlug)) {
+        selectedSlug = lockedSlug;
+      } else {
+        lockedMissingInObject = true;
+        const missingLabel = `${formatGalleryProductLabel(lockedSlug)} — brak w tym obiekcie`;
+        productOptions.push(`<option value="${lockedSlug}">${missingLabel}</option>`);
+        selectedSlug = lockedSlug;
+      }
+    }
+
+    galleryProductSelect.innerHTML = productOptions.join('');
+    updateProjectFilterAvailability();
+
+    setGalleryError(null);
+    if (Array.isArray(data.errors) && data.errors.length) {
+      setGalleryError(`Błędne pliki: ${data.errors.map((e) => e.file).join(', ')}`);
+    }
+
+    if (selectedSlug) {
+      galleryProductSelect.value = selectedSlug;
+      galleryProductSelect.disabled = false;
+
+      if (lockedMissingInObject) {
+        setGalleryPlaceholder('Brak projektu dla wybranego produktu w tym obiekcie.');
+      } else {
+        renderGalleryPreview();
+      }
+      return;
+    }
+
+    galleryProductSelect.disabled = false;
+    setGalleryPlaceholder('Wybierz produkt, aby zobaczyć grafikę.');
+  } catch (error) {
+    console.error('Nie udało się pobrać produktów dla obiektu:', error);
+    galleryProductSelect.innerHTML = '<option value="">Błąd ładowania</option>';
+    galleryProductSelect.disabled = true;
+    galleryFilesCache = [];
+    setGalleryPlaceholder('Nie udało się pobrać produktów.');
+    setGalleryError('Nie udało się pobrać listy produktów dla obiektu.');
+    galleryProducts = [];
+    updateProjectFilterAvailability();
   }
 }
 
@@ -103,7 +203,10 @@ async function loadGalleryProducts(city) {
   if (!targetCity) {
     galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
     galleryProductSelect.disabled = true;
+    galleryFilesCache = [];
+    galleryProducts = [];
     setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć produkty.');
+    updateProjectFilterAvailability();
     return;
   }
 
@@ -113,22 +216,50 @@ async function loadGalleryProducts(city) {
     galleryProductSelect.innerHTML = '<option value="">Ładowanie…</option>';
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/list_products.php?city=${encodeURIComponent(targetCity)}`);
     galleryFilesCache = Array.isArray(data.files) ? data.files : [];
-    const products = Array.isArray(data.products) ? data.products : [];
-    const productOptions = ['<option value="">Wszystkie produkty</option>',
-      ...products.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
-    ];
-    galleryProductSelect.innerHTML = productOptions.join('');
+    galleryProducts = Array.isArray(data.products) ? data.products : [];
 
-    // jeśli blokada włączona i dany produkt istnieje w nowej miejscowości – przywróć go
-    if (lockedSlug && products.includes(lockedSlug)) {
-      galleryProductSelect.value = lockedSlug;
+    const baseOptions = ['<option value="">Wybierz produkt</option>',
+      ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+    ];
+
+    let productOptions = [...baseOptions];
+    let selectedSlug = '';
+    let lockedMissingInCity = false;
+
+    if (lockedSlug) {
+      if (galleryProducts.includes(lockedSlug)) {
+        selectedSlug = lockedSlug;
+      } else {
+        lockedMissingInCity = true;
+        const missingLabel = `${formatGalleryProductLabel(lockedSlug)} — brak w tej miejscowości`;
+        productOptions.push(`<option value="${lockedSlug}">${missingLabel}</option>`);
+        selectedSlug = lockedSlug;
+      }
     }
-    galleryProductSelect.disabled = false;
+
+    galleryProductSelect.innerHTML = productOptions.join('');
+    updateProjectFilterAvailability();
+
     setGalleryError(null);
     if (Array.isArray(data.errors) && data.errors.length) {
       setGalleryError(`Błędne pliki: ${data.errors.map((e) => e.file).join(', ')}`);
     }
-    renderGalleryPreview();
+
+    if (selectedSlug) {
+      galleryProductSelect.value = selectedSlug;
+      galleryProductSelect.disabled = false;
+
+      if (lockedMissingInCity) {
+        setGalleryPlaceholder('Brak projektu dla wybranego produktu w tej miejscowości.');
+      } else {
+        renderGalleryPreview();
+      }
+      return;
+    }
+
+    galleryProductSelect.disabled = false;
+    // Brak jednoznacznie wybranego produktu – nie pokazujemy jeszcze podglądu.
+    setGalleryPlaceholder('Wybierz produkt, aby zobaczyć grafikę.');
   } catch (error) {
     console.error('Nie udało się pobrać produktów:', error);
     galleryProductSelect.innerHTML = '<option value="">Błąd ładowania</option>';
@@ -136,18 +267,279 @@ async function loadGalleryProducts(city) {
     galleryFilesCache = [];
     setGalleryPlaceholder('Nie udało się pobrać produktów.');
     setGalleryError('Nie udało się pobrać listy produktów.');
+    galleryProducts = [];
+    updateProjectFilterAvailability();
   }
 }
 
 function renderGalleryPreview() {
   if (!galleryProductSelect) return;
   const slug = galleryProductSelect.value;
-  const shown = slug ? galleryFilesCache.filter((file) => file.product === slug) : galleryFilesCache;
+
+  if (!slug) {
+    setGalleryPlaceholder('Wybierz produkt, aby zobaczyć grafikę.');
+    return;
+  }
+
+  const shown = galleryFilesCache.filter((file) => file.product === slug);
   if (!shown.length) {
-    setGalleryPlaceholder(slug ? 'Brak obrazków dla wybranego produktu.' : 'Wybierz produkt, aby zobaczyć grafikę.');
+    setGalleryPlaceholder('Brak obrazków dla wybranego produktu.');
     return;
   }
   showGalleryImage(shown[0]?.url, formatGalleryProductLabel(shown[0]?.product));
+}
+
+function findGallerySlugsForQuery(query) {
+  if (!galleryProducts.length || !query) return [];
+  const searchTerms = tokenizeQuery(query);
+  if (!searchTerms.length) return [];
+
+  return galleryProducts.filter((slug) => {
+    const label = formatGalleryProductLabel(slug);
+    return matchesTermsInField(label, searchTerms);
+  });
+}
+
+function findGallerySlugsByName(name) {
+  if (!galleryProducts.length || !name) return [];
+  const nameTerms = tokenizeQuery(name);
+  if (!nameTerms.length) return [];
+
+  return galleryProducts.filter((slug) => {
+    const label = formatGalleryProductLabel(slug);
+    return matchesTermsInField(label, nameTerms, { matchMode: 'any' });
+  });
+}
+
+function applyGallerySelectionFromSlug(slug) {
+  if (!galleryProductSelect || !slug) return;
+  if (!galleryProducts.includes(slug)) return;
+  galleryProductSelect.value = slug;
+  renderGalleryPreview();
+}
+
+function syncGalleryWithSearch(query, products) {
+  if (!galleryProductSelect || !galleryProducts.length) return;
+
+  let matchingSlugs = findGallerySlugsForQuery(query);
+
+  if (!matchingSlugs.length && Array.isArray(products) && products.length === 1) {
+    matchingSlugs = findGallerySlugsByName(products[0]?.name);
+  }
+
+  if (matchingSlugs.length === 1) {
+    applyGallerySelectionFromSlug(matchingSlugs[0]);
+  } else {
+    galleryProductSelect.value = '';
+    setGalleryPlaceholder('Wybierz produkt, aby zobaczyć grafikę.');
+  }
+}
+
+function handleResultProductSelection(product) {
+  if (!product || !galleryProductSelect || !galleryProducts.length) return;
+
+  const slugs = findGallerySlugsByName(product.name);
+  if (!slugs.length) {
+    const contextLabel = currentFormMode === 'klienci-indywidualni'
+      ? 'w tym obiekcie'
+      : 'w tej miejscowości';
+    setGalleryPlaceholder(`Brak projektu dla wybranego produktu ${contextLabel}.`);
+    return;
+  }
+
+  applyGallerySelectionFromSlug(slugs[0]);
+}
+
+function updateGalleryControlsVisibility() {
+  if (!galleryControlsCity || !galleryControlsSales) return;
+  const isCityMode = currentFormMode === 'projekty-miejscowosci';
+  galleryControlsCity.hidden = !isCityMode;
+  galleryControlsSales.hidden = isCityMode;
+}
+
+async function loadSalespeople() {
+  if (!gallerySalespersonSelect) return;
+
+  try {
+    gallerySalespersonSelect.disabled = true;
+    gallerySalespersonSelect.innerHTML = '<option value="">Ładowanie…</option>';
+
+    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/list_salespeople.php`);
+    const salesPeople = Array.isArray(data.salesPeople) ? data.salesPeople : [];
+
+    if (!salesPeople.length) {
+      gallerySalespersonSelect.innerHTML = '<option value="">Brak handlowców</option>';
+      if (galleryObjectSelect) {
+        galleryObjectSelect.disabled = true;
+        galleryObjectSelect.innerHTML = '<option value="">Brak obiektów</option>';
+      }
+      return;
+    }
+
+    const options = ['<option value="">Wybierz handlowca</option>',
+      ...salesPeople.map((name) => `<option value="${name}">${name}</option>`),
+    ];
+
+    gallerySalespersonSelect.innerHTML = options.join('');
+    gallerySalespersonSelect.disabled = false;
+
+    if (galleryObjectSelect) {
+      galleryObjectSelect.disabled = true;
+      galleryObjectSelect.innerHTML = '<option value="">Wybierz handlowca</option>';
+    }
+  } catch (error) {
+    console.error('Nie udało się pobrać handlowców:', error);
+    gallerySalespersonSelect.innerHTML = '<option value="">Błąd ładowania</option>';
+    gallerySalespersonSelect.disabled = true;
+    if (galleryObjectSelect) {
+      galleryObjectSelect.disabled = true;
+      galleryObjectSelect.innerHTML = '<option value="">Nie udało się pobrać obiektów</option>';
+    }
+  }
+}
+
+async function loadObjectsForSalesperson(salesperson) {
+  if (!galleryObjectSelect) return;
+
+  if (!salesperson) {
+    galleryObjectSelect.disabled = true;
+    galleryObjectSelect.innerHTML = '<option value="">Najpierw wybierz handlowca</option>';
+    return;
+  }
+
+  try {
+    galleryObjectSelect.disabled = true;
+    galleryObjectSelect.innerHTML = '<option value="">Ładowanie…</option>';
+
+    const url = `${GALLERY_API_BASE}/list_objects.php?salesperson=${encodeURIComponent(salesperson)}`;
+    const data = await fetchGalleryJSON(url);
+    const objects = Array.isArray(data.objects) ? data.objects : [];
+
+    if (!objects.length) {
+      galleryObjectSelect.innerHTML = '<option value="">Brak obiektów</option>';
+      return;
+    }
+
+    const options = ['<option value="">Wybierz obiekt</option>',
+      ...objects.map((name) => `<option value="${name}">${name}</option>`),
+    ];
+
+    galleryObjectSelect.innerHTML = options.join('');
+    galleryObjectSelect.disabled = false;
+  } catch (error) {
+    console.error('Nie udało się pobrać obiektów:', error);
+    galleryObjectSelect.innerHTML = '<option value="">Błąd ładowania</option>';
+    galleryObjectSelect.disabled = true;
+  }
+}
+
+function setFormMode(mode) {
+  if (!mode || currentFormMode === mode) return;
+
+  currentFormMode = mode;
+  updateGalleryControlsVisibility();
+
+  if (mode === 'projekty-miejscowosci') {
+    setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć projekty.');
+    if (galleryCitySelect) {
+      galleryCitySelect.value = '';
+    }
+    if (galleryProductSelect) {
+      galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
+      galleryProductSelect.disabled = true;
+    }
+    galleryFilesCache = [];
+    galleryProducts = [];
+    updateProjectFilterAvailability();
+    loadGalleryCities();
+  } else if (mode === 'klienci-indywidualni') {
+    setGalleryPlaceholder('Wybierz handlowca i obiekt, aby zobaczyć projekty.');
+    galleryFilesCache = [];
+    galleryProducts = [];
+    updateProjectFilterAvailability();
+
+    if (gallerySalespersonSelect) {
+      gallerySalespersonSelect.disabled = true;
+      gallerySalespersonSelect.innerHTML = '<option value="">Ładowanie…</option>';
+    }
+    if (galleryObjectSelect) {
+      galleryObjectSelect.disabled = true;
+      galleryObjectSelect.innerHTML = '<option value="">Najpierw wybierz handlowca</option>';
+    }
+
+    if (galleryProductSelect) {
+      galleryProductSelect.disabled = true;
+      galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz handlowca i obiekt</option>';
+    }
+
+    loadSalespeople();
+  }
+}
+
+async function handleGalleryProductChangeFromSelect() {
+  if (!galleryProductSelect) return;
+  const slug = galleryProductSelect.value;
+  if (!slug) {
+    return;
+  }
+
+  try {
+    const label = formatGalleryProductLabel(slug);
+    const searchTerms = tokenizeQuery(label);
+    if (!searchTerms.length) {
+      return;
+    }
+
+    setStatus('Ładowanie wybranego produktu...', 'info');
+    resetResultsPlaceholder('Trwa pobieranie danych...');
+
+    let products = await fetchProducts(label);
+
+    if (!products.length && searchTerms.length > 1) {
+      products = await fetchProducts();
+    }
+
+    const matching = products.filter((product) => {
+      if (!product) return false;
+
+      const nameTokens = getFieldTokens(product.name);
+      const idTokens = getFieldTokens(product.pc_id);
+
+      if (matchesTermsInField(product.name, searchTerms, { tokens: nameTokens })) {
+        return true;
+      }
+
+      if (matchesTermsInField(product.pc_id, searchTerms, { tokens: idTokens })) {
+        return true;
+      }
+
+      return false;
+    });
+
+    if (!matching.length) {
+      setStatus('Nie znaleziono produktu powiązanego z wybranym projektem.', 'info');
+      resetResultsPlaceholder('Brak produktu powiązanego z wybranym projektem.');
+      lastSearchResults = [];
+      return;
+    }
+
+    lastSearchResults = matching;
+    const visibleProducts = filterProductsByProjectAvailability(matching);
+
+    if (!visibleProducts.length) {
+      setStatus('Brak produktów spełniających wybrany filtr projektów w tej miejscowości.', 'info');
+      resetResultsPlaceholder('Brak wyników dla wybranego filtra projektów.');
+      return;
+    }
+
+    renderResults(visibleProducts);
+    setStatus('Wybrano produkt z galerii. Uzupełnij ilość i dodaj do zamówienia.', 'info');
+  } catch (error) {
+    console.error('Błąd pobierania produktu dla wyboru z galerii:', error);
+    setStatus('Błąd pobierania danych dla wybranego produktu.', 'error');
+    resetResultsPlaceholder('Nie udało się pobrać danych dla wybranego produktu.');
+    lastSearchResults = [];
+  }
 }
 
 const PDF_FONTS = [
@@ -586,15 +978,29 @@ async function searchProducts(event) {
     if (!filteredProducts.length) {
       setStatus('Brak produktów spełniających kryteria wyszukiwania.', 'info');
       resetResultsPlaceholder('Brak wyników. Zmień frazę lub tryb wyszukiwania.');
+      lastSearchResults = [];
+      syncGalleryWithSearch('', []);
       return;
     }
 
-    renderResults(filteredProducts);
-    setStatus(`Znaleziono ${filteredProducts.length} produkt(y).`, 'success');
+    lastSearchResults = filteredProducts;
+    const visibleProducts = filterProductsByProjectAvailability(filteredProducts);
+
+    if (!visibleProducts.length) {
+      setStatus('Brak produktów spełniających wybrany filtr projektów w tej miejscowości.', 'info');
+      resetResultsPlaceholder('Brak wyników dla wybranego filtra projektów.');
+      syncGalleryWithSearch(query, filteredProducts);
+      return;
+    }
+
+    renderResults(visibleProducts);
+    syncGalleryWithSearch(query, visibleProducts);
   } catch (error) {
     console.error('Błąd wyszukiwania produktów:', error);
     setStatus(`Błąd pobierania danych: ${error.message}`, 'error');
     resetResultsPlaceholder('Nie udało się pobrać danych. Spróbuj ponownie.');
+    lastSearchResults = [];
+    syncGalleryWithSearch('', []);
   }
 }
 
@@ -604,8 +1010,96 @@ function createBadge(stock = 0, optimal = 0) {
   return `<span class="badge">${stock} szt.</span>`;
 }
 
+function hasGalleryContext() {
+  return Boolean(galleryProducts && galleryProducts.length);
+}
+
+function filterProductsByProjectAvailability(products) {
+  if (!Array.isArray(products)) return [];
+  if (!hasGalleryContext()) return products;
+
+  return products.filter((product) => {
+    if (!product) return false;
+    const slugsForProduct = findGallerySlugsByName(product.name);
+    const hasProject = slugsForProduct.length > 0;
+    return projectFilterMode === 'with' ? hasProject : !hasProject;
+  });
+}
+
+function applyProjectFilterToLastResults(updateStatus = false) {
+  if (!Array.isArray(lastSearchResults) || !lastSearchResults.length) {
+    return;
+  }
+
+  const visibleProducts = filterProductsByProjectAvailability(lastSearchResults);
+  if (!visibleProducts.length) {
+    resetResultsPlaceholder('Brak wyników dla wybranego filtra projektów.');
+    if (updateStatus) {
+      setStatus('Brak produktów spełniających wybrany filtr projektów w tej miejscowości.', 'info');
+    }
+    return;
+  }
+
+  renderResults(visibleProducts);
+}
+
+function updateProjectFilterAvailability() {
+  const filterRoot = document.getElementById('project-filter');
+  if (!filterRoot) return;
+
+  const hasContext = hasGalleryContext();
+  if (!hasContext) {
+    filterRoot.classList.add('project-filter--disabled');
+    projectFilterMode = 'with';
+    const options = filterRoot.querySelectorAll('.project-filter__option');
+    options.forEach((btn) => {
+      const mode = btn.dataset.projectFilter === 'without' ? 'without' : 'with';
+      btn.classList.toggle('project-filter__option--active', mode === 'with');
+    });
+    return;
+  }
+
+  filterRoot.classList.remove('project-filter--disabled');
+}
+
+function initProjectFilter() {
+  const filterRoot = document.getElementById('project-filter');
+  if (!filterRoot) return;
+
+  const options = Array.from(filterRoot.querySelectorAll('.project-filter__option'));
+  options.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (filterRoot.classList.contains('project-filter--disabled')) return;
+
+      const mode = btn.dataset.projectFilter === 'without' ? 'without' : 'with';
+      if (projectFilterMode === mode) return;
+
+      projectFilterMode = mode;
+      options.forEach((opt) => {
+        const optMode = opt.dataset.projectFilter === 'without' ? 'without' : 'with';
+        opt.classList.toggle('project-filter__option--active', optMode === projectFilterMode);
+      });
+
+      applyProjectFilterToLastResults(true);
+    });
+  });
+
+  updateProjectFilterAvailability();
+}
+
+function setSelectedResultsRow(row) {
+  if (selectedResultsRow && selectedResultsRow !== row) {
+    selectedResultsRow.classList.remove('results-row--selected');
+  }
+  selectedResultsRow = row || null;
+  if (selectedResultsRow) {
+    selectedResultsRow.classList.add('results-row--selected');
+  }
+}
+
 function renderResults(products) {
   resultsBody.innerHTML = '';
+  setSelectedResultsRow(null);
   products.forEach(product => {
     const row = document.createElement('tr');
     row.innerHTML = `
@@ -639,6 +1133,15 @@ function renderResults(products) {
         </button>
       </td>
     `;
+
+    if (hasGalleryContext()) {
+      const slugsForProduct = findGallerySlugsByName(product.name);
+      if (slugsForProduct.length) {
+        row.classList.add('results-row--with-project');
+      } else {
+        row.classList.add('results-row--without-project');
+      }
+    }
 
     const projectsInput = row.querySelector('.projects-input');
     const qtyInput = row.querySelector('.qty-input');
@@ -677,6 +1180,11 @@ function renderResults(products) {
 
       const normalizedProjects = sanitizeProjectsValue(projectsValue);
       addToCart(product, quantity, normalizedProjects);
+    });
+
+    row.addEventListener('click', () => {
+      setSelectedResultsRow(row);
+      handleResultProductSelection(product);
     });
 
     resultsBody.appendChild(row);
@@ -1123,6 +1631,7 @@ function initialize() {
   
   resetResultsPlaceholder();
   resetCartPlaceholder();
+  initProjectFilter();
   const searchForm = document.querySelector('#search-form');
   const exportPdfBtn = document.querySelector('#export-pdf');
 
@@ -1161,11 +1670,51 @@ function initialize() {
     toggleBtn.addEventListener('click', togglePrices);
   }
 
-  if (galleryCitySelect && galleryProductSelect) {
-    galleryCitySelect.addEventListener('change', () => loadGalleryProducts());
-    galleryProductSelect.addEventListener('change', renderGalleryPreview);
-    loadGalleryCities();
+  if (formModeNav) {
+    const modeButtons = Array.from(formModeNav.querySelectorAll('.mode-nav__item'));
+    modeButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.mode;
+        if (!mode || mode === currentFormMode) return;
+
+        modeButtons.forEach((other) => {
+          other.classList.toggle('mode-nav__item--active', other === btn);
+        });
+
+        setFormMode(mode);
+      });
+    });
   }
+
+  if (galleryCitySelect && galleryProductSelect) {
+    galleryCitySelect.addEventListener('change', () => {
+      if (currentFormMode !== 'projekty-miejscowosci') return;
+      loadGalleryProducts();
+    });
+    galleryProductSelect.addEventListener('change', () => {
+      renderGalleryPreview();
+      handleGalleryProductChangeFromSelect();
+    });
+  }
+
+  if (gallerySalespersonSelect) {
+    gallerySalespersonSelect.addEventListener('change', () => {
+      const value = gallerySalespersonSelect.value;
+      loadObjectsForSalesperson(value);
+    });
+  }
+
+   if (galleryObjectSelect) {
+    galleryObjectSelect.addEventListener('change', () => {
+      if (currentFormMode !== 'klienci-indywidualni') return;
+      const sp = gallerySalespersonSelect ? gallerySalespersonSelect.value : '';
+      const obj = galleryObjectSelect.value;
+      loadGalleryProductsForObject(sp, obj);
+    });
+  }
+
+  updateGalleryControlsVisibility();
+  setFormMode(currentFormMode);
 }
 
 initialize();

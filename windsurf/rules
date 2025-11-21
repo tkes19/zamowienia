@@ -1,0 +1,22 @@
+# Zasady dla projektu ZAMÓWIENIA
+
+W projekcie ZAMÓWIENIA stosuj następujące zasady pracy z AI (Cascade/Windsurf):
+
+1. **Język i styl odpowiedzi**
+   - Odpowiadaj po polsku.
+   - Pisz krótko i konkretnie, z naciskiem na praktyczne kroki i zmiany w kodzie.
+
+2. **Korzystanie z PLAN_ROZWOJU.md**
+   - Przed każdą większą zmianą w kodzie najpierw sprawdź plik `PLAN_ROZWOJU.md` i powiąż swoje działania z odpowiednim punktem tego planu.
+
+3. **Katalog `SOURCE/`**
+   - Traktuj katalog `SOURCE/` jako archiwum i zbiór szablonów.
+   - Nie modyfikuj ani nie usuwaj plików w `SOURCE/` (w szczególności `list_cities.php` i `list_products.php`), chyba że użytkownik wyraźnie o to poprosi.
+
+4. **Komentarze i dokumentacja**
+   - Nie usuwaj ani nie przerabiaj istniejących komentarzy w kodzie oraz plików dokumentacji `.md`, chyba że użytkownik wyraźnie o to poprosi.
+   - Możesz dopisywać nowe sekcje/pliki dokumentacji, gdy są potrzebne.
+
+5. **Stack i alternatywy technologiczne**
+   - Domyślnie trzymaj się obecnej architektury: statyczny frontend (`index.html`, `assets/`, `scripts/app.js`) + backend Node/Express w `backend/`.
+   - Jeśli widzisz wyraźnie lepsze rozwiązanie lub ryzyko długu technologicznego, zaproponuj alternatywy (z plusami i minusami), ale nie zmieniaj stacku bez wyraźnej zgody użytkownika.

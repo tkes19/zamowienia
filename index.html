@@ -10,6 +10,36 @@
   <body class="hide-prices">
     <main class="layout">
       <header>
+        <nav id="form-mode-nav" class="mode-nav" aria-label="Tryb formularza">
+          <button
+            type="button"
+            class="mode-nav__item mode-nav__item--active"
+            data-mode="projekty-miejscowosci"
+          >
+            Projekty miejscowości
+          </button>
+          <button
+            type="button"
+            class="mode-nav__item"
+            data-mode="klienci-indywidualni"
+          >
+            Klienci indywidualni
+          </button>
+          <button
+            type="button"
+            class="mode-nav__item"
+            data-mode="projekty-imienne"
+          >
+            Projekty imienne
+          </button>
+          <button
+            type="button"
+            class="mode-nav__item"
+            data-mode="projekty-hasla"
+          >
+            Projekty hasła
+          </button>
+        </nav>
         <div class="header-row">
           <h1>Formularz zamówień</h1>
           <button id="theme-toggle" class="theme-toggle" aria-label="Przełącz tryb jasny/ciemny">
@@ -22,7 +52,7 @@
         </p>
       </header>
 
-      <section class="panel">
+      <section class="panel panel--search-gallery">
         <form id="search-form" class="search-form" autocomplete="off">
           <label class="field field--mode">
             <span class="field__label">Tryb wyszukiwania</span>
@@ -41,56 +71,92 @@
             <button type="submit" class="btn btn--primary search-form__submit">Szukaj</button>
           </div>
         </form>
-        <p id="status-message" class="status status--info">Wpisz frazę i kliknij „Szukaj”.</p>
-      </section>
 
-      <section class="panel panel--gallery" id="gallery-panel">
-        <div class="panel__header panel__header--stacked">
-          <div>
-            <h2>Podgląd projektów</h2>
-            <p class="panel__hint">Wybierz miejscowość i produkt, aby natychmiast zobaczyć grafikę podglądową.</p>
-          </div>
-        </div>
-        <div class="gallery-controls">
-          <label class="field field--gallery">
-            <span class="field__label">Miejscowość</span>
-            <select id="gallery-city" class="field__input" aria-label="Wybierz miejscowość">
-              <option value="">Ładowanie…</option>
-            </select>
-          </label>
-          <label class="field field--gallery">
-            <span class="field__label field__label--inline">
-              <span>Produkt</span>
-              <label class="gallery-lock">
-                <input type="checkbox" id="gallery-lock-product" />
-                <span class="gallery-lock__text">Trzymaj produkt przy zmianie miejscowości</span>
+        <div class="search-gallery__divider"></div>
+
+        <section class="panel panel--gallery" id="gallery-panel">
+          <div class="gallery-controls">
+            <div id="gallery-controls-city">
+              <label class="field field--gallery">
+                <span class="field__label">Miejscowość</span>
+                <select id="gallery-city" class="field__input" aria-label="Wybierz miejscowość">
+                  <option value="">Ładowanie…</option>
+                </select>
               </label>
-            </span>
-            <select id="gallery-product" class="field__input" aria-label="Wybierz produkt" disabled>
-              <option value="">Wybierz miejscowość</option>
-            </select>
-          </label>
-        </div>
-        <div class="gallery-preview">
-          <div class="gallery-preview__frame">
-            <img id="gallery-preview-image" class="gallery-preview__image" alt="Podgląd wybranego produktu" hidden />
-            <p id="gallery-preview-placeholder" class="gallery-preview__placeholder">
-              Wybierz miejscowość i produkt, aby zobaczyć grafikę.
-            </p>
+            </div>
+            <div id="gallery-controls-sales" hidden>
+              <label class="field field--gallery">
+                <span class="field__label">Handlowiec</span>
+                <select id="gallery-salesperson" class="field__input" aria-label="Wybierz handlowca">
+                  <option value="">Wybierz handlowca</option>
+                </select>
+              </label>
+              <label class="field field--gallery">
+                <span class="field__label">Obiekt</span>
+                <select id="gallery-object" class="field__input" aria-label="Wybierz obiekt" disabled>
+                  <option value="">Najpierw wybierz handlowca</option>
+                </select>
+              </label>
+            </div>
+            <label class="field field--gallery">
+              <span class="field__label field__label--inline">
+                <span>Produkt</span>
+                <label class="gallery-lock">
+                  <input type="checkbox" id="gallery-lock-product" />
+                  <span class="gallery-lock__text">Trzymaj produkt przy zmianie miejscowości</span>
+                </label>
+              </span>
+              <select id="gallery-product" class="field__input" aria-label="Wybierz produkt" disabled>
+                <option value="">Wybierz miejscowość</option>
+              </select>
+            </label>
           </div>
-          <p id="gallery-errors" class="status status--error" hidden></p>
-        </div>
+          <div class="gallery-preview">
+            <div class="gallery-preview__frame">
+              <img id="gallery-preview-image" class="gallery-preview__image" alt="Podgląd wybranego produktu" hidden />
+              <p id="gallery-preview-placeholder" class="gallery-preview__placeholder">
+                Wybierz miejscowość i produkt, aby zobaczyć grafikę.
+              </p>
+            </div>
+            <p id="gallery-errors" class="status status--error" hidden></p>
+          </div>
+        </section>
       </section>
 
       <section class="panel">
         <div class="panel__header">
-          <h2>Wyniki wyszukiwania</h2>
+          <h2>Wybrane produkty</h2>
           <div class="table-controls">
+            <div
+              class="project-filter"
+              id="project-filter"
+              aria-label="Filtr projektów"
+              title="Filtruj wyniki po dostępności projektów w wybranej miejscowości"
+            >
+              <span class="project-filter__label">Lista projektów</span>
+              <div class="project-filter__switch" role="radiogroup" aria-label="Lista projektów">
+                <button
+                  type="button"
+                  class="project-filter__option project-filter__option--active"
+                  data-project-filter="with"
+                >
+                  Gotowe
+                </button>
+                <button
+                  type="button"
+                  class="project-filter__option"
+                  data-project-filter="without"
+                >
+                  Brakujące
+                </button>
+              </div>
+            </div>
             <button type="button" class="btn btn--outline" id="toggle-price">
               <i class="fas fa-eye"></i> Pokaż ceny
             </button>
           </div>
         </div>
+        <p id="status-message" class="status status--info status--compact">Wpisz frazę i kliknij „Szukaj”.</p>
         <div class="table-wrapper">
           <table class="table" aria-live="polite">
             <thead>
