@@ -20,6 +20,8 @@ Frontend zawsze rozmawia z backendem poprzez backend Node:
 - `/api/v1/products` – proxy do bazy produktów (Rezon API),
 - `/api/gallery/*` – proxy do galerii na QNAP (miejscowości, handlowcy, obiekty, produkty i obrazki).
 
+> **Uwaga:** folder `SOURCE 2/` w katalogu projektu służy tylko jako **źródło referencyjne** (pliki do podglądu). Nie jest częścią aplikacji i jest ignorowany przez Git (`.gitignore`).
+
 ## 3. Szybki start (lokalnie)
 
 ```powershell
@@ -181,10 +183,23 @@ nothing to commit, working tree clean
 
 
 Praktyka codzienna
+w pracy 
 cd "C:\Users\Tomek\OneDrive\000 CURSOR\ZAMÓWIENIA"
 git add .
 git commit -m "Opis zmian"
 git push
+
+w domu
+cd "C:\Users\kocie\OneDrive\000 CURSOR\ZAMÓWIENIA"
+git status
+git add backend/server.js scripts/app.js README.md
+git commit -m "fix: proxy obrazków galerii dla HTTPS"
+git push
+
+
+
+
+
 
 
 

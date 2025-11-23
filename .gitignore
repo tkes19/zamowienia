@@ -1,0 +1,7 @@
+# Ignoruj lokalne foldery pomocnicze (wewnętrzne .gitignore w podkatalogach)
+SOURCE 2/
+
+# Standardowe foldery narzędzi (jeśli kiedyś się pojawią)
+node_modules/
+.DS_Store
+Thumbs.db

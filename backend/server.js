@@ -3,11 +3,24 @@ const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 const { createPdf } = require('./pdfGenerator');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const GALLERY_BASE = process.env.GALLERY_BASE || 'http://rezon.myqnapcloud.com:81/home';
+
+// Konfiguracja Supabase – wartości muszą być ustawione w backend/.env
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_TABLE_PRODUCTS = process.env.SUPABASE_TABLE_PRODUCTS || 'products';
+
+let supabase = null;
+if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+  supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+} else {
+  console.warn('Supabase nie jest skonfigurowany – brak SUPABASE_URL lub SUPABASE_SERVICE_ROLE_KEY w .env');
+}
 
 // Serwowanie plików statycznych z folderu nadrzędnego
 app.use(express.static(path.join(__dirname, '..')));
@@ -31,6 +44,37 @@ app.get('/', (req, res) => {
 // Test endpoint
 app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'Serwer działa poprawnie' });
+});
+
+// Test połączenia z Supabase – proste zapytanie do tabeli produktów
+app.get('/api/supabase/health', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({
+            status: 'error',
+            message: 'Supabase nie jest skonfigurowany. Ustaw SUPABASE_URL i SUPABASE_SERVICE_ROLE_KEY w backend/.env.',
+        });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from(SUPABASE_TABLE_PRODUCTS)
+            .select('*')
+            .limit(1);
+
+        if (error) {
+            console.error('Błąd Supabase:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd zapytania do Supabase', details: error.message });
+        }
+
+        return res.json({
+            status: 'OK',
+            table: SUPABASE_TABLE_PRODUCTS,
+            rowCount: Array.isArray(data) ? data.length : 0,
+        });
+    } catch (err) {
+        console.error('Wyjątek Supabase:', err);
+        return res.status(500).json({ status: 'error', message: 'Wyjątek podczas łączenia z Supabase', details: err.message });
+    }
 });
 
 // Proxy endpoint do pobierania produktów
