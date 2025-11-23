@@ -3,13 +3,9 @@ import { EMBEDDED_FONTS } from '../assets/fonts/embedded-fonts.js';
 // Wszystkie zapytania produktowe idą na ten sam origin (proxy /api/v1/products w backend/server.js)
 const API_BASE = '/api/v1/products';
 
-const GALLERY_API_BASE = (() => {
-  const isGalleryLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  const defaultBase = isGalleryLocal
-    ? 'http://192.168.0.30:81/home'
-    : 'https://rezon.myqnapcloud.com:81/home';
-  return window.__GALLERY_API_BASE__ ?? defaultBase;
-})();
+// Proxy galerii również idzie przez backend (/api/gallery),
+// dzięki czemu nie ma problemów z CORS ani certyfikatami QNAP-a.
+const GALLERY_API_BASE = window.__GALLERY_API_BASE__ || '/api/gallery';
 
 let galleryFilesCache = [];
 let galleryProducts = [];
@@ -85,7 +81,7 @@ async function loadGalleryCities() {
   try {
     galleryCitySelect.disabled = true;
     galleryCitySelect.innerHTML = '<option value="">Ładowanie…</option>';
-    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/list_cities.php`);
+    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/cities`);
     const visibleCities = Array.isArray(data.cities)
       ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
       : [];
@@ -139,7 +135,7 @@ async function loadGalleryProductsForObject(salesperson, object) {
     galleryProductSelect.disabled = true;
     galleryProductSelect.innerHTML = '<option value="">Ładowanie…</option>';
 
-    const url = `${GALLERY_API_BASE}/list_products_object.php?salesperson=${encodeURIComponent(sp)}&object=${encodeURIComponent(obj)}`;
+    const url = `${GALLERY_API_BASE}/products-object?salesperson=${encodeURIComponent(sp)}&object=${encodeURIComponent(obj)}`;
     const data = await fetchGalleryJSON(url);
     galleryFilesCache = Array.isArray(data.files) ? data.files : [];
     galleryProducts = Array.isArray(data.products) ? data.products : [];
@@ -214,7 +210,7 @@ async function loadGalleryProducts(city) {
     const lockedSlug = galleryLockCheckbox?.checked ? galleryProductSelect?.value || '' : '';
     galleryProductSelect.disabled = true;
     galleryProductSelect.innerHTML = '<option value="">Ładowanie…</option>';
-    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/list_products.php?city=${encodeURIComponent(targetCity)}`);
+    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/products/${encodeURIComponent(targetCity)}`);
     galleryFilesCache = Array.isArray(data.files) ? data.files : [];
     galleryProducts = Array.isArray(data.products) ? data.products : [];
 
@@ -364,7 +360,7 @@ async function loadSalespeople() {
     gallerySalespersonSelect.disabled = true;
     gallerySalespersonSelect.innerHTML = '<option value="">Ładowanie…</option>';
 
-    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/list_salespeople.php`);
+    const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/salespeople`);
     const salesPeople = Array.isArray(data.salesPeople) ? data.salesPeople : [];
 
     if (!salesPeople.length) {
@@ -411,7 +407,7 @@ async function loadObjectsForSalesperson(salesperson) {
     galleryObjectSelect.disabled = true;
     galleryObjectSelect.innerHTML = '<option value="">Ładowanie…</option>';
 
-    const url = `${GALLERY_API_BASE}/list_objects.php?salesperson=${encodeURIComponent(salesperson)}`;
+    const url = `${GALLERY_API_BASE}/objects/${encodeURIComponent(salesperson)}`;
     const data = await fetchGalleryJSON(url);
     const objects = Array.isArray(data.objects) ? data.objects : [];
 
@@ -1714,7 +1710,13 @@ function initialize() {
   }
 
   updateGalleryControlsVisibility();
-  setFormMode(currentFormMode);
+  
+  // Inicjalizacja danych galerii
+  if (currentFormMode === 'projekty-miejscowosci') {
+    loadGalleryCities();
+  } else if (currentFormMode === 'klienci-indywidualni') {
+    loadSalespeople();
+  }
 }
 
 initialize();

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Formularz zamówień</title>
     <link rel="stylesheet" href="./assets/styles.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="./assets/vendor/fontawesome/all.min.css" />
   </head>
   <body class="hide-prices">
     <main class="layout">
@@ -98,6 +98,12 @@
                 </select>
               </label>
             </div>
+            <label class="field field--gallery">
+              <span class="field__label">Miejscowość</span>
+              <select id="gallery-city" class="field__input" aria-label="Wybierz miejscowość">
+                <option value="">Ładowanie...</option>
+              </select>
+            </label>
             <label class="field field--gallery">
               <span class="field__label field__label--inline">
                 <span>Produkt</span>
@@ -217,8 +223,8 @@
       </section>
     </main>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <script src="scripts/vendor/jspdf/jspdf.umd.min.js"></script>
+    <script src="scripts/vendor/jspdf/jspdf.plugin.autotable.min.js"></script>
     <script src="scripts/app.js" type="module"></script>
   </body>
 </html>

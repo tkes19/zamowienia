@@ -12,10 +12,13 @@ Krótka instrukcja uruchamiania i utrzymania aplikacji łączącej formularz zam
 ```
 ZAMÓWIENIA/
 ├─ index.html, assets/, scripts/    → frontend (statyczne pliki)
-└─ backend/                         → Express + proxy do API produktów
+└─ backend/                         → Express + proxy do API produktów i galerii
 ```
 
-Frontend zawsze rozmawia z backendem poprzez ścieżkę `/api/v1/products`, więc trzeba uruchamiać serwer Node.
+Frontend zawsze rozmawia z backendem poprzez backend Node:
+
+- `/api/v1/products` – proxy do bazy produktów (Rezon API),
+- `/api/gallery/*` – proxy do galerii na QNAP (miejscowości, handlowcy, obiekty, produkty i obrazki).
 
 ## 3. Szybki start (lokalnie)
 
@@ -26,20 +29,36 @@ npm run dev            # tryb deweloperski z nodemonem
 # lub: npm start       # zwykłe uruchomienie
 ```
 
-Następnie otwórz w przeglądarce `http://localhost:3001/`. Ten adres serwuje `index.html` i obsługuje wszystkie zapytania produktu (`/api/v1/products`). Nie korzystaj z Live Servera – uruchomienie strony spod innego originu skończy się błędem CORS.
+## Tak uruchamiałem w domu 
+
+```powershell
+cd backend
+node server.js
+```
+
+Następnie otwórz w przeglądarce `http://localhost:3001/`. Ten adres serwuje `index.html` i obsługuje wszystkie zapytania produktu (`/api/v1/products`) oraz galerii (`/api/gallery/...`). Nie korzystaj z Live Servera – uruchomienie strony spod innego originu skończy się błędem CORS.
 
 ## 4. Konfiguracja backendu
 
 Plik `backend/server.js`:
 - serwuje statyczne pliki z katalogu głównego,
 - wystawia `/api/v1/products` jako proxy do `https://rezon-api.vercel.app/api/v1/products`,
+- wystawia `/api/gallery/*` jako proxy do serwera QNAP według adresu `GALLERY_BASE`,
 - dodaje nagłówki CORS (`Access-Control-Allow-Origin: *`).
 
 ### Zmienne środowiskowe
-Utwórz `backend/.env` (jeśli wysyłasz PDF e-mailem):
 
-```
+Minimalny plik `backend/.env` (bez maila):
+
+```env
 PORT=3001
+NODE_ENV=development
+GALLERY_BASE=http://rezon.myqnapcloud.com:81/home
+```
+
+Jeśli wysyłasz PDF e‑mailem, dodaj też:
+
+```env
 SMTP_HOST=...
 SMTP_PORT=...
 SMTP_SECURE=false
@@ -49,7 +68,7 @@ EMAIL_FROM=...
 EMAIL_TO=...
 ```
 
-Jeżeli e-mail nie jest potrzebny, wystarczy `PORT`.
+Jeżeli e-mail nie jest potrzebny, wystarczą `PORT`, `NODE_ENV` i `GALLERY_BASE`.
 
 ## 5. Skrypty npm (backend)
 
@@ -60,7 +79,7 @@ Jeżeli e-mail nie jest potrzebny, wystarczy `PORT`.
 
 ## 6. Testowanie API
 
-Przykład zapytania w PowerShellu:
+Przykład zapytania do produktów w PowerShellu:
 
 ```powershell
 Invoke-RestMethod -Uri 'http://localhost:3001/api/v1/products?search=chrom'
@@ -70,6 +89,14 @@ Przykład w curl:
 
 ```bash
 curl "http://localhost:3001/api/v1/products?search=chrom"
+```
+
+Przykładowe zapytania do galerii:
+
+```bash
+curl "http://localhost:3001/api/gallery/cities"              # lista miejscowości
+curl "http://localhost:3001/api/gallery/salespeople"         # lista handlowców
+curl "http://localhost:3001/api/gallery/products/Babimost"   # produkty dla miasta
 ```
 
 ## 7. Najczęstsze problemy
@@ -151,6 +178,16 @@ nothing to commit, working tree clean
 ```
 
 > **Wskazówka:** `git status` i `git diff` pokażą, co dokładnie zostało zmodyfikowane przed commitem.
+
+
+Praktyka codzienna
+cd "C:\Users\Tomek\OneDrive\000 CURSOR\ZAMÓWIENIA"
+git add .
+git commit -m "Opis zmian"
+git push
+
+
+
 
 ## 11. Git – cofanie zmian, gdy coś się zepsuje
 
