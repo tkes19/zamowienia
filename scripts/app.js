@@ -717,7 +717,11 @@ function showGalleryImage(src, alt) {
   galleryPreviewPlaceholder.hidden = true;
   galleryPreviewImage.hidden = false;
   galleryPreviewImage.alt = alt ?? 'Podgląd produktu';
-  galleryPreviewImage.src = src;
+  // Na produkcji (HTTPS) nie możemy ładować obrazka bezpośrednio z HTTP QNAP-a,
+  // dlatego korzystamy z proxy backendu (/api/gallery/image), który pobiera obraz
+  // z GALLERY_BASE i zwraca go z tego samego originu.
+  const proxiedUrl = `${GALLERY_API_BASE}/image?url=${encodeURIComponent(src)}`;
+  galleryPreviewImage.src = proxiedUrl;
 
   const frame = galleryPreviewImage.parentElement;
   if (frame && frame.classList.contains('gallery-preview__frame')) {

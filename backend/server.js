@@ -166,6 +166,42 @@ app.get('/api/gallery/products-object', async (req, res) => {
     await proxyGalleryRequest(req, res, url, `products/${salesperson}/${object}`);
 });
 
+// Proxy dla obrazków z galerii – żeby uniknąć mixed content (HTTPS → HTTP)
+app.get('/api/gallery/image', async (req, res) => {
+    try {
+        const imageUrl = req.query.url;
+        if (!imageUrl) {
+            return res.status(400).json({ error: 'Brak parametru url' });
+        }
+
+        // Nie pozwalamy proxy’ować czegokolwiek – tylko zasoby z GALLERY_BASE
+        if (!imageUrl.startsWith(GALLERY_BASE)) {
+            return res.status(400).json({ error: 'Nieprawidłowy adres obrazka' });
+        }
+
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            return res.status(response.status).json({
+                error: 'Nie udało się pobrać obrazka z galerii',
+                status: response.status,
+                statusText: response.statusText,
+            });
+        }
+
+        const contentType = response.headers.get('content-type') || 'image/jpeg';
+        res.setHeader('Content-Type', contentType);
+
+        const buffer = Buffer.from(await response.arrayBuffer());
+        res.end(buffer);
+    } catch (error) {
+        console.error('Błąd proxy obrazka galerii:', error);
+        res.status(502).json({
+            error: 'Gallery image proxy error',
+            details: error.message,
+        });
+    }
+});
+
 // Email configuration
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
