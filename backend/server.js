@@ -7,6 +7,7 @@ const { createPdf } = require('./pdfGenerator');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const GALLERY_BASE = process.env.GALLERY_BASE || 'http://rezon.myqnapcloud.com:81/home';
 
 // Serwowanie plików statycznych z folderu nadrzędnego
 app.use(express.static(path.join(__dirname, '..')));
@@ -56,6 +57,113 @@ app.get('/api/v1/products', async (req, res) => {
             error: error.message 
         });
     }
+});
+
+// Proste proxy do galerii (QNAP) – wszystkie zapytania idą przez backend
+
+async function proxyGalleryRequest(req, res, targetUrl, contextLabel) {
+    try {
+        console.log(`[${contextLabel}] Proxy request do:`, targetUrl);
+        
+        // Ustawiamy nagłówki CORS
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        
+        // Obsługa zapytań OPTIONS (preflight)
+        if (req.method === 'OPTIONS') {
+            return res.status(200).end();
+        }
+
+        const response = await fetch(targetUrl);
+        const status = response.status;
+
+        let data;
+        try {
+            data = await response.json();
+        } catch (parseError) {
+            console.error(`Błąd parsowania JSON z galerii (${contextLabel}):`, parseError);
+            return res.status(502).json({
+                error: 'Invalid JSON from gallery backend',
+                context: contextLabel,
+            });
+        }
+
+        // Transform the response data to match frontend expectations
+        let transformedData = data;
+        
+        // If this is a salespeople request, ensure the response has a salesPeople array
+        if (contextLabel === 'salespeople' && !data.salesPeople && Array.isArray(data)) {
+            transformedData = { salesPeople: data };
+        }
+        // If this is a cities request, ensure the response has a cities array
+        else if (contextLabel === 'cities' && !data.cities && Array.isArray(data)) {
+            transformedData = { cities: data };
+        }
+        // If this is an objects request, ensure the response has an objects array
+        else if (contextLabel.startsWith('objects/') && !data.objects && Array.isArray(data)) {
+            transformedData = { objects: data };
+        }
+        
+        // Transform URL-y obrazków z lokalnego IP na publiczny adres
+        if (transformedData.files && Array.isArray(transformedData.files)) {
+            transformedData.files = transformedData.files.map(file => {
+                if (file.url && file.url.includes('192.168.0.30')) {
+                    file.url = file.url.replace('http://192.168.0.30:81', 'http://rezon.myqnapcloud.com:81');
+                }
+                return file;
+            });
+        }
+
+        return res.status(status).json(transformedData);
+    } catch (error) {
+        console.error(`Błąd proxy galerii (${contextLabel}):`, error);
+        return res.status(502).json({
+            error: 'Gallery proxy error',
+            context: contextLabel,
+            details: error.message,
+        });
+    }
+}
+
+// Lista miejscowości
+app.get('/api/gallery/cities', async (req, res) => {
+    await proxyGalleryRequest(req, res, `${GALLERY_BASE}/list_cities.php`, 'cities');
+});
+
+// Lista handlowców
+app.get('/api/gallery/salespeople', async (req, res) => {
+    await proxyGalleryRequest(req, res, `${GALLERY_BASE}/list_salespeople.php`, 'salespeople');
+});
+
+// Lista obiektów dla handlowca
+app.get('/api/gallery/objects/:salesperson', async (req, res) => {
+    const { salesperson } = req.params;
+    console.log('Pobieranie obiektów dla handlowca:', salesperson);
+    const targetUrl = `${GALLERY_BASE}/list_objects.php?salesperson=${encodeURIComponent(salesperson)}`;
+    console.log('URL do QNAP:', targetUrl);
+    await proxyGalleryRequest(req, res, targetUrl, `objects/${salesperson}`);
+});
+
+// Lista produktów dla miejscowości
+app.get('/api/gallery/products/:city', async (req, res) => {
+    const { city } = req.params;
+    console.log('Pobieranie produktów dla miasta:', city);
+    const targetUrl = `${GALLERY_BASE}/list_products.php?city=${encodeURIComponent(city)}`;
+    console.log('URL do QNAP:', targetUrl);
+    await proxyGalleryRequest(req, res, targetUrl, `products/${city}`);
+});
+
+// Lista produktów dla obiektu (handlowiec + obiekt)
+app.get('/api/gallery/products-object', async (req, res) => {
+    const { salesperson, object } = req.query;
+    if (!salesperson || !object) {
+        return res.status(400).json({ error: 'Brak wymaganych parametrów: salesperson, object' });
+    }
+    console.log('Pobieranie produktów dla obiektu:', salesperson, object);
+    const url = `${GALLERY_BASE}/list_products_object.php?salesperson=${encodeURIComponent(salesperson)}&object=${encodeURIComponent(object)}`;
+    console.log('URL do QNAP:', url);
+    await proxyGalleryRequest(req, res, url, `products/${salesperson}/${object}`);
 });
 
 // Email configuration
