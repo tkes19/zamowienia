@@ -36,6 +36,8 @@ npm run dev            # tryb deweloperski z nodemonem
 ```powershell
 cd backend
 node server.js
+
+node server.js lub npm run dev
 ```
 
 Następnie otwórz w przeglądarce `http://localhost:3001/`. Ten adres serwuje `index.html` i obsługuje wszystkie zapytania produktu (`/api/v1/products`) oraz galerii (`/api/gallery/...`). Nie korzystaj z Live Servera – uruchomienie strony spod innego originu skończy się błędem CORS.

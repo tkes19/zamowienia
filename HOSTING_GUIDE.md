@@ -62,6 +62,30 @@ Przewodnik jak wystawić aplikację w Internecie w możliwie **tanio / darmo** i
 5. Deploy: `fly deploy`. Po chwili aplikacja dostępna jest pod `https://twoja-nazwa.fly.dev`.
 6. Darmowy tier obejmuje 256 MB RAM i kilka maszyn współdzielonych – wystarcza do małej aplikacji. Możesz dodać własną domenę i certyfikat w panelu.
 
+### 2.1. Dlaczego obecnie rekomendowany jest Render Free
+
+W aktualnej architekturze projektu (Express + PDF + proxy do galerii na QNAP-ie) najprościej i najszybciej jest używać **Render Free**:
+
+- **Plusy Render Free**
+  - **0 zł** przy małym obciążeniu – darmowy plan z usypianiem instancji.
+  - Działa bez zmian w kodzie: jeden serwer Express (`backend/server.js`) serwuje zarówno frontend, jak i API (`/api/v1/products`, `/api/gallery/*`, `/api/orders/send`).
+  - Prosty model pracy: lokalnie `npm run dev`, na produkcji ten sam kod.
+  - Automatyczny HTTPS i deploy z GitHuba.
+
+- **Minusy Render Free**
+  - Usypianie po kilku minutach bez ruchu – pierwsze wejście po przerwie jest wolniejsze (kilka–kilkanaście sekund).
+
+- **Dlaczego nie Railway jako główna opcja**
+  - Aktualnie Railway daje jednorazowy **trial (ok. 5 USD kredytu)**, a potem wymaga podpięcia płatnego planu – nie ma już stałego darmowego tieru na małe projekty.
+  - Dla długoterminowego, taniego hostingu Render Free jest korzystniejszy, o ile akceptujesz usypianie.
+
+- **Dlaczego nie przepisywać od razu na Vercel/Netlify**
+  - Vercel/Netlify są świetne do czystego frontendu (SPA/Next.js) i prostych funkcji serverless, ale wymagałyby **przepisania `server.js` na wiele funkcji** (`api/*`), co komplikuje backend.
+  - Trudniej odtworzyć lokalnie dokładnie to samo środowisko (inne CLI, inny układ katalogów).
+  - Zyski są głównie „brandingowe” (inna platforma), a nie funkcjonalne – obecne potrzeby projektu lepiej spełnia jeden serwer Express.
+
+**Wniosek:** na dziś najprostsza i najtańsza ścieżka to **Render Free** z usypianiem. Railway i Vercel/Netlify warto rozważyć dopiero, gdy projekt urośnie (np. osobny, większy backend, Next.js na froncie albo potrzeba stałego, płatnego hostingu).
+
 ### Alternatywa – VPS / tani serwer własny
 
 Jeśli dysponujesz najtańszym VPS (np. 5–10 USD/mc), możesz zainstalować Node.js ręcznie i użyć PM2 lub systemd, by uruchomić `npm start` w katalogu `backend/`. Następnie reverse proxy (Nginx/Caddy) serwuje aplikację pod domeną z certyfikatem Let's Encrypt. To rozwiązanie wymaga trochę administracji, ale daje pełną kontrolę i stabilność (brak usypiania).

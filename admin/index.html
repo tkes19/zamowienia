@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Administratora - Rezon</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../assets/vendor/fontawesome/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#64748b',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans">
+    <div class="flex h-screen overflow-hidden">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-white shadow-md flex flex-col">
+            <div class="p-6 border-b">
+                <h1 class="text-2xl font-bold text-gray-800">Rezon Admin</h1>
+                <p class="text-sm text-gray-500">Panel zarządzania</p>
+            </div>
+            <nav class="flex-1 p-4 space-y-2">
+                <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="dashboard">
+                    <i class="fas fa-home w-5"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-4 py-3 text-blue-600 bg-blue-50 rounded-lg font-medium" data-view="products">
+                    <i class="fas fa-boxes w-5"></i>
+                    <span>Produkty i Magazyn</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="users">
+                    <i class="fas fa-users w-5"></i>
+                    <span>Użytkownicy</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="settings">
+                    <i class="fas fa-cog w-5"></i>
+                    <span>Ustawienia</span>
+                </a>
+            </nav>
+            <div class="p-4 border-t">
+                <a href="/" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
+                    <i class="fas fa-arrow-left"></i>
+                    <span>Powrót do sklepu</span>
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-auto p-8">
+            <!-- Header -->
+            <header class="flex justify-between items-center mb-8">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-800">Produkty i Magazyn</h2>
+                    <p class="text-gray-600 mt-1">Zarządzanie stanami magazynowymi produktów</p>
+                </div>
+                <div class="flex gap-3">
+                    <button id="new-product-btn" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 shadow-sm transition-colors">
+                        <i class="fas fa-plus"></i> Nowy produkt
+                    </button>
+                    <button id="refresh-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                        <i class="fas fa-sync-alt"></i> Odśwież
+                    </button>
+                    <button id="sync-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-sm transition-colors">
+                        <i class="fas fa-cloud-download-alt"></i> Pobierz z API
+                    </button>
+                </div>
+            </header>
+
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Wszystkie produkty</div>
+                    <div class="text-3xl font-bold text-gray-800" id="stats-total">0</div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Niski stan</div>
+                    <div class="text-3xl font-bold text-amber-600" id="stats-low">0</div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Brak w magazynie</div>
+                    <div class="text-3xl font-bold text-red-600" id="stats-out">0</div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Wartość magazynu</div>
+                    <div class="text-3xl font-bold text-green-600" id="stats-value">-</div>
+                </div>
+            </div>
+
+            <!-- Search & Filters -->
+            <div class="bg-white p-4 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-center shadow-sm">
+                <div class="relative w-full sm:w-96">
+                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                    <input type="text" id="search-input" placeholder="Szukaj po nazwie, indeksie lub ID..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <div class="flex gap-2">
+                    <select id="category-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                        <option value="">Wszystkie kategorie</option>
+                        <!-- Kategorie będą dynamiczne -->
+                    </select>
+                </div>
+            </div>
+
+            <!-- Table -->
+            <div class="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
+                            <tr>
+                                <th class="p-4 w-16">Img</th>
+                                <th class="p-4">Identyfikator / Indeks</th>
+                                <th class="p-4">Kategoria</th>
+                                <th class="p-4 text-right">Cena</th>
+                                <th class="p-4 text-center">Stan</th>
+                                <th class="p-4 text-center">Rezerwacje</th>
+                                <th class="p-4 text-center">Dostępne</th>
+                                <th class="p-4 text-center">Status</th>
+                                <th class="p-4 text-right">Akcje</th>
+                            </tr>
+                        </thead>
+                        <tbody id="products-table-body" class="divide-y divide-gray-100 text-sm">
+                            <tr>
+                                <td colspan="9" class="p-8 text-center text-gray-500">
+                                    <div class="flex flex-col items-center gap-2">
+                                        <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                                        <span>Ładowanie danych...</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                    <div class="text-sm text-gray-500" id="table-info">Pokazuje 0 z 0 produktów</div>
+                    <div class="flex gap-2">
+                        <button class="px-3 py-1 border border-gray-300 rounded bg-white text-gray-600 disabled:opacity-50" disabled>Poprzednia</button>
+                        <button class="px-3 py-1 border border-gray-300 rounded bg-white text-gray-600 disabled:opacity-50" disabled>Następna</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal formularza produktu -->
+    <div id="product-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl border border-gray-200">
+            <div class="flex justify-between items-center px-6 py-4 border-b">
+                <h3 id="product-modal-title" class="text-lg font-semibold text-gray-800">Nowy produkt</h3>
+                <button id="product-modal-close" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="product-form" class="px-6 py-4 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Identyfikator *</label>
+                        <input type="text" name="identifier" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Indeks</label>
+                        <input type="text" name="index" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Nazwa</label>
+                        <input type="text" name="name" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Jeśli puste, zostanie użyty identyfikator">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Cena *</label>
+                        <input type="number" step="0.01" min="0" name="price" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Kategoria *</label>
+                        <select name="category" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">Wybierz kategorię</option>
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500">Lista kategorii pochodzi z istniejących produktów.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Kod produktu</label>
+                        <input type="text" name="code" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Opcjonalny kod wewnętrzny / ERP">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Dostępność</label>
+                        <select name="availability" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">Domyślna (AVAILABLE)</option>
+                            <option value="AVAILABLE">Dostępny</option>
+                            <option value="UNAVAILABLE">Niedostępny</option>
+                            <option value="OUT_OF_STOCK">Brak w magazynie</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-2 mt-6">
+                        <input type="checkbox" name="isActive" id="field-isActive" class="h-4 w-4 text-blue-600 border-gray-300 rounded" checked>
+                        <label for="field-isActive" class="text-sm text-gray-700">Aktywny</label>
+                    </div>
+                    <div class="flex items-center gap-2 mt-6">
+                        <input type="checkbox" name="new" id="field-new" class="h-4 w-4 text-purple-600 border-gray-300 rounded">
+                        <label for="field-new" class="text-sm text-gray-700">Nowość</label>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Opis</label>
+                    <textarea name="description" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Wymiary / parametry</label>
+                        <input type="text" name="dimensions" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="np. 5 x 7 cm, materiał, itp.">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Ścieżka produkcji</label>
+                        <input type="text" name="productionPath" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="np. linia, technologia">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Slug (adres przyjazny)</label>
+                        <input type="text" name="slug" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Zostaw puste, aby wygenerować automatycznie w przyszłości">
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Adres obrazka (URL)</label>
+                    <input type="text" name="imageUrl" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="https://...">
+                </div>
+                <div id="product-form-error" class="text-sm text-red-600 mt-2 hidden"></div>
+                <div class="flex justify-end gap-3 pt-2 border-t mt-4">
+                    <button type="button" id="product-form-cancel" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Anuluj</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
+                        <i class="fas fa-save"></i>
+                        <span>Zapisz</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal edycji stanów magazynowych -->
+    <div id="inventory-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-xl border border-gray-200">
+            <div class="flex justify-between items-center px-6 py-4 border-b">
+                <h3 id="inventory-modal-title" class="text-lg font-semibold text-gray-800">Stany magazynowe</h3>
+                <button id="inventory-modal-close" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="inventory-form" class="px-6 py-4 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Stan (stock)</label>
+                        <input type="number" name="stock" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="mt-1 text-xs text-gray-500">Aktualny fizyczny stan magazynowy.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Stan optymalny</label>
+                        <input type="number" name="stockOptimal" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="mt-1 text-xs text-gray-500">Docelowy stan, przy którym czujesz się bezpiecznie.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">W zamówieniu (ordered)</label>
+                        <input type="number" name="stockOrdered" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="mt-1 text-xs text-gray-500">Sztuki już zamówione u dostawcy.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Zarezerwowane</label>
+                        <input type="number" name="stockReserved" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="mt-1 text-xs text-gray-500">Sztuki zarezerwowane na konkretne zamówienia.</p>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 pt-2 border-t mt-4">
+                    <button type="button" id="inventory-form-cancel" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Anuluj</button>
+                    <button type="submit" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center gap-2">
+                        <i class="fas fa-save"></i>
+                        <span>Zapisz stany</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>

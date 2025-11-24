@@ -771,6 +771,16 @@ main.layout {
     gap: 1rem;
   }
 
+  .mode-nav {
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    justify-content: flex-start;
+  }
+
+  .mode-nav__item {
+    font-size: 0.9rem;
+  }
+
   .header-row {
     flex-direction: column;
     align-items: flex-start;
@@ -821,7 +831,12 @@ main.layout {
   }
 
   .table {
-    min-width: 620px;
+    min-width: 560px;
+  }
+
+  .table th,
+  .table td {
+    padding: 0.5rem 0.75rem;
   }
 
   .action-btns {
@@ -875,7 +890,7 @@ main.layout {
   }
 
   .table {
-    min-width: 580px;
+    min-width: 540px;
   }
 
   .qty-input {

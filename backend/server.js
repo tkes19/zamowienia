@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const path = require('path');
+const crypto = require('crypto'); // Dodano import crypto
 const { createClient } = require('@supabase/supabase-js');
 const { createPdf } = require('./pdfGenerator');
 
@@ -300,6 +301,475 @@ app.post('/api/orders/send', async (req, res) => {
             error: 'Błąd podczas wysyłania zamówienia',
             details: error.message 
         });
+    }
+});
+
+// Mapowanie kategorii z API Rezon na ENUM w Supabase
+const CATEGORY_MAPPING = {
+    'akcesoria podróżne': 'AKCESORIA_PODROZNE',
+    'artykuły biurowe': 'DLUGOPISY', // mapowanie na DLUGOPISY jak w starym systemie lub ARTYKULY_BIUROWE jeśli istnieje
+    'breloki': 'BRELOKI',
+    'gadżety domowe': 'OZDOBY_DOMOWE',
+    'kubki i szklanki': 'CERAMIKA_I_SZKLO',
+    'magnesy': 'MAGNESY',
+    'odzież': 'TEKSTYLIA',
+    'parasole': 'AKCESORIA_PODROZNE',
+    'prezenty świąteczne': 'UPOMINKI_BIZNESOWE',
+    'torby i plecaki': 'TEKSTYLIA',
+    'bransoletki': 'BRANSOLETKI',
+    'ceramika i szkło': 'CERAMIKA_I_SZKLO',
+    'czapki i nakrycia głowy': 'CZAPKI_I_NAKRYCIA_GLOWY',
+    'do auta': 'AKCESORIA_PODROZNE',
+    'dziecięce': 'DLA_DZIECI',
+    'długopisy': 'DLUGOPISY',
+    'otwieracze': 'OTWIERACZE',
+    'ozdoby domowe': 'OZDOBY_DOMOWE',
+    'tekstylia': 'TEKSTYLIA',
+    'upominki biznesowe': 'UPOMINKI_BIZNESOWE',
+    'zapalniczki i popielniczki': 'ZAPALNICZKI_I_POPIELNICZKI',
+    'zestawy': 'ZESTAWY'
+};
+
+// Endpoint do synchronizacji z zewnętrznym API
+app.post('/api/admin/sync-from-external-api', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        console.log('🚀 Rozpoczynam synchronizację z zewnętrznym API...');
+        
+        // 1. Pobierz produkty z API
+        const response = await fetch('https://rezon-api.vercel.app/api/v1/products');
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
+        
+        const apiData = await response.json();
+        const apiProducts = apiData.data?.products || [];
+        
+        console.log(`📦 Pobrano ${apiProducts.length} produktów z API`);
+        
+        let stats = { processed: 0, updated: 0, errors: 0 };
+        
+        // 2. Przetwarzamy produkty (można to zoptymalizować robiąc batch, ale pętla jest bezpieczniejsza na start)
+        for (const apiProd of apiProducts) {
+            try {
+                // Pomijamy produkty bez nazwy/id
+                if (!apiProd.name && !apiProd.pc_id) continue;
+
+                const identifier = apiProd.name || apiProd.pc_id;
+                const index = apiProd.pc_id || apiProd.name;
+                
+                // Mapowanie kategorii
+                const rawCat = (apiProd.category || '').toLowerCase();
+                const mappedCat = CATEGORY_MAPPING[rawCat] || 'INNE'; // Fallback category
+
+                // Konstrukcja URL obrazka
+                let imageUrl = null;
+                if (apiProd.imageCover) {
+                    imageUrl = apiProd.imageCover.startsWith('http') 
+                        ? apiProd.imageCover 
+                        : `https://www.rezon.eu${apiProd.imageCover}`;
+                }
+
+                // A. Upsert Produktu
+                // W Supabase upsert działa na podstawie Primary Key lub kolumny z constraintem UNIQUE.
+                // W schemacie mamy: constraint Product_identifier_key unique (identifier)
+                
+                // Najpierw sprawdzamy czy produkt istnieje po identifier, żeby pobrać jego ID
+                const { data: existingProd } = await supabase
+                    .from('Product')
+                    .select('id')
+                    .eq('identifier', identifier)
+                    .single();
+
+                let productId = existingProd?.id;
+
+                const productData = {
+                    identifier: identifier,
+                    index: index,
+                    name: identifier, // W starym systemie name to identifier
+                    description: apiProd.description || '',
+                    price: apiProd.price || 0,
+                    category: mappedCat,
+                    isActive: apiProd.active !== false,
+                    new: apiProd.new === true, // Dodano obsługę flagi NOWOŚĆ
+                    imageUrl: imageUrl,
+                    // images: ... (można dodać później)
+                    updatedAt: new Date().toISOString()
+                };
+
+                if (productId) {
+                    // Update
+                    await supabase.from('Product').update(productData).eq('id', productId);
+                } else {
+                    // Insert
+                    const { data: newProd, error: insertError } = await supabase
+                        .from('Product')
+                        .insert(productData)
+                        .select('id')
+                        .single();
+                    
+                    if (insertError) throw insertError;
+                    productId = newProd.id;
+                }
+
+                // B. Aktualizacja Inventory (Check -> Update/Insert)
+                // Tabela Inventory wymaga ID, a upsert bez ID wyrzuca błąd, bo kolumna nie ma default value.
+                
+                // Sprawdź czy istnieje wpis magazynowy
+                const { data: existingInv } = await supabase
+                    .from('Inventory')
+                    .select('id')
+                    .eq('productId', productId)
+                    .eq('location', 'MAIN')
+                    .single();
+
+                const inventoryData = {
+                    stock: apiProd.stock || 0,
+                    stockOptimal: apiProd.stock_optimal || 0,
+                    stockOrdered: apiProd.stock_ordered || 0,
+                    updatedAt: new Date().toISOString()
+                };
+
+                if (existingInv) {
+                    // Update istniejącego
+                    const { error: updateErr } = await supabase
+                        .from('Inventory')
+                        .update(inventoryData)
+                        .eq('id', existingInv.id);
+                    
+                    if (updateErr) throw updateErr;
+                } else {
+                    // Insert nowego (generujemy ID ręcznie)
+                    const newInventoryData = {
+                        id: crypto.randomUUID(),
+                        productId: productId,
+                        location: 'MAIN',
+                        stockReserved: 0,
+                        reorderPoint: 0,
+                        ...inventoryData
+                    };
+                    
+                    const { error: insertErr } = await supabase
+                        .from('Inventory')
+                        .insert(newInventoryData);
+                        
+                    if (insertErr) throw insertErr;
+                }
+
+                stats.processed++;
+                stats.updated++;
+
+            } catch (err) {
+                console.error(`Błąd przy produkcie ${apiProd.name}:`, err.message);
+                stats.errors++;
+            }
+        }
+
+        console.log(`✅ Synchronizacja zakończona.`, stats);
+        return res.json({
+            status: 'success',
+            message: `Zsynchronizowano ${stats.updated} produktów`,
+            stats
+        });
+
+    } catch (error) {
+        console.error('Global sync error:', error);
+        return res.status(500).json({ 
+            status: 'error', 
+            message: 'Błąd synchronizacji',
+            details: error.message 
+        });
+    }
+});
+
+// Endpoint dla panelu admina - lista produktów ze stanami magazynowymi
+app.get('/api/admin/products-with-stock', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ 
+            status: 'error', 
+            message: 'Supabase nie jest skonfigurowany' 
+        });
+    }
+
+    try {
+        console.log('Pobieranie produktów ze stanami magazynowymi...');
+        
+        // Pobieramy produkty i łączymy z Inventory
+        // Uwaga: W Supabase relacja musi być zdefiniowana. 
+        // Jeśli nazwy tabel są wielką literą ("Product", "Inventory"), używamy cudzysłowów w zapytaniu SQL, 
+        // ale w JS client library zazwyczaj podajemy nazwy stringami.
+        // Sprawdzimy czy to zadziała z domyślnymi nazwami.
+        
+        const { data, error } = await supabase
+            .from('Product')
+            .select(`
+                *,
+                Inventory (
+                    stock,
+                    stockOptimal,
+                    stockOrdered,
+                    stockReserved,
+                    location
+                )
+            `)
+            .order('name', { ascending: true });
+
+        if (error) {
+            console.error('Błąd pobierania produktów z Supabase:', error);
+            throw error;
+        }
+
+        // Przetwarzamy dane, aby łatwiej wyświetlać je na froncie
+        // Inventory jest tablicą (bo relacja 1:N), ale interesuje nas głównie location='MAIN'
+        const processedData = data.map(product => {
+            const mainInventory = product.Inventory && Array.isArray(product.Inventory) 
+                ? product.Inventory.find(inv => inv.location === 'MAIN') 
+                : null;
+
+            return {
+                ...product,
+                // Spłaszczamy dane magazynowe do obiektu produktu dla wygody
+                stock: mainInventory?.stock || 0,
+                stockOptimal: mainInventory?.stockOptimal || 0,
+                stockOrdered: mainInventory?.stockOrdered || 0,
+                stockReserved: mainInventory?.stockReserved || 0,
+                hasInventory: !!mainInventory
+            };
+        });
+
+        console.log(`Pobrano ${processedData.length} produktów.`);
+        
+        return res.json({
+            status: 'success',
+            data: processedData
+        });
+
+    } catch (err) {
+        console.error('Wyjątek w /api/admin/products-with-stock:', err);
+        return res.status(500).json({ 
+            status: 'error', 
+            message: 'Błąd podczas pobierania danych magazynowych',
+            details: err.message 
+        });
+    }
+});
+
+// -----------------------------
+// Admin API - CRUD dla Product
+// -----------------------------
+
+// Pobierz pojedynczy produkt
+app.get('/api/admin/products/:id', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const { data, error } = await supabase
+            .from('Product')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (error) {
+            console.error('Błąd pobierania produktu:', error);
+            return res.status(404).json({ status: 'error', message: 'Produkt nie znaleziony' });
+        }
+
+        return res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/products/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas pobierania produktu', details: err.message });
+    }
+});
+
+// Utwórz nowy produkt
+app.post('/api/admin/products', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const body = req.body || {};
+
+    // Prosta walidacja minimalna
+    if (!body.identifier || !body.category || typeof body.price === 'undefined') {
+        return res.status(400).json({
+            status: 'error',
+            message: 'Wymagane pola: identifier, category, price'
+        });
+    }
+
+    const now = new Date().toISOString();
+
+    const productData = {
+        identifier: body.identifier,
+        index: body.index || null,
+        name: body.name || body.identifier,
+        description: body.description || '',
+        price: body.price || 0,
+        code: body.code || null,
+        availability: body.availability || 'AVAILABLE',
+        productionPath: body.productionPath || null,
+        dimensions: body.dimensions || null,
+        imageUrl: body.imageUrl || null,
+        category: body.category,
+        isActive: typeof body.isActive === 'boolean' ? body.isActive : true,
+        slug: body.slug || null,
+        images: body.images || null,
+        new: !!body.new,
+        createdAt: now,
+        updatedAt: now,
+    };
+
+    try {
+        const { data, error } = await supabase
+            .from('Product')
+            .insert(productData)
+            .select('*')
+            .single();
+
+        if (error) {
+            console.error('Błąd tworzenia produktu:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć produktu', details: error.message });
+        }
+
+        return res.status(201).json({ status: 'success', data });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/admin/products:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas tworzenia produktu', details: err.message });
+    }
+});
+
+// Aktualizuj istniejący produkt
+app.patch('/api/admin/products/:id', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+    const body = req.body || {};
+
+    const updateData = { ...body, updatedAt: new Date().toISOString() };
+
+    try {
+        const { data, error } = await supabase
+            .from('Product')
+            .update(updateData)
+            .eq('id', id)
+            .select('*')
+            .single();
+
+        if (error) {
+            console.error('Błąd aktualizacji produktu:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować produktu', details: error.message });
+        }
+
+        return res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/admin/products/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas aktualizacji produktu', details: err.message });
+    }
+});
+
+// Usuń produkt
+app.delete('/api/admin/products/:id', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('Product')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Błąd usuwania produktu:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć produktu', details: error.message });
+        }
+
+        return res.json({ status: 'success', message: 'Produkt usunięty' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/admin/products/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas usuwania produktu', details: err.message });
+    }
+});
+
+// Aktualizacja stanów magazynowych produktu (Inventory, location='MAIN')
+app.patch('/api/admin/products/:id/inventory', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+    const { stock = 0, stockOptimal = 0, stockOrdered = 0, stockReserved = 0 } = req.body || {};
+
+    try {
+        // Upewnij się, że produkt istnieje
+        const { data: product, error: productError } = await supabase
+            .from('Product')
+            .select('id')
+            .eq('id', id)
+            .single();
+
+        if (productError || !product) {
+            return res.status(404).json({ status: 'error', message: 'Produkt nie znaleziony' });
+        }
+
+        // Sprawdź, czy istnieje rekord Inventory dla location MAIN
+        const { data: existingInv } = await supabase
+            .from('Inventory')
+            .select('id')
+            .eq('productId', id)
+            .eq('location', 'MAIN')
+            .single();
+
+        const inventoryData = {
+            stock: Number(stock) || 0,
+            stockOptimal: Number(stockOptimal) || 0,
+            stockOrdered: Number(stockOrdered) || 0,
+            stockReserved: Number(stockReserved) || 0,
+            updatedAt: new Date().toISOString(),
+        };
+
+        if (existingInv) {
+            const { error: updateErr } = await supabase
+                .from('Inventory')
+                .update(inventoryData)
+                .eq('id', existingInv.id);
+
+            if (updateErr) {
+                console.error('Błąd aktualizacji Inventory:', updateErr);
+                return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować stanów magazynowych', details: updateErr.message });
+            }
+        } else {
+            const newInventory = {
+                id: crypto.randomUUID(),
+                productId: id,
+                location: 'MAIN',
+                reorderPoint: 0,
+                ...inventoryData,
+            };
+
+            const { error: insertErr } = await supabase
+                .from('Inventory')
+                .insert(newInventory);
+
+            if (insertErr) {
+                console.error('Błąd tworzenia Inventory:', insertErr);
+                return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć stanów magazynowych', details: insertErr.message });
+            }
+        }
+
+        return res.json({ status: 'success', message: 'Stany magazynowe zapisane' });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/admin/products/:id/inventory:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas zapisu stanów magazynowych', details: err.message });
     }
 });
 
