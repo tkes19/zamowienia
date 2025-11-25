@@ -1215,8 +1215,8 @@ function renderResults(products) {
       projectsInput.value = sanitizeProjectsValue(value);
     });
 
-    // Event listener do pola "Ilości na proj." – podgląd na żywo
-    qtyPerProjectInput.addEventListener('input', () => {
+    // Funkcja do aktualizacji podglądu i przeliczania
+    const updateQtyPreview = () => {
       const projectsValue = projectsInput.value.trim();
       const qtyTotalValue = parseInt(qtyInput.value, 10);
       const qtyPerProjectValue = qtyPerProjectInput.value.trim();
@@ -1239,13 +1239,22 @@ function renderResults(products) {
         qtyPreviewResults.innerHTML = `<span style="color: red; font-size: 0.8rem;">❌ ${result.error}</span>`;
         qtyPreviewResults.style.display = 'block';
       } else {
+        // AUTOMATYCZNIE PRZELICZ pole "Łącznie szt."
+        qtyInput.value = result.totalQuantity;
+        
         const preview = result.perProjectQuantities
           .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
           .join(' | ');
         qtyPreviewResults.innerHTML = `<span style="color: green; font-size: 0.8rem;">✓ Łącznie: ${result.totalQuantity} | ${preview}</span>`;
         qtyPreviewResults.style.display = 'block';
       }
-    });
+    };
+
+    // Event listener do pola "Ilości na proj." – podgląd na żywo
+    qtyPerProjectInput.addEventListener('input', updateQtyPreview);
+
+    // Event listener do pola "Łącznie szt." – również aktualizuj podgląd
+    qtyInput.addEventListener('input', updateQtyPreview);
 
     addBtn.addEventListener('click', () => {
       const projectsValue = projectsInput.value.trim();
