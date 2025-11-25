@@ -13,6 +13,10 @@ let selectedResultsRow = null;
 let projectFilterMode = 'with';
 let lastSearchResults = [];
 let currentFormMode = 'projekty-miejscowosci';
+// Uwaga na przyszłość: planowane są dodatkowe tryby formularza
+// 'projekty-imienne' (PI) i 'projekty-hasla' (Ph).
+// Dla nich również należy utrzymać osobno izolowaną logikę galerii,
+// analogicznie jak dla trybów PM (projekty-miejscowosci) i KI (klienci-indywidualni).
 let isCityModeInitialized = false;
 let isClientsModeInitialized = false;
 let cityModeProductSlug = '';
@@ -21,6 +25,7 @@ let cityModeFilesCache = [];
 let clientsModeProductSlug = '';
 let clientsModeProducts = [];
 let clientsModeFilesCache = [];
+let lastLockedProductSlug = ''; // Przechowuje produkt trzymany przez checkbox
 let currentUser = null;
 
 // Stan klienta zamówienia
@@ -302,13 +307,16 @@ function renderGalleryPreview() {
     return;
   }
 
+  // Zawsze używaj bieżącego galleryFilesCache (z bieżącego kontekstu)
+  const cacheToUse = galleryFilesCache;
+
   // Spróbuj znaleźć pliki dokładnie dla danego produktu
-  const shown = Array.isArray(galleryFilesCache)
-    ? galleryFilesCache.filter((file) => file.product === slug)
+  const shown = Array.isArray(cacheToUse)
+    ? cacheToUse.filter((file) => file.product === slug)
     : [];
 
-  // Jeśli brak dokładnego dopasowania, użyj pierwszego dostępnego pliku
-  const fileToShow = shown[0] || (Array.isArray(galleryFilesCache) ? galleryFilesCache[0] : null);
+  // Jeśli brak dokładnego dopasowania, NIE pokazuj pierwszego lepszego obrazka
+  const fileToShow = shown[0] || null;
 
   if (!fileToShow || !fileToShow.url) {
     setGalleryPlaceholder('Brak obrazków dla wybranego produktu.');
@@ -469,9 +477,12 @@ function setFormMode(mode) {
   const previousMode = currentFormMode;
   const previousSlug = galleryProductSelect ? galleryProductSelect.value || '' : '';
 
-  // Jeśli blokada produktu NIE jest włączona, zapisz aktualny produkt
-  // jako ostatnio użyty w poprzednim trybie.
-  if (!galleryLockCheckbox || !galleryLockCheckbox.checked) {
+  // Jeśli blokada produktu jest włączona, zapisz aktualny produkt do lastLockedProductSlug
+  if (galleryLockCheckbox && galleryLockCheckbox.checked) {
+    lastLockedProductSlug = previousSlug;
+  } else {
+    // Jeśli blokada NIE jest włączona, zapisz aktualny produkt
+    // jako ostatnio użyty w poprzednim trybie.
     if (previousMode === 'projekty-miejscowosci') {
       cityModeProductSlug = previousSlug;
     } else if (previousMode === 'klienci-indywidualni') {
@@ -483,25 +494,32 @@ function setFormMode(mode) {
   updateGalleryControlsVisibility();
 
   if (mode === 'projekty-miejscowosci') {
-    // Przywróć listę produktów i cache dla trybu PM (jeśli już były pobrane)
-    if (isCityModeInitialized) {
-      galleryProducts = cityModeProducts;
-      galleryFilesCache = cityModeFilesCache;
+    // Używaj WYŁĄCZNIE listy produktów dla PM
+    galleryProducts = cityModeProducts;
+    galleryFilesCache = cityModeFilesCache;
 
-      if (galleryProductSelect) {
-        if (galleryProducts.length) {
-          const options = ['<option value="">Wybierz produkt</option>',
-            ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
-          ];
-          galleryProductSelect.innerHTML = options.join('');
-          galleryProductSelect.disabled = false;
-        } else {
-          galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
-          galleryProductSelect.disabled = true;
-        }
+    if (galleryProductSelect) {
+      // Sprawdź, czy checkbox "pamiętaj produkt" jest włączony i czy mamy trzymany produkt
+      const lockedProductSlug = (galleryLockCheckbox && galleryLockCheckbox.checked) ? lastLockedProductSlug : '';
+      const productsToShow = [...galleryProducts];
+      
+      // Jeśli checkbox włączony i trzymamy produkt, dodaj go do listy (jeśli go tam nie ma)
+      if (lockedProductSlug && !productsToShow.includes(lockedProductSlug)) {
+        productsToShow.push(lockedProductSlug);
       }
-      updateProjectFilterAvailability();
+      
+      if (productsToShow.length) {
+        const options = ['<option value="">Wybierz produkt</option>',
+          ...productsToShow.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+        ];
+        galleryProductSelect.innerHTML = options.join('');
+        galleryProductSelect.disabled = false;
+      } else {
+        galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
+        galleryProductSelect.disabled = true;
+      }
     }
+    updateProjectFilterAvailability();
     if (!isCityModeInitialized) {
       setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć projekty.');
       if (galleryCitySelect && !galleryCitySelect.value) {
@@ -518,7 +536,10 @@ function setFormMode(mode) {
       isCityModeInitialized = true;
     }
   } else if (mode === 'klienci-indywidualni') {
-    // Przy wejściu w KI nie wolno używać listy produktów z PM.
+    // Używaj WYŁĄCZNIE listy produktów dla KI
+    galleryProducts = clientsModeProducts;
+    galleryFilesCache = clientsModeFilesCache;
+
     // Jeśli nie mamy jeszcze produktów dla KI, zablokuj select.
     if (!isClientsModeInitialized) {
       setGalleryPlaceholder('Wybierz handlowca i obiekt, aby zobaczyć projekty.');
@@ -534,25 +555,30 @@ function setFormMode(mode) {
       }
       loadSalespeople();
       isClientsModeInitialized = true;
-    } else {
-      // Tryb KI był już inicjalizowany – przywróć jego własną listę produktów.
-      galleryProducts = clientsModeProducts;
-      galleryFilesCache = clientsModeFilesCache;
-
-      if (galleryProductSelect) {
-        if (galleryProducts.length) {
-          const options = ['<option value="">Wybierz produkt</option>',
-            ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
-          ];
-          galleryProductSelect.innerHTML = options.join('');
-          galleryProductSelect.disabled = false;
-        } else {
-          galleryProductSelect.disabled = true;
-          galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz handlowca i obiekt</option>';
-        }
-      }
-      updateProjectFilterAvailability();
     }
+
+    if (galleryProductSelect) {
+      // Sprawdź, czy checkbox "pamiętaj produkt" jest włączony i czy mamy trzymany produkt z PM
+      const lockedProductSlug = (galleryLockCheckbox && galleryLockCheckbox.checked) ? lastLockedProductSlug : '';
+      const productsToShow = [...galleryProducts];
+      
+      // Jeśli checkbox włączony i trzymamy produkt z PM, dodaj go do listy (jeśli go tam nie ma)
+      if (lockedProductSlug && !productsToShow.includes(lockedProductSlug)) {
+        productsToShow.push(lockedProductSlug);
+      }
+      
+      if (productsToShow.length) {
+        const options = ['<option value="">Wybierz produkt</option>',
+          ...productsToShow.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+        ];
+        galleryProductSelect.innerHTML = options.join('');
+        galleryProductSelect.disabled = false;
+      } else {
+        galleryProductSelect.disabled = true;
+        galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz handlowca i obiekt</option>';
+      }
+    }
+    updateProjectFilterAvailability();
   }
 
   // Po przełączeniu trybu zdecyduj, jaki produkt ma być widoczny.
@@ -560,12 +586,24 @@ function setFormMode(mode) {
     let targetSlug = '';
 
     if (galleryLockCheckbox && galleryLockCheckbox.checked) {
-      // Blokada włączona – trzymaj aktualny produkt niezależnie od trybu.
-      targetSlug = previousSlug;
+      // Blokada włączona – zawsze trzymaj aktualny produkt, niezależnie od tego czy jest w liście.
+      // (został dodany do opcji dropdownu w logice budowania opcji powyżej)
+      if (lastLockedProductSlug) {
+        targetSlug = lastLockedProductSlug;
+      }
     } else if (currentFormMode === 'projekty-miejscowosci') {
-      targetSlug = cityModeProductSlug || '';
+      // Przywróć produkt PM TYLKO gdy miasto jest wybrane i slug istnieje w liście PM
+      const city = galleryCitySelect ? galleryCitySelect.value : '';
+      if (city && cityModeProductSlug && galleryProducts.includes(cityModeProductSlug)) {
+        targetSlug = cityModeProductSlug;
+      }
     } else if (currentFormMode === 'klienci-indywidualni') {
-      targetSlug = clientsModeProductSlug || '';
+      // Przywróć produkt KI TYLKO gdy handlowiec i obiekt są wybrane i slug istnieje w liście KI
+      const sp = gallerySalespersonSelect ? gallerySalespersonSelect.value : '';
+      const obj = galleryObjectSelect ? galleryObjectSelect.value : '';
+      if (sp && obj && clientsModeProductSlug && galleryProducts.includes(clientsModeProductSlug)) {
+        targetSlug = clientsModeProductSlug;
+      }
     }
 
     if (targetSlug) {
@@ -1825,13 +1863,33 @@ function initialize() {
   if (galleryProductSelect) {
     galleryProductSelect.addEventListener('change', () => {
       const slug = galleryProductSelect.value || '';
+      
+      // Zapisz slug TYLKO gdy kontekst jest pełny (miasto dla PM, handlowiec+obiekt dla KI)
       if (currentFormMode === 'projekty-miejscowosci') {
-        cityModeProductSlug = slug;
+        const city = galleryCitySelect ? galleryCitySelect.value : '';
+        if (city) {
+          cityModeProductSlug = slug;
+        }
       } else if (currentFormMode === 'klienci-indywidualni') {
-        clientsModeProductSlug = slug;
+        const sp = gallerySalespersonSelect ? gallerySalespersonSelect.value : '';
+        const obj = galleryObjectSelect ? galleryObjectSelect.value : '';
+        if (sp && obj) {
+          clientsModeProductSlug = slug;
+        }
       }
+      
       renderGalleryPreview();
       handleGalleryProductChangeFromSelect();
+    });
+  }
+
+  // Listener dla checkboxa "pamiętaj produkt"
+  if (galleryLockCheckbox) {
+    galleryLockCheckbox.addEventListener('change', () => {
+      // Gdy checkbox jest wyłączany, wyczyść lastLockedProductSlug
+      if (!galleryLockCheckbox.checked) {
+        lastLockedProductSlug = '';
+      }
     });
   }
 

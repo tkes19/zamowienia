@@ -3,6 +3,7 @@
 1. [ ] **Dopasować aktualny formularz zamówień do pracy na telefonach (UX dla handlowca)**
    - [ ] Uprościć widoki i przepływ na małym ekranie.
    - [ ] Zadbaj o wygodne korzystanie na telefonie (duże przyciski, czytelne pola, minimalna liczba kroków).
+   - [x] Uporządkować logikę galerii produktów (tryby PM/KI, pamiętanie produktu, poprawne wyświetlanie grafik) w aktualnym formularzu.
 
 2. [ ] **Zaprojektować i wdrożyć prosty system logowania i ról**
    - [ ] Role: `handlowiec`, `produkcja`, `magazyn` (opcjonalnie `admin`).
@@ -61,3 +62,13 @@
 
 - w tym pliku `PLAN_ROZWOJU.md` – z perspektywy biznesowej/produktowej (co już działa dla użytkownika),
 - w `AI_DEV_PLAN.md` – z perspektywy technicznej (która Faza i które zadania backend/front zostały zrealizowane).
+
+**Notatka dot. trybów formularza:**
+
+- Obecnie zaimplementowane tryby to:
+  - "Projekty miejscowości" (PM),
+  - "Klienci indywidualni" (KI).
+- W przyszłości planowane są dodatkowe tryby:
+  - "Projekty imienne" (PI),
+  - "Projekty hasła" (Ph).
+- Dla nowych trybów należy zachować taką samą, pełną separację logiki galerii jak dla PM/KI (osobne listy produktów, cache plików i stan wyboru).

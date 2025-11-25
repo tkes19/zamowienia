@@ -184,11 +184,6 @@ Cel: umożliwić handlowcowi składanie zamówień **z przyszłą datą realizac
     *   Upewnij się, że wcześniejsze fazy nie pozostają w sprzeczności z nowymi decyzjami.
 3.  **Przy implementacji funkcji:**
     *   Zajrzyj do `supabase/schema.sql`, aby zrozumieć istniejące tabele i relacje.
-    *   Jeżeli funkcjonalność istniała już w starej aplikacji – sprawdź odpowiedni katalog w `SOURCE 2`.
-4.  **Nie zmieniaj pochopnie schematu bazy:**
-    *   Zanim dodasz/zmienisz kolumny w Supabase, zaktualizuj ten plan (sekcja "Analiza Bazy Danych i Mapowanie Funkcjonalności").
-5.  **Dokumentuj większe zmiany:**
-    *   Jeżeli dodasz nową Fazę lub istotnie zmienisz istniejącą, dopisz krótki opis w tym pliku.
 
 ---
 **Aktualny Priorytet:** Faza 1 w trakcie przygotowania.
