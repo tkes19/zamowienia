@@ -2,6 +2,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Elementy DOM
     const clientsTableBody = document.getElementById('clients-table-body');
     const clientsSearchInput = document.getElementById('clients-search-input');
+    const salesRepFilterSelect = document.getElementById('clients-salesrep-filter');
+    const salesRepFilterContainer = document.getElementById('clients-salesrep-filter-container');
     const refreshClientsBtn = document.getElementById('refresh-clients-btn');
     const newClientBtn = document.getElementById('new-client-btn');
     const clientModal = document.getElementById('client-modal');
@@ -19,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentEditingClientId = null;
     let currentUserRole = null;
     let allSalesReps = [];
+    let currentSalesRepFilter = '';
 
     // Sprawdzenie autoryzacji i roli użytkownika
     async function checkAuth() {
@@ -38,6 +41,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Pokaż link do panelu admina dla ADMIN
             if (currentUserRole === 'ADMIN') {
                 adminLink.style.display = 'flex';
+            }
+
+            // Pokaż filtr po handlowcu tylko dla ADMIN i SALES_DEPT
+            if (['ADMIN', 'SALES_DEPT'].includes(currentUserRole) && salesRepFilterContainer) {
+                salesRepFilterContainer.classList.remove('hidden');
             }
 
             return true;
@@ -67,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Wypełnienie selecta handlowcami
+    // Wypełnienie selecta handlowcami (modal)
     function populateSalesRepSelect() {
         const select = document.getElementById('client-form-salesrep');
         if (!select) return;
@@ -78,6 +86,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         select.innerHTML = options.join('');
+
+        // Uzupełnij także dropdown filtra po handlowcu
+        if (salesRepFilterSelect) {
+            const filterOptions = ['<option value="">Wszyscy handlowcy</option>', '<option value="__none">Bez przypisanego</option>'];
+            allSalesReps.forEach(rep => {
+                filterOptions.push(`<option value="${rep.id}">${rep.name}</option>`);
+            });
+            salesRepFilterSelect.innerHTML = filterOptions.join('');
+        }
     }
 
     // Inicjalizacja
@@ -100,6 +117,14 @@ document.addEventListener('DOMContentLoaded', () => {
         filterClients(e.target.value);
     });
 
+    if (salesRepFilterSelect) {
+        salesRepFilterSelect.addEventListener('change', (e) => {
+            const value = e.target.value;
+            currentSalesRepFilter = value || '';
+            filterClients(clientsSearchInput.value || '');
+        });
+    }
+
     clientsTableBody.addEventListener('click', handleTableClick);
 
     logoutBtn.addEventListener('click', async () => {
@@ -117,7 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             clientsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="p-8 text-center text-gray-500">
+                    <td colspan="7" class="p-8 text-center text-gray-500">
                         <div class="flex flex-col items-center gap-2">
                             <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
                             <span>Ładowanie klientów...</span>
@@ -146,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Błąd pobierania klientów:', error);
             clientsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="p-8 text-center text-red-600">
+                    <td colspan="7" class="p-8 text-center text-red-600">
                         <div class="flex flex-col items-center gap-2">
                             <i class="fas fa-exclamation-circle text-2xl"></i>
                             <span>Błąd: ${error.message}</span>
@@ -160,14 +185,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Filtrowanie klientów
     function filterClients(searchTerm = '') {
-        const term = searchTerm.toLowerCase().trim();
+        const term = (searchTerm || '').toLowerCase().trim();
 
         filteredClients = allClients.filter(client => {
-            return !term ||
+            // Filtrowanie tekstowe
+            const matchesText = !term ||
                 (client.name && client.name.toLowerCase().includes(term)) ||
                 (client.email && client.email.toLowerCase().includes(term)) ||
                 (client.phone && client.phone.toLowerCase().includes(term)) ||
                 (client.city && client.city.toLowerCase().includes(term));
+
+            // Filtrowanie po handlowcu (tylko dla ADMIN / SALES_DEPT)
+            let matchesSalesRep = true;
+            if (['ADMIN', 'SALES_DEPT'].includes(currentUserRole)) {
+                if (currentSalesRepFilter === '__none') {
+                    matchesSalesRep = !client.salesRepId;
+                } else if (currentSalesRepFilter) {
+                    matchesSalesRep = client.salesRepId === currentSalesRepFilter;
+                }
+            }
+
+            return matchesText && matchesSalesRep;
         });
 
         renderClientsTable();

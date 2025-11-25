@@ -1,4 +1,5 @@
 import { EMBEDDED_FONTS } from '../assets/fonts/embedded-fonts.js';
+import { computePerProjectQuantities } from './projectQuantityLogic.js';
 
 // Wszystkie zapytania produktowe idą na ten sam origin (proxy /api/v1/products w backend/server.js)
 const API_BASE = '/api/v1/products';
@@ -1341,7 +1342,14 @@ function addToCart(product, quantity, projects) {
   const sanitizedProjects = sanitizeProjectsValue(projects);
   const currentProjects = sanitizedProjects || entry?.projects || '';
 
-  cart.set(key, { product, quantity: newQty, projects: currentProjects });
+  cart.set(key, { 
+    product, 
+    quantity: newQty, 
+    projects: currentProjects,
+    quantityInputTotal: '',  // Pole A: łącznie sztuk
+    quantityInputPerProject: '',  // Pole B: ilości na projekty
+    perProjectQuantities: []  // Rozkład na projekty
+  });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka.`, 'success');
 }
@@ -1382,7 +1390,14 @@ function renderCart() {
   }
 
   let total = 0;
-  const rows = Array.from(cart.entries()).map(([id, { product, quantity, projects = '' }]) => {
+  const rows = Array.from(cart.entries()).map(([id, { 
+    product, 
+    quantity, 
+    projects = '',
+    quantityInputTotal = '',
+    quantityInputPerProject = '',
+    perProjectQuantities = []
+  }]) => {
     const price = Number(product.price ?? 0);
     const lineTotal = price * quantity;
     total += lineTotal;
@@ -1405,13 +1420,28 @@ function renderCart() {
           />
         </td>
         <td>
-          <input
-            type="number"
-            class="qty-input"
-            value="${quantity}"
-            min="1"
-            data-id="${id}"
-          />
+          <div class="qty-controls">
+            <input
+              type="number"
+              class="qty-input"
+              value="${quantity}"
+              min="1"
+              data-id="${id}"
+              placeholder="Łącznie"
+            />
+            <input
+              type="text"
+              class="qty-per-project-input"
+              value="${quantityInputPerProject}"
+              placeholder="po 20 lub 20,30,40"
+              data-id="${id}"
+            />
+            ${perProjectQuantities.length > 0 ? `
+              <div class="qty-preview">
+                ${perProjectQuantities.map(p => `Proj. ${p.projectNo}: ${p.qty}`).join(' | ')}
+              </div>
+            ` : ''}
+          </div>
         </td>
         <td class="price-cell">${formatCurrency(price)}</td>
         <td class="price-cell">${formatCurrency(lineTotal)}</td>
@@ -1428,6 +1458,7 @@ function renderCart() {
 
   const qtyInputs = cartBody.querySelectorAll('.qty-input');
   const projectsInputs = cartBody.querySelectorAll('.projects-input');
+  const qtyPerProjectInputs = cartBody.querySelectorAll('.qty-per-project-input');
   const removeBtns = cartBody.querySelectorAll('.remove-from-cart');
 
   qtyInputs.forEach(qtyInput => {
@@ -1481,6 +1512,47 @@ function renderCart() {
       const normalized = sanitizeProjectsValue(value);
       cart.set(id, { product: entry.product, quantity: entry.quantity, projects: normalized });
       projectsInput.value = normalized;
+    });
+  });
+
+  qtyPerProjectInputs.forEach(qtyPerProjectInput => {
+    qtyPerProjectInput.addEventListener('blur', () => {
+      const id = qtyPerProjectInput.dataset.id;
+      const entry = cart.get(id);
+      if (!entry) return;
+
+      const projectsStr = entry.projects || '';
+      const totalQty = entry.quantity || 0;
+      const perProjectQtyStr = qtyPerProjectInput.value.trim();
+
+      // Jeśli puste, czyszczmy
+      if (!perProjectQtyStr) {
+        cart.set(id, { 
+          ...entry,
+          quantityInputPerProject: '',
+          perProjectQuantities: []
+        });
+        renderCart();
+        return;
+      }
+
+      // Obliczamy rozkład
+      const result = computePerProjectQuantities(projectsStr, totalQty, perProjectQtyStr);
+
+      if (!result.success) {
+        alert(result.error);
+        qtyPerProjectInput.value = entry.quantityInputPerProject || '';
+        return;
+      }
+
+      // Zapisujemy wynik
+      cart.set(id, { 
+        ...entry,
+        quantity: result.totalQuantity,
+        quantityInputPerProject: perProjectQtyStr,
+        perProjectQuantities: result.perProjectQuantities
+      });
+      renderCart();
     });
   });
 

@@ -1304,3 +1304,45 @@ main.layout {
     min-height: auto;
   }
 }
+
+/* Logika ilości na projekty */
+.qty-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.qty-controls .qty-input {
+  font-weight: 500;
+}
+
+.qty-per-project-input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-family: monospace;
+}
+
+.qty-per-project-input::placeholder {
+  color: var(--color-muted);
+  font-family: var(--font-base);
+}
+
+.qty-per-project-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
+}
+
+.qty-preview {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  padding: 0.4rem 0.6rem;
+  background-color: var(--color-surface-secondary);
+  border-radius: 4px;
+  font-family: monospace;
+  word-break: break-word;
+}

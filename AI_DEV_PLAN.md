@@ -60,15 +60,35 @@ Na podstawie `supabase/schema.sql` oraz kodu `SOURCE 2`:
 
 ---
 
+## 4.1. Role Użytkowników i Zakres Uprawnień
+
+Poniższa tabela opisuje, kto co może robić w systemie – szczególnie pod kątem **klientów** i **zamówień**.
+
+| Rola          | Opis / Typ użytkownika                                      | Klienci                                      | Zamówienia                                      | Magazyn / Produkcja                   |
+| ------------- | ------------------------------------------------------------ | -------------------------------------------- | ----------------------------------------------- | ------------------------------------- |
+| `ADMIN`       | Administrator techniczny / osoba odpowiedzialna za system   | Pełny CRUD na wszystkich klientach           | Pełny dostęp (tworzenie, edycja, zmiana statusu) | Pełny dostęp                          |
+| `SALES_REP`   | Handlowiec terenowy                                         | CRUD tylko na **swoich** klientach           | Tworzy/edytuje **swoje** zamówienia              | Podgląd (opcjonalnie)                |
+| `SALES_DEPT`  | Dział handlowy / sprzedaż biurowa                           | Widzi wszystkich, może przypisywać klientów  | Może tworzyć/edytować zamówienia dla dowolnego klienta | Podgląd (np. dostępność produktów) |
+| `WAREHOUSE`   | Magazyn                                                     | Brak lub tylko podgląd podstawowych danych   | Podgląd zamówień, zmiana statusu „wydano / wysłano” | Pełny dostęp do stanów magazynowych  |
+| `PRODUCTION`  | Dział produkcji                                             | Brak / tylko dane do nadruku                 | Podgląd zamówień, zmiana statusu produkcyjnego   | Podgląd stanów, obciążenie linii     |
+| `GRAPHICS`    | Grafik / studio DTP                                         | Brak / tylko dane kontaktowe                 | Podgląd zamówień i projektów                     | Brak                                 |
+| `MANAGEMENT`  | Właściciel / szefostwo (np. szef, żona, brat szefa)         | **Tylko podgląd** wszystkich klientów        | **Tylko podgląd** wszystkich zamówień i historii | Podgląd raportów i stanów magazynowych |
+| `NEW_USER`    | Konto wstępne, przed nadaniem właściwej roli                | Brak                                          | Brak                                             | Brak                                 |
+
+Notatka: rola `MANAGEMENT` jest zaprojektowana jako **read-only** – bez możliwości przypadkowej edycji danych. Właściciel może podejrzeć wszystko, ale nie „psuje” operacyjnych konfiguracji (`ADMIN`).
+
+---
+
 ## 4. Roadmapa Rozwoju (Krok po Kroku)
 
 ### FAZA 1: Fundament Danych (Backend)
 *Cel: Odcięcie zewnętrznego API i pełna kontrola nad danymi.*
 
-1.  **[PILNE] Migracja Endpointu Produktów (`GET /api/v1/products`)**:
-    *   Backend musi czytać z tabeli `Product` i dołączać `Inventory`.
-    *   Implementacja wyszukiwania `ILIKE` po wielu kolumnach.
-    *   Mapowanie danych: Backend musi zwracać strukturę zgodną z obecnym frontendem (np. mapować `index` -> `pc_id`), aby nie psuć UI.
+1.  **Migracja Endpointu Produktów (`GET /api/v1/products`)** – **STATUS: w dużej mierze UKOŃCZONE**:
+    *   ✅ Backend czyta dane z tabel `Product` + `Inventory` w Supabase (bezpośrednio, bez zewnętrznego API).
+    *   ✅ Dane są mapowane do struktury zgodnej z obecnym frontendem (`data.products[...]`).
+    *   🔄 Zewnętrzne API `https://rezon-api.vercel.app/api/v1/products` jest używane **tylko** w endpointzie admina `POST /api/admin/sync-from-external-api` do okresowej synchronizacji produktów do bazy.
+    *   ⏳ Do dopracowania później: pełne wyszukiwanie `ILIKE` po wszystkich wymaganych kolumnach (jeśli frontend tego potrzebuje ponad aktualny zakres).
 
 ### FAZA 2: Tożsamość i Kontekst (Auth)
 *Cel: System musi wiedzieć, kto pracuje.*
@@ -160,12 +180,25 @@ Cel: umożliwić handlowcowi składanie zamówień **z przyszłą datą realizac
     *   Podpowiedzi przy ilości: ile dostępne "teraz" oraz ile "na wybraną datę".
 
 ### FAZA 5: Panel Zarządzania (Dashboard)
-*Cel: Widok operacyjny.*
+*Cel: Widok operacyjny + raporty dla szefostwa (`MANAGEMENT`).*
 
-1.  **Widok "Moje Zamówienia"**:
+1.  **Widok "Moje Zamówienia"** (dla handlowca):
     *   Tabela z historią zamówień, statusami i podglądem PDF.
 2.  **Zarządzanie Klientami**:
     *   Formularz dodawania/edycji klienta (`Customer`).
+3.  **Panel MANAGEMENT – Raporty i Podsumowania** (rola `MANAGEMENT`):
+    *   **Podsumowania sprzedaży:**
+        - widok sprzedaży dziennej/tygodniowej/miesięcznej,
+        - sprzedaż wg handlowca (obrót, liczba zamówień, średnia wartość),
+        - TOP klienci i produkty.
+    *   **Planowanie zakupów towaru:**
+        - lista produktów z ryzykiem braku (na podstawie `stock`, `stockReserved`, `stockOrdered`, `reorderPoint`),
+        - proste wyliczenie sugerowanej ilości do domówienia (do poziomu `stockOptimal`).
+    *   **Kontrola zespołu handlowego:**
+        - liczba zamówień i nowych klientów na handlowca w wybranym okresie,
+        - wykrywanie długo wiszących draftów zamówień (potencjalnie utracone szanse).
+    *   **Widok read-only:**
+        - rola `MANAGEMENT` ma tylko podgląd – bez możliwości edycji danych (bezpieczne dla szefostwa).
 
 ---
 
@@ -187,6 +220,87 @@ Cel: umożliwić handlowcowi składanie zamówień **z przyszłą datą realizac
 4.  **Migracja z SOURCE 2**:
     *   Patrz do `SOURCE 2/.../lib/types.ts` po definicje statusów i typów.
     *   Patrz do `SOURCE 2/.../lib/cart.ts` po algorytmy grupowania produktów.
+
+---
+
+## 5.1. Mapowanie pól Zamówienia – Stary System vs Nowy Formularz
+
+Ta sekcja służy jako "słownik" między starym API (Next.js/Prisma) a nowym arkuszem zamówień.
+
+### 5.1.1. Poziom `Order`
+
+| Stary system (Order)          | Opis                                           | Status w nowym formularzu |
+| ----------------------------- | ---------------------------------------------- | -------------------------- |
+| `id`                          | ID zamówienia w bazie                         | 🔜 powstanie po `INSERT`   |
+| `orderNumber`                 | Numer zamówienia (`YYYY/NNN/III`)             | 🔜 do wygenerowania w backendzie przy zapisie |
+| `customerId`                  | ID klienta (`Customer.id`)                    | ✅ mamy `currentCustomer.id` w formularzu (pasek „Klient zamówienia”) |
+| `userId`                      | ID użytkownika składającego zamówienie        | ✅ mamy z `/api/auth/me` (backend podpinie automatycznie) |
+| `status`                      | Status zamówienia (`PENDING`, `SHIPPED` itd.) | 🔜 w MVP: stała wartość startowa, np. `PENDING` |
+| `deliveryDate` / `productionDate` | Data realizacji/produkcji                  | 🔜 planowane (sekcja dot. dostępności w czasie) |
+| `createdAt`, `updatedAt`      | Daty audytowe                                 | 🔜 generowane po stronie bazy/backendu |
+| `notes`                       | Uwagi do całego zamówienia                    | 🔜 opcjonalne pole w formularzu (można dodać później) |
+
+**Wniosek dla MVP:**
+- Do `POST /api/orders` z frontu musimy minimum przekazać: `customerId` + listę pozycji (`items[]`).
+- `userId`, `orderNumber`, `status`, daty – powstaną po stronie backendu/bazy.
+
+### 5.1.2. Poziom `OrderItem`
+
+| Stary system (OrderItem)      | Opis                                            | Status w nowym formularzu |
+| ----------------------------- | ----------------------------------------------- | -------------------------- |
+| `productId`                   | ID produktu (`Product.id`)                     | ✅ mamy ID produktu (lista wyników + koszyk) |
+| `quantity`                    | Ilość                                           | ✅ ilość wiersza koszyka   |
+| `unitPrice` / `price`         | Cena jednostkowa                               | ✅ liczona / przechowywana po stronie frontu (ukrywana/pokazywana) |
+| `totalPrice`                  | Cena łączna pozycji                            | ✅ można obliczyć po stronie backendu lub frontu |
+| `projects` / `selectedProjects` | Zakres projektów (np. „1–5, 10”)             | ✅ mamy mechanikę wyboru projektów w arkuszu; 🔜 trzeba spiąć z formatem backendu |
+| `mode`                        | Typ trybu (PM / KI / inne)                     | ✅ mamy tryby formularza (`projekty-miejscowosci`, `klienci-indywidualni`) – backend może je dostać jako pole pomocnicze |
+| `notes`                       | Uwagi do pozycji                               | 🔜 na razie brak osobnego pola (opcjonalnie w przyszłości) |
+
+**Wniosek dla MVP:**
+- Każdy element `items[]` wysyłany do `POST /api/orders` powinien zawierać co najmniej:
+  - `productId`,
+  - `quantity`,
+  - ewentualnie `unitPrice` (lub backend sam ją odczyta z tabeli `Product`),
+  - `selectedProjects` (jeśli dotyczy danego trybu).
+
+### 5.1.3. Logika Rozpisywania Ilości na Projekty
+
+**Handlowiec ma 3 sposoby wpisania ilości – system automatycznie rozpoznaje i przelicza:**
+
+#### Tryb 1: Łączna ilość (pole A wypełnione, pole B puste)
+- Handlowiec: projekty `1,2,3`, łącznie `200`
+- System: `200 / 3 = 66 r. 2` → Proj. 1: 67, Proj. 2: 67, Proj. 3: 66
+
+#### Tryb 2: Po X na projekt (pole A puste, pole B = `po 20` lub `20`)
+- Handlowiec: projekty `1-5`, ilości `po 30`
+- System: `30 × 5 = 150` → każdy projekt dostaje 30
+
+#### Tryb 3: Indywidualne (pole A puste, pole B = `20,30,40`)
+- Handlowiec: projekty `4,5,6`, ilości `20,30,40`
+- System: suma `20+30+40 = 90` → Proj. 4: 20, Proj. 5: 30, Proj. 6: 40
+
+#### Oba pola wypełnione
+- System liczy z pola B, sprawdza czy suma = pole A
+- Jeśli nie → żółte ostrzeżenie, nie można wysłać
+
+#### Struktura w `OrderItem`
+```json
+{
+  "productId": "...",
+  "selectedProjects": "1-5",
+  "quantityMode": "perProject",
+  "quantityInputTotal": "200",
+  "quantityInputPerProject": "",
+  "totalQuantity": 200,
+  "perProjectQuantities": [
+    { "projectNo": 1, "qty": 67 },
+    { "projectNo": 2, "qty": 67 },
+    { "projectNo": 3, "qty": 67 },
+    { "projectNo": 4, "qty": 0 },
+    { "projectNo": 5, "qty": -1 }
+  ]
+}
+```
 
 ---
 
