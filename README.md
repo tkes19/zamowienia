@@ -103,15 +103,39 @@ curl "http://localhost:3001/api/gallery/salespeople"         # lista handlowców
 curl "http://localhost:3001/api/gallery/products/Babimost"   # produkty dla miasta
 ```
 
-## 7. Najczęstsze problemy
+## 7. Frontend – responsywny design i mobile UX
+
+Od wersji 2.1 formularz jest w pełni responsywny na urządzeniach mobilnych:
+
+### Breakpointy CSS
+- **Desktop** (1024px+): pełny layout z multi-kolumnowymi formularzami
+- **Tablet** (720px–1023px): jednokolumnowy layout, powiększone przyciski (48px)
+- **Telefon** (< 720px): zoptymalizowany dla palca, scroll poziomy dla paska trybów
+
+### Cechy mobile-friendly
+- **Przyciski i pola**: min-height 44–48px dla łatwości kliknięcia
+- **Font-size**: 16px na mobile (unika auto-zoomu na iOS)
+- **Galeria**: responsywne obrazki z max-height 50vh (tablet) / 45vh (telefon)
+- **Tabele**: zmniejszony padding, czcionka 0.9rem na małych ekranach
+- **Pasek trybów**: scroll poziomy (`overflow-x: auto`) na mobile
+
+### Double-tap zoom na obrazku galerii
+- **Desktop**: double-click na obrazku otwiera modal z powiększeniem
+- **Mobile**: double-tap (dwa szybkie kliknięcia) na obrazku
+- **Zamknięcie**: kliknij przycisk X, tło modala, lub naciśnij ESC
+- **Scrollowanie**: `touch-action: auto` umożliwia normalne scrollowanie strony nawet z obrazkiem
+
+## 8. Najczęstsze problemy
 
 | Problem | Rozwiązanie |
 | --- | --- |
 | **Failed to fetch / CORS** | Upewnij się, że strona jest otwarta z `http://localhost:3001/`, a nie z Live Servera. |
 | **Brak wyników** | Sprawdź logi serwera (`npm run dev`) – czy proxy otrzymało dane z `rezon-api`. |
 | **SMTP błędy** | Zweryfikuj dane w `.env` oraz dostępność serwera pocztowego. |
+| **Na mobile nie mogę scrollować strony** | Upewnij się, że `touch-action: auto` jest ustawiony w `.gallery-preview__frame`. |
+| **Double-tap zoom nie działa** | Sprawdź, czy `initGalleryZoom()` jest wywoływana w `initialize()` w `scripts/app.js`. |
 
-## 8. Deploy (skrót)
+## 9. Deploy (skrót)
 
 1. Wybierz hosting Node.js (Railway, Render, Fly.io, VPS itp.).
 2. Zdeployuj katalog `backend/` – Express będzie serwować statyczne pliki i API jednocześnie.
@@ -122,7 +146,7 @@ To wszystko – dokument ma być możliwie zwięzły. Jeśli potrzeba dodatkowyc
 
 ---
 
-## 9. Git – pierwsza konfiguracja repozytorium (opcjonalnie)
+## 10. Git – pierwsza konfiguracja repozytorium (opcjonalnie)
 
 1. **Zainstaluj Git** z https://git-scm.com/download/win i w kreatorze pozostaw opcję dodania go do `PATH`.
 2. **Skonfiguruj globalną tożsamość (tylko raz):**
@@ -141,7 +165,7 @@ To wszystko – dokument ma być możliwie zwięzły. Jeśli potrzeba dodatkowyc
    git remote add origin https://github.com/tkes19/zamowienia.git
    ```
 
-## 10. Git – typowy cykl pracy (kopiuj i wklej)
+## 11. Git – typowy cykl pracy (kopiuj i wklej)
 
 1. Sprawdź status plików:
    ```powershell
@@ -206,7 +230,7 @@ git push
 
 
 
-## 11. Git – cofanie zmian, gdy coś się zepsuje
+## 12. Git – cofanie zmian, gdy coś się zepsuje
 
 1. Zobacz historię commitów:
    ```powershell
@@ -234,7 +258,7 @@ git push
 
 > **Tip:** Przed eksperymentami warto użyć oddzielnej gałęzi – `git checkout -b nazwa-testowa` – i po weryfikacji scalić ją z `main` (`git merge`).
 
-## 12. Hosting aplikacji (skrót)
+## 13. Hosting aplikacji (skrót)
 
 Jeśli potrzebujesz pełnych instrukcji wdrożenia (Railway, Netlify, Fly.io), skorzystaj z pliku `HOSTING_GUIDE.md`. Poniżej szybkie podsumowanie:
 

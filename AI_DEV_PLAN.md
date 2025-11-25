@@ -87,9 +87,23 @@ Na podstawie `supabase/schema.sql` oraz kodu `SOURCE 2`:
     *   Zamiast trzymać koszyk tylko w `localStorage`, frontend wysyła go do `POST /api/drafts`.
     *   Backend zapisuje do `order_drafts` (tylko jeden aktywny draft na usera).
     *   **Korzyść:** Handlowiec nie traci koszyka po zmianie urządzenia.
-2.  **Wybór Klienta**:
-    *   Endpoint `GET /api/my-customers` (klienci danego handlowca).
-    *   Frontend: Dropdown w koszyku "Wybierz klienta".
+2.  **Wybór Klienta & Przypisanie do Handlowca**:
+    *   **Stan obecny:**
+        - ✅ Endpoint `GET /api/clients` z filtrowaniem po roli (handlowiec widzi tylko swoich klientów).
+        - ✅ Endpoint `GET /api/clients` wzbogacony o `salesRepName` dla `ADMIN` i `SALES_DEPT`.
+        - ✅ Panel "Moi klienci" (`/clients`) – pełny CRUD z poziomu handlowca/administracji.
+        - ✅ Kolumna "Przypisany do" w tabeli klientów (widoczna dla `ADMIN` i `SALES_DEPT`).
+        - ✅ Pole "Przypisz do handlowca" w modalu edycji klienta (dostępne dla `ADMIN` i `SALES_DEPT`).
+        - ✅ Dropdown w formularzu zamówień: pasek "Klient zamówienia" z polem "Szukaj" i listą klientów.
+        - ✅ Filtrowanie po dowolnym fragmencie tekstu (nazwa, miasto, email, telefon) + auto-wybór przy jednym wyniku.
+        - ✅ Wyświetlanie nazwy handlowca w dropdownie klientów formularza zamówień (format: `Klient (handlowiec: Imię Nazwisko)`).
+    *   **Logika ról:**
+        - `SALES_REP` – widzi tylko swoich klientów, nie może zmieniać przypisania.
+        - `SALES_DEPT` – widzi wszystkich klientów, może przypisywać klientów do siebie lub do handlowców, może tworzyć zamówienia dla dowolnego klienta.
+        - `ADMIN` – pełny dostęp do wszystkich klientów i przypisań.
+    *   **Do zrobienia w tej fazie:**
+        - [ ] Podpiąć `currentCustomer.id` do modelu draftu/zamówienia.
+        - [ ] Upewnić się, że przy finalizacji koszyka `customerId` jest wymagany i walidowany po stronie backendu.
 3.  **Logika "Projektów" (Specyfika Branży)**:
     *   Obsługa pól `selectedProjects` (zakresy np. "1-5, 10") w `order_draft_items`.
     *   Walidacja poprawności zakresów po stronie serwera.
@@ -187,4 +201,75 @@ Cel: umożliwić handlowcowi składanie zamówień **z przyszłą datą realizac
 
 ---
 **Aktualny Priorytet:** Faza 1 w trakcie przygotowania.
-**Aktualny Priorytet:** FAZA 1 (Backend Produktów).
+---
+
+## 6. Notatki o stanie frontendu – Mobile UX (v2.1)
+
+### Implementacja responsywnego designu i double-tap zoom
+
+**Status:** ✅ Ukończone (Nov 25, 2025)
+
+**Zmiany CSS (`assets/styles.css`):**
+- Breakpointy: `@media (max-width: 720px)` dla tablet/telefon, `@media (max-width: 420px)` dla małych ekranów.
+- `.mode-nav`: scroll poziomy (`overflow-x: auto`) na mobile.
+- Przyciski i pola: `min-height: 44px` (desktop), `min-height: 48px` (mobile).
+- Font-size: 16px na mobile (unika auto-zoomu iOS).
+- `.gallery-preview__frame`: `touch-action: auto` (umożliwia scrollowanie), `max-height: 50vh` (tablet), `45vh` (telefon).
+- Nowy modal `.gallery-zoom-modal` do powiększenia obrazka.
+
+**Zmiany HTML (`index.html`):**
+- Dodano modal HTML: `#gallery-zoom-modal` z przyciskiem zamknięcia i obrazkiem.
+- Dodano ID `gallery-preview-frame` do kontenera galerii.
+
+**Zmiany JavaScript (`scripts/app.js`):**
+- Nowa funkcja `initGalleryZoom()` obsługująca:
+  - Double-tap (mobile) / double-click (desktop) na obrazku.
+  - Otwieranie modala z powiększonym obrazkiem.
+  - Zamknięcie: przycisk X, kliknięcie na tło, klawisz ESC.
+  - Touch event listeners z `{ passive: true }` dla naturalnego scrollowania.
+- Wywołanie `initGalleryZoom()` w funkcji `initialize()`.
+
+**Rezultat:**
+- ✅ Formularz responsywny na wszystkich rozdzielczościach (360px–1920px+).
+- ✅ Przyciski i pola touch-friendly (44–48px).
+- ✅ Scrollowanie strony nie blokuje się na obrazku.
+- ✅ Double-tap zoom na galerii.
+- ✅ Brak horizontal scrollingu na mobile.
+
+---
+
+### 6.2. Klienci – panel i wybór w formularzu (v2.2)
+
+**Status:** ✅ Ukończone (frontend + API klientów + logika przypisania)
+
+**Zaimplementowane elementy:**
+
+**Backend (`/api/clients`):**
+- Filtrowanie po roli: `SALES_REP` widzi tylko swoich, `SALES_DEPT`/`ADMIN` widzą wszystkich.
+- Wzbogacanie odpowiedzi o `salesRepName` (dla `ADMIN` i `SALES_DEPT`).
+- Możliwość edycji `salesRepId` dla `ADMIN` i `SALES_DEPT` (via `PATCH /api/clients/:id`).
+
+**Frontend – Panel `/clients`:**
+- Kolumna "Przypisany do" wyświetlająca nazwę handlowca (widoczna dla `ADMIN` i `SALES_DEPT`).
+- Modal edycji z polem `select` do przypisania klienta do handlowca (tylko dla `ADMIN` i `SALES_DEPT`).
+- Załadowanie listy handlowców z `GET /api/admin/users?role=SALES_REP`.
+
+**Frontend – Formularz zamówień (`index.html` + `scripts/app.js`):**
+- Pasek "Klient zamówienia" nad koszykiem.
+- Pole "Szukaj" + `select` z listą klientów.
+- Filtrowanie po dowolnym fragmencie (nazwa, miasto, email, telefon).
+- Auto-wybór klienta przy jednym wyniku.
+- **Nowe:** Wyświetlanie nazwy handlowca w opcjach dropdownu (format: `Klient (handlowiec: Imię Nazwisko)`).
+
+**Logika ról:**
+- `SALES_REP`: widzi tylko swoich klientów, nie może edytować przypisania.
+- `SALES_DEPT`: widzi wszystkich klientów, może przypisywać klientów do siebie lub do handlowców.
+- `ADMIN`: pełny dostęp do wszystkich operacji na klientach.
+
+**Do spięcia w kolejnych fazach:**
+- Powiązać `currentCustomer` z draftem zamówienia i finalnym `Order.customerId`.
+- Wymusić obecność klienta przy `POST /api/orders` (walidacja biznesowa).
+
+---
+
+**Aktualny Priorytet:** FAZA 1 (Backend Produktów) + przygotowanie projektu pod zapis zamówień (FAZA 3/4).

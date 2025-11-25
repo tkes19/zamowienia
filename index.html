@@ -126,13 +126,22 @@
             </label>
           </div>
           <div class="gallery-preview">
-            <div class="gallery-preview__frame">
+            <div class="gallery-preview__frame" id="gallery-preview-frame">
               <img id="gallery-preview-image" class="gallery-preview__image" alt="Podgląd wybranego produktu" hidden />
               <p id="gallery-preview-placeholder" class="gallery-preview__placeholder">
                 Wybierz miejscowość i produkt, aby zobaczyć grafikę.
               </p>
             </div>
             <p id="gallery-errors" class="status status--error" hidden></p>
+          </div>
+
+          <!-- Modal do powiększenia obrazka -->
+          <div class="gallery-zoom-modal" id="gallery-zoom-modal" data-active="false">
+            <button class="gallery-zoom-modal__close" id="gallery-zoom-close" aria-label="Zamknij powiększenie">
+              <i class="fas fa-times"></i>
+            </button>
+            <img id="gallery-zoom-image" class="gallery-zoom-modal__image" alt="Powiększony podgląd produktu" />
+            <div class="gallery-zoom-hint">Kliknij, aby zamknąć</div>
           </div>
         </section>
       </section>

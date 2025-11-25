@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let filteredClients = [];
     let currentEditingClientId = null;
     let currentUserRole = null;
+    let allSalesReps = [];
 
     // Sprawdzenie autoryzacji i roli użytkownika
     async function checkAuth() {
@@ -47,11 +48,44 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Załadowanie listy handlowców (dla ADMIN i SALES_DEPT)
+    async function loadSalesReps() {
+        if (!['ADMIN', 'SALES_DEPT'].includes(currentUserRole)) return;
+
+        try {
+            const response = await fetch('/api/admin/users?role=SALES_REP', {
+                credentials: 'include',
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                allSalesReps = Array.isArray(result.data) ? result.data : [];
+                populateSalesRepSelect();
+            }
+        } catch (error) {
+            console.error('Błąd pobierania handlowców:', error);
+        }
+    }
+
+    // Wypełnienie selecta handlowcami
+    function populateSalesRepSelect() {
+        const select = document.getElementById('client-form-salesrep');
+        if (!select) return;
+
+        const options = ['<option value="">--- Wybierz handlowca ---</option>'];
+        allSalesReps.forEach(rep => {
+            options.push(`<option value="${rep.id}">${rep.name}</option>`);
+        });
+
+        select.innerHTML = options.join('');
+    }
+
     // Inicjalizacja
     async function init() {
         const isAuthorized = await checkAuth();
         if (!isAuthorized) return;
 
+        loadSalesReps();
         fetchClients();
     }
 
@@ -144,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (filteredClients.length === 0) {
             clientsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="p-8 text-center text-gray-500">
+                    <td colspan="7" class="p-8 text-center text-gray-500">
                         ${allClients.length === 0 ? 'Brak klientów do wyświetlenia' : 'Brak klientów spełniających kryteria wyszukiwania'}
                     </td>
                 </tr>
@@ -167,6 +201,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 client.country && client.country !== 'Poland' ? client.country : ''
             ].filter(Boolean).join(', ');
 
+            // Wyświetl nazwę handlowca (dla ADMIN i SALES_DEPT)
+            const salesRepDisplay = ['ADMIN', 'SALES_DEPT'].includes(currentUserRole)
+                ? (client.salesRepName ? `<span class="text-gray-900 font-medium">${client.salesRepName}</span>` : '<span class="text-gray-400">Brak przypisania</span>')
+                : '';
+
             return `
                 <tr class="hover:bg-gray-50 transition-colors" data-client-id="${client.id}">
                     <td class="p-4">
@@ -180,6 +219,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-4">
                         <div class="text-sm text-gray-600">
                             ${addressInfo || '<span class="text-gray-400">Brak adresu</span>'}
+                        </div>
+                    </td>
+                    <td class="p-4">
+                        <div class="text-sm">
+                            ${salesRepDisplay}
                         </div>
                     </td>
                     <td class="p-4">
@@ -251,6 +295,9 @@ document.addEventListener('DOMContentLoaded', () => {
         clientFormError.classList.add('hidden');
         clientFormError.textContent = '';
 
+        const salesRepSelect = document.getElementById('client-form-salesrep');
+        const isAdminOrSalesDept = ['ADMIN', 'SALES_DEPT'].includes(currentUserRole);
+
         if (client) {
             // Edycja
             clientModalTitle.textContent = 'Edytuj klienta';
@@ -262,13 +309,30 @@ document.addEventListener('DOMContentLoaded', () => {
             clientForm.querySelector('[name="zipCode"]').value = client.zipCode || '';
             clientForm.querySelector('[name="country"]').value = client.country || 'Poland';
             clientForm.querySelector('[name="notes"]').value = client.notes || '';
+            
+            // Ustaw przypisanie handlowca (dla ADMIN i SALES_DEPT)
+            if (salesRepSelect && isAdminOrSalesDept) {
+                salesRepSelect.value = client.salesRepId || '';
+            }
+            
             clientForm.querySelector('button[type="submit"] span').textContent = 'Zapisz zmiany';
         } else {
             // Nowy klient
             clientModalTitle.textContent = 'Dodaj nowego klienta';
             clientForm.reset();
             clientForm.querySelector('[name="country"]').value = 'Poland';
+            
+            // Dla nowego klienta, domyślnie przypisz do zalogowanego użytkownika (jeśli SALES_REP)
+            if (salesRepSelect && currentUserRole === 'SALES_REP') {
+                // Handlowiec nie widzi tego pola, więc nie ustawiamy
+            }
+            
             clientForm.querySelector('button[type="submit"] span').textContent = 'Zapisz klienta';
+        }
+
+        // Ukryj/pokaż pole przypisania w zależności od roli
+        if (salesRepSelect) {
+            salesRepSelect.parentElement.parentElement.style.display = isAdminOrSalesDept ? 'block' : 'none';
         }
 
         clientModal.classList.remove('hidden');
@@ -300,6 +364,14 @@ document.addEventListener('DOMContentLoaded', () => {
             country: formData.get('country'),
             notes: formData.get('notes'),
         };
+
+        // Dodaj salesRepId dla ADMIN i SALES_DEPT
+        if (['ADMIN', 'SALES_DEPT'].includes(currentUserRole)) {
+            const salesRepId = formData.get('salesRepId');
+            if (salesRepId) {
+                data.salesRepId = salesRepId;
+            }
+        }
 
         // Walidacja
         if (!data.name || !data.name.trim()) {

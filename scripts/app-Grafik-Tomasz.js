@@ -1981,8 +1981,7 @@ function renderOrderCustomerOptions() {
 
   pickerFilteredCustomers.forEach((c) => {
     const meta = [c.city, c.zipCode].filter(Boolean).join(' ');
-    const salesRep = c.salesRepName ? ` (handlowiec: ${c.salesRepName})` : '';
-    const label = meta ? `${c.name} (${meta})${salesRep}` : `${c.name}${salesRep}`;
+    const label = meta ? `${c.name} (${meta})` : c.name;
     options.push(`<option value="${c.id}">${label}</option>`);
   });
 

@@ -1145,7 +1145,7 @@ app.delete('/api/admin/users/:id', requireRole(['ADMIN']), async (req, res) => {
 // API - Zarządzanie klientami
 // -----------------------------
 
-// Lista klientów (handlowiec widzi tylko swoich, admin wszystkich)
+// Lista klientów (handlowiec widzi tylko swoich, admin/SALES_DEPT wszystkich)
 app.get('/api/clients', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN', 'WAREHOUSE']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
@@ -1192,7 +1192,28 @@ app.get('/api/clients', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN', 'WAREHO
             return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać klientów', details: error.message });
         }
 
-        return res.json({ status: 'success', data: data || [] });
+        // Wzbogać dane o nazwę handlowca (dla ADMIN i SALES_DEPT)
+        let enrichedData = data || [];
+        if (['ADMIN', 'SALES_DEPT'].includes(role) && enrichedData.length > 0) {
+            const salesRepIds = [...new Set(enrichedData.map(c => c.salesRepId).filter(Boolean))];
+            
+            if (salesRepIds.length > 0) {
+                const { data: users, error: usersError } = await supabase
+                    .from('User')
+                    .select('id, name')
+                    .in('id', salesRepIds);
+                
+                if (!usersError && users) {
+                    const userMap = Object.fromEntries(users.map(u => [u.id, u.name]));
+                    enrichedData = enrichedData.map(c => ({
+                        ...c,
+                        salesRepName: c.salesRepId ? userMap[c.salesRepId] || 'Nieznany' : null
+                    }));
+                }
+            }
+        }
+
+        return res.json({ status: 'success', data: enrichedData });
     } catch (err) {
         console.error('Wyjątek w GET /api/clients:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd podczas pobierania klientów', details: err.message });

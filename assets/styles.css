@@ -668,7 +668,8 @@ header h1 {
   padding: 1rem;
   overflow: auto;
   cursor: zoom-in;
-  touch-action: none;
+  touch-action: auto;
+  user-select: none;
 }
 
 @media (max-width: 720px) {
@@ -704,6 +705,75 @@ header h1 {
   font-size: 0.95rem;
   color: var(--color-muted);
   text-align: center;
+}
+
+/* Modal do powiększenia obrazka */
+.gallery-zoom-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.9);
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.gallery-zoom-modal[data-active="true"] {
+  display: flex;
+}
+
+.gallery-zoom-modal__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.gallery-zoom-modal__close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  transition: background 0.2s ease;
+  z-index: 51;
+}
+
+.gallery-zoom-modal__close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.gallery-zoom-hint {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  pointer-events: none;
+  animation: fadeInOut 3s ease-in-out;
+}
+
+@keyframes fadeInOut {
+  0%, 100% { opacity: 0; }
+  10%, 90% { opacity: 1; }
 }
 
 #gallery-errors {
