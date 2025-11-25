@@ -104,11 +104,17 @@ function formatGalleryProductLabel(slug = '') {
 }
 
 async function loadGalleryCities() {
-  if (!galleryCitySelect) return;
+  console.log('[DEBUG] loadGalleryCities() called, galleryCitySelect:', galleryCitySelect);
+  if (!galleryCitySelect) {
+    console.error('[ERROR] galleryCitySelect is null!');
+    return;
+  }
   try {
+    console.log('[DEBUG] Fetching cities from:', `${GALLERY_API_BASE}/cities`);
     galleryCitySelect.disabled = true;
     galleryCitySelect.innerHTML = '<option value="">Ładowanie…</option>';
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/cities`);
+    console.log('[DEBUG] Cities loaded:', data);
     const visibleCities = Array.isArray(data.cities)
       ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
       : [];
@@ -1971,7 +1977,9 @@ function initialize() {
   initGalleryZoom();
   
   // Inicjalizacja danych galerii
+  console.log('[DEBUG] initialize() - currentFormMode:', currentFormMode);
   if (currentFormMode === 'projekty-miejscowosci') {
+    console.log('[DEBUG] Loading cities for PM mode...');
     loadGalleryCities();
     isCityModeInitialized = true;
   } else if (currentFormMode === 'klienci-indywidualni') {
