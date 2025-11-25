@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Logowanie – System zamówień</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+  <main class="layout">
+    <header>
+      <h1>Zaloguj się do systemu</h1>
+      <p class="tagline">Wprowadź dane, aby przejść do panelu administracyjnego lub formularza zamówień.</p>
+    </header>
+
+    <section class="panel">
+      <h2>Logowanie</h2>
+      <p class="panel__hint">Użyj swojego firmowego adresu e-mail i hasła.</p>
+
+      <form id="login-form" autocomplete="on">
+        <div class="field">
+          <label class="field__label" for="login-email">Email</label>
+          <input
+            id="login-email"
+            class="field__input"
+            type="email"
+            name="email"
+            required
+            autocomplete="username"
+            placeholder="twoj@email.com"
+          />
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="login-password">Hasło</label>
+          <input
+            id="login-password"
+            class="field__input"
+            type="password"
+            name="password"
+            required
+            autocomplete="current-password"
+          />
+        </div>
+
+        <div class="field" style="margin-top: 1rem; text-align: left;">
+          <button type="submit" class="btn btn--primary">Zaloguj się</button>
+        </div>
+
+        <p id="login-error" class="status status--error status--compact" hidden></p>
+      </form>
+    </section>
+
+    <section class="panel panel--note">
+      <h2>Konta testowe</h2>
+      <p>Te dane są wpisane na sztywno tylko na potrzeby testów i demo:</p>
+      <ul>
+        <li><strong>Admin:</strong> <code>john@doe.com</code> / <code>johndoe123</code></li>
+        <li><strong>Handlowiec:</strong> <code>handlowiec@pamiatki.pl</code> / <code>sales123</code></li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module" src="scripts/login.js"></script>
+</body>
+</html>

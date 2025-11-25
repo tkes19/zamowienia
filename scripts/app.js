@@ -13,9 +13,26 @@ let selectedResultsRow = null;
 let projectFilterMode = 'with';
 let lastSearchResults = [];
 let currentFormMode = 'projekty-miejscowosci';
+let isCityModeInitialized = false;
+let isClientsModeInitialized = false;
+let cityModeProductSlug = '';
+let cityModeProducts = [];
+let cityModeFilesCache = [];
+let clientsModeProductSlug = '';
+let clientsModeProducts = [];
+let clientsModeFilesCache = [];
+let currentUser = null;
+
+// Stan klienta zamówienia
+let currentCustomer = null;
+let pickerCustomers = [];
+let pickerFilteredCustomers = [];
 
 // Inicjalizacja elementów DOM
 const resultsBody = document.getElementById('results-body');
+const clientsLink = document.getElementById('clients-link');
+const adminLink = document.getElementById('admin-link');
+const logoutBtn = document.getElementById('logout-btn');
 const cartBody = document.getElementById('cart-body');
 const cartTotal = document.querySelector('#cart-total');
 const clearCartBtn = document.getElementById('clear-cart');
@@ -33,6 +50,10 @@ const galleryPreviewImage = document.getElementById('gallery-preview-image');
 const galleryPreviewPlaceholder = document.getElementById('gallery-preview-placeholder');
 const galleryErrors = document.getElementById('gallery-errors');
 const galleryLockCheckbox = document.getElementById('gallery-lock-product');
+// Klient zamówienia
+const orderCustomerNameEl = document.getElementById('order-customer-name');
+const orderCustomerSearchInput = document.getElementById('order-customer-search');
+const orderCustomerSelectEl = document.getElementById('order-customer-select');
 
 const EMBEDDED_FONTS_STATE = {
   'NotoSans-Regular.ttf': (EMBEDDED_FONTS && EMBEDDED_FONTS['NotoSans-Regular.ttf']) || null,
@@ -139,6 +160,8 @@ async function loadGalleryProductsForObject(salesperson, object) {
     const data = await fetchGalleryJSON(url);
     galleryFilesCache = Array.isArray(data.files) ? data.files : [];
     galleryProducts = Array.isArray(data.products) ? data.products : [];
+    clientsModeFilesCache = galleryFilesCache;
+    clientsModeProducts = galleryProducts;
 
     const baseOptions = ['<option value="">Wybierz produkt</option>',
       ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
@@ -213,6 +236,8 @@ async function loadGalleryProducts(city) {
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/products/${encodeURIComponent(targetCity)}`);
     galleryFilesCache = Array.isArray(data.files) ? data.files : [];
     galleryProducts = Array.isArray(data.products) ? data.products : [];
+    cityModeFilesCache = galleryFilesCache;
+    cityModeProducts = galleryProducts;
 
     const baseOptions = ['<option value="">Wybierz produkt</option>',
       ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
@@ -277,12 +302,21 @@ function renderGalleryPreview() {
     return;
   }
 
-  const shown = galleryFilesCache.filter((file) => file.product === slug);
-  if (!shown.length) {
+  // Spróbuj znaleźć pliki dokładnie dla danego produktu
+  const shown = Array.isArray(galleryFilesCache)
+    ? galleryFilesCache.filter((file) => file.product === slug)
+    : [];
+
+  // Jeśli brak dokładnego dopasowania, użyj pierwszego dostępnego pliku
+  const fileToShow = shown[0] || (Array.isArray(galleryFilesCache) ? galleryFilesCache[0] : null);
+
+  if (!fileToShow || !fileToShow.url) {
     setGalleryPlaceholder('Brak obrazków dla wybranego produktu.');
     return;
   }
-  showGalleryImage(shown[0]?.url, formatGalleryProductLabel(shown[0]?.product));
+
+  const label = formatGalleryProductLabel(fileToShow.product || slug);
+  showGalleryImage(fileToShow.url, label);
 }
 
 function findGallerySlugsForQuery(query) {
@@ -432,43 +466,113 @@ async function loadObjectsForSalesperson(salesperson) {
 function setFormMode(mode) {
   if (!mode || currentFormMode === mode) return;
 
+  const previousMode = currentFormMode;
+  const previousSlug = galleryProductSelect ? galleryProductSelect.value || '' : '';
+
+  // Jeśli blokada produktu NIE jest włączona, zapisz aktualny produkt
+  // jako ostatnio użyty w poprzednim trybie.
+  if (!galleryLockCheckbox || !galleryLockCheckbox.checked) {
+    if (previousMode === 'projekty-miejscowosci') {
+      cityModeProductSlug = previousSlug;
+    } else if (previousMode === 'klienci-indywidualni') {
+      clientsModeProductSlug = previousSlug;
+    }
+  }
+
   currentFormMode = mode;
   updateGalleryControlsVisibility();
 
   if (mode === 'projekty-miejscowosci') {
-    setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć projekty.');
-    if (galleryCitySelect) {
-      galleryCitySelect.value = '';
+    // Przywróć listę produktów i cache dla trybu PM (jeśli już były pobrane)
+    if (isCityModeInitialized) {
+      galleryProducts = cityModeProducts;
+      galleryFilesCache = cityModeFilesCache;
+
+      if (galleryProductSelect) {
+        if (galleryProducts.length) {
+          const options = ['<option value="">Wybierz produkt</option>',
+            ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+          ];
+          galleryProductSelect.innerHTML = options.join('');
+          galleryProductSelect.disabled = false;
+        } else {
+          galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
+          galleryProductSelect.disabled = true;
+        }
+      }
+      updateProjectFilterAvailability();
     }
-    if (galleryProductSelect) {
-      galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
-      galleryProductSelect.disabled = true;
+    if (!isCityModeInitialized) {
+      setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć projekty.');
+      if (galleryCitySelect && !galleryCitySelect.value) {
+        galleryCitySelect.value = '';
+      }
+      if (galleryProductSelect && !galleryProductSelect.value) {
+        galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
+        galleryProductSelect.disabled = true;
+      }
+      galleryFilesCache = [];
+      galleryProducts = [];
+      updateProjectFilterAvailability();
+      loadGalleryCities();
+      isCityModeInitialized = true;
     }
-    galleryFilesCache = [];
-    galleryProducts = [];
-    updateProjectFilterAvailability();
-    loadGalleryCities();
   } else if (mode === 'klienci-indywidualni') {
-    setGalleryPlaceholder('Wybierz handlowca i obiekt, aby zobaczyć projekty.');
-    galleryFilesCache = [];
-    galleryProducts = [];
-    updateProjectFilterAvailability();
+    // Przy wejściu w KI nie wolno używać listy produktów z PM.
+    // Jeśli nie mamy jeszcze produktów dla KI, zablokuj select.
+    if (!isClientsModeInitialized) {
+      setGalleryPlaceholder('Wybierz handlowca i obiekt, aby zobaczyć projekty.');
+      updateProjectFilterAvailability();
 
-    if (gallerySalespersonSelect) {
-      gallerySalespersonSelect.disabled = true;
-      gallerySalespersonSelect.innerHTML = '<option value="">Ładowanie…</option>';
+      if (gallerySalespersonSelect) {
+        gallerySalespersonSelect.disabled = true;
+        gallerySalespersonSelect.innerHTML = '<option value="">Ładowanie…</option>';
+      }
+      if (galleryObjectSelect) {
+        galleryObjectSelect.disabled = true;
+        galleryObjectSelect.innerHTML = '<option value="">Najpierw wybierz handlowca</option>';
+      }
+      loadSalespeople();
+      isClientsModeInitialized = true;
+    } else {
+      // Tryb KI był już inicjalizowany – przywróć jego własną listę produktów.
+      galleryProducts = clientsModeProducts;
+      galleryFilesCache = clientsModeFilesCache;
+
+      if (galleryProductSelect) {
+        if (galleryProducts.length) {
+          const options = ['<option value="">Wybierz produkt</option>',
+            ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+          ];
+          galleryProductSelect.innerHTML = options.join('');
+          galleryProductSelect.disabled = false;
+        } else {
+          galleryProductSelect.disabled = true;
+          galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz handlowca i obiekt</option>';
+        }
+      }
+      updateProjectFilterAvailability();
     }
-    if (galleryObjectSelect) {
-      galleryObjectSelect.disabled = true;
-      galleryObjectSelect.innerHTML = '<option value="">Najpierw wybierz handlowca</option>';
+  }
+
+  // Po przełączeniu trybu zdecyduj, jaki produkt ma być widoczny.
+  if (galleryProductSelect) {
+    let targetSlug = '';
+
+    if (galleryLockCheckbox && galleryLockCheckbox.checked) {
+      // Blokada włączona – trzymaj aktualny produkt niezależnie od trybu.
+      targetSlug = previousSlug;
+    } else if (currentFormMode === 'projekty-miejscowosci') {
+      targetSlug = cityModeProductSlug || '';
+    } else if (currentFormMode === 'klienci-indywidualni') {
+      targetSlug = clientsModeProductSlug || '';
     }
 
-    if (galleryProductSelect) {
-      galleryProductSelect.disabled = true;
-      galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz handlowca i obiekt</option>';
+    if (targetSlug) {
+      galleryProductSelect.value = targetSlug;
+      renderGalleryPreview();
+      handleGalleryProductChangeFromSelect();
     }
-
-    loadSalespeople();
   }
 }
 
@@ -519,16 +623,10 @@ async function handleGalleryProductChangeFromSelect() {
       return;
     }
 
+    // Przy wyborze konkretnego produktu z galerii nie filtrujemy już po dostępności projektów,
+    // bo sam wybór z galerii gwarantuje odpowiedni kontekst. Renderujemy bezpośrednio dopasowane produkty.
     lastSearchResults = matching;
-    const visibleProducts = filterProductsByProjectAvailability(matching);
-
-    if (!visibleProducts.length) {
-      setStatus('Brak produktów spełniających wybrany filtr projektów w tej miejscowości.', 'info');
-      resetResultsPlaceholder('Brak wyników dla wybranego filtra projektów.');
-      return;
-    }
-
-    renderResults(visibleProducts);
+    renderResults(matching);
     setStatus('Wybrano produkt z galerii. Uzupełnij ilość i dodaj do zamówienia.', 'info');
   } catch (error) {
     console.error('Błąd pobierania produktu dla wyboru z galerii:', error);
@@ -1686,25 +1784,35 @@ function initialize() {
     });
   }
 
-  if (galleryCitySelect && galleryProductSelect) {
-    galleryCitySelect.addEventListener('change', () => {
-      if (currentFormMode !== 'projekty-miejscowosci') return;
-      loadGalleryProducts();
-    });
-    galleryProductSelect.addEventListener('change', () => {
-      renderGalleryPreview();
-      handleGalleryProductChangeFromSelect();
-    });
-  }
-
+  // Zmiana handlowca w trybie "Klienci indywidualni" – ładuje listę obiektów
   if (gallerySalespersonSelect) {
     gallerySalespersonSelect.addEventListener('change', () => {
-      const value = gallerySalespersonSelect.value;
-      loadObjectsForSalesperson(value);
+      if (currentFormMode !== 'klienci-indywidualni') return;
+      const salesperson = gallerySalespersonSelect.value;
+      loadObjectsForSalesperson(salesperson);
+
+      // Po zmianie handlowca czyścimy listę produktów
+      if (galleryProductSelect) {
+        galleryProductSelect.disabled = true;
+        galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz obiekt</option>';
+      }
+      galleryFilesCache = [];
+      galleryProducts = [];
+      updateProjectFilterAvailability();
+      setGalleryPlaceholder('Wybierz obiekt, aby zobaczyć projekty.');
     });
   }
 
-   if (galleryObjectSelect) {
+  // Zmiana miejscowości powinna ładować listę produktów dla tej miejscowości
+  if (galleryCitySelect) {
+    galleryCitySelect.addEventListener('change', () => {
+      if (currentFormMode !== 'projekty-miejscowosci') return;
+      const city = galleryCitySelect.value;
+      loadGalleryProducts(city);
+    });
+  }
+
+  if (galleryObjectSelect) {
     galleryObjectSelect.addEventListener('change', () => {
       if (currentFormMode !== 'klienci-indywidualni') return;
       const sp = gallerySalespersonSelect ? gallerySalespersonSelect.value : '';
@@ -1713,14 +1821,185 @@ function initialize() {
     });
   }
 
+  // Zmiana produktu – niezależnie od trybu, powinna przeładować podgląd obrazka
+  if (galleryProductSelect) {
+    galleryProductSelect.addEventListener('change', () => {
+      const slug = galleryProductSelect.value || '';
+      if (currentFormMode === 'projekty-miejscowosci') {
+        cityModeProductSlug = slug;
+      } else if (currentFormMode === 'klienci-indywidualni') {
+        clientsModeProductSlug = slug;
+      }
+      renderGalleryPreview();
+      handleGalleryProductChangeFromSelect();
+    });
+  }
+
   updateGalleryControlsVisibility();
   
   // Inicjalizacja danych galerii
   if (currentFormMode === 'projekty-miejscowosci') {
     loadGalleryCities();
+    isCityModeInitialized = true;
   } else if (currentFormMode === 'klienci-indywidualni') {
     loadSalespeople();
+    isClientsModeInitialized = true;
+  }
+}
+ 
+// -----------------------------
+// Klient zamówienia – helpery (search + select)
+// -----------------------------
+
+function updateOrderCustomerBar() {
+  if (!orderCustomerNameEl) return;
+
+  if (!currentCustomer) {
+    orderCustomerNameEl.textContent = 'Brak wybranego klienta';
+    orderCustomerNameEl.classList.add('order-customer__value--empty');
+    return;
+  }
+
+  const parts = [currentCustomer.name];
+  if (currentCustomer.city) parts.push(currentCustomer.city);
+  if (currentCustomer.zipCode) parts.push(currentCustomer.zipCode);
+  const label = parts.filter(Boolean).join(' · ');
+
+  orderCustomerNameEl.textContent = label || currentCustomer.name;
+  orderCustomerNameEl.classList.remove('order-customer__value--empty');
+}
+
+function setOrderCustomer(customer) {
+  currentCustomer = customer ? { ...customer } : null;
+  updateOrderCustomerBar();
+
+  // Ustaw także wartość w selectcie
+  if (orderCustomerSelectEl) {
+    orderCustomerSelectEl.value = customer ? customer.id : '';
   }
 }
 
-initialize();
+async function loadOrderCustomers() {
+  try {
+    const response = await fetch('/api/clients', { credentials: 'include' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const result = await response.json();
+    pickerCustomers = Array.isArray(result.data) ? result.data : [];
+    filterOrderCustomers(orderCustomerSearchInput?.value || '');
+  } catch (error) {
+    console.error('Nie udało się pobrać listy klientów:', error);
+  }
+}
+
+function filterOrderCustomers(term) {
+  const value = (term || '').toLowerCase().trim();
+  pickerFilteredCustomers = pickerCustomers.filter((c) => {
+    if (!value) return true;
+    return (
+      (c.name && c.name.toLowerCase().includes(value)) ||
+      (c.city && c.city.toLowerCase().includes(value)) ||
+      (c.email && c.email.toLowerCase().includes(value)) ||
+      (c.phone && c.phone.toLowerCase().includes(value))
+    );
+  });
+  renderOrderCustomerOptions();
+
+  // Jeśli po filtrowaniu został dokładnie jeden klient – wybierz go automatycznie
+  if (pickerFilteredCustomers.length === 1) {
+    setOrderCustomer(pickerFilteredCustomers[0]);
+  } else if (pickerFilteredCustomers.length === 0) {
+    // Brak trafień – czyścimy wybór
+    setOrderCustomer(null);
+  }
+}
+
+function renderOrderCustomerOptions() {
+  if (!orderCustomerSelectEl) return;
+
+  const options = ['<option value="">--- wybierz klienta ---</option>'];
+
+  pickerFilteredCustomers.forEach((c) => {
+    const meta = [c.city, c.zipCode].filter(Boolean).join(' ');
+    const label = meta ? `${c.name} (${meta})` : c.name;
+    options.push(`<option value="${c.id}">${label}</option>`);
+  });
+
+  orderCustomerSelectEl.innerHTML = options.join('');
+
+  // Przywróć zaznaczenie jeśli currentCustomer nadal jest w liście
+  if (currentCustomer) {
+    orderCustomerSelectEl.value = currentCustomer.id || '';
+  }
+}
+
+function initOrderCustomerControls() {
+  // Inicjalny tekst
+  updateOrderCustomerBar();
+
+  // Załaduj klientów przy starcie (tylko raz)
+  loadOrderCustomers();
+
+  if (orderCustomerSearchInput) {
+    orderCustomerSearchInput.addEventListener('input', (e) => {
+      filterOrderCustomers(e.target.value);
+    });
+  }
+
+  if (orderCustomerSelectEl) {
+    orderCustomerSelectEl.addEventListener('change', (e) => {
+      const id = e.target.value;
+      const customer = pickerCustomers.find((c) => c.id === id) || null;
+      setOrderCustomer(customer);
+    });
+  }
+}
+
+// Sprawdzenie autoryzacji i inicjalizacja
+async function checkAuthAndInitialize() {
+  try {
+    const response = await fetch('/api/auth/me', {
+      credentials: 'include'
+    });
+
+    if (response.ok) {
+      const userData = await response.json();
+      currentUser = userData;
+      showUserNavigation(userData.role);
+    }
+  } catch (error) {
+    console.log('Użytkownik niezalogowany lub błąd autoryzacji');
+  }
+
+  // Inicjalizacja niezależnie od stanu logowania
+  initialize();
+  initOrderCustomerControls();
+}
+
+// Pokazywanie nawigacji dla zalogowanych użytkowników
+function showUserNavigation(role) {
+  if (clientsLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(role)) {
+    clientsLink.style.display = 'flex';
+  }
+  
+  if (adminLink && role === 'ADMIN') {
+    adminLink.style.display = 'flex';
+  }
+  
+  if (logoutBtn) {
+    logoutBtn.style.display = 'flex';
+    logoutBtn.addEventListener('click', handleLogout);
+  }
+}
+
+// Obsługa wylogowania
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    window.location.href = '/login.html';
+  } catch (error) {
+    console.error('Błąd wylogowania:', error);
+    window.location.href = '/login.html';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', checkAuthAndInitialize);

@@ -5,7 +5,7 @@ Przewodnik jak wystawić aplikację w Internecie w możliwie **tanio / darmo** i
 ## 1. Wymagania wspólne
 
 1. Repozytorium zaktualizowane (najlepiej na GitHubie).
-2. Plik `.env` z ustawionymi zmiennymi (co najmniej `PORT`, a jeśli wysyłasz PDF e-mailem – `SMTP_*`).
+2. Plik `.env` z ustawionymi zmiennymi (co najmniej `PORT`).
 3. W `backend/package.json` znajdują się skrypty:
    ```json
    "start": "node server.js",
@@ -64,11 +64,11 @@ Przewodnik jak wystawić aplikację w Internecie w możliwie **tanio / darmo** i
 
 ### 2.1. Dlaczego obecnie rekomendowany jest Render Free
 
-W aktualnej architekturze projektu (Express + PDF + proxy do galerii na QNAP-ie) najprościej i najszybciej jest używać **Render Free**:
+W aktualnej architekturze projektu (Express + proxy do galerii na QNAP-ie) najprościej i najszybciej jest używać **Render Free**:
 
 - **Plusy Render Free**
   - **0 zł** przy małym obciążeniu – darmowy plan z usypianiem instancji.
-  - Działa bez zmian w kodzie: jeden serwer Express (`backend/server.js`) serwuje zarówno frontend, jak i API (`/api/v1/products`, `/api/gallery/*`, `/api/orders/send`).
+  - Działa bez zmian w kodzie: jeden serwer Express (`backend/server.js`) serwuje zarówno frontend, jak i API (`/api/v1/products`, `/api/gallery/*`).
   - Prosty model pracy: lokalnie `npm run dev`, na produkcji ten sam kod.
   - Automatyczny HTTPS i deploy z GitHuba.
 
@@ -102,13 +102,12 @@ Jeśli dysponujesz najtańszym VPS (np. 5–10 USD/mc), możesz zainstalować No
 
 1. Otwórz publiczny URL i wykonaj próbne wyszukiwanie (np. "brelok").
 2. Sprawdź konsolę przeglądarki – nie może być błędów CORS.
-3. Jeśli używasz SMTP, spróbuj wysłać przykładowe zamówienie (logi backendu powinny pokazać `Wysłano email z zamówieniem`).
-4. Ustaw monitoring (Railway/Render mają wbudowane logi, Fly – `fly logs`).
+3. Ustaw monitoring (Railway/Render mają wbudowane logi, Fly – `fly logs`).
 
 ## 5. FAQ
 
 - **Czy mogę hostować frontend osobno (np. Netlify) i backend gdzie indziej?** Można, ale wtedy musisz dodać obsługę CORS i skonfigurować adresy w `app.js`. Najprościej jest serwować wszystko z jednego miejsca.
-- **Czy potrzebuję bazy danych?** Nie – aplikacja tylko proxy-uje API produktów i generuje PDF.
+- **Czy potrzebuję bazy danych?** Nie – aplikacja tylko proxy-uje API produktów.
 - **Jak ograniczyć koszty?** Utrzymuj projekt na darmowym tierze Railway/Render lub Fly. Wyłącz/usuwaj instancje, gdy nie są potrzebne. Możesz także prowadzić backup `.env` lokalnie zamiast płatnych Secrets Managerów.
 
 To wszystko. Wybierz platformę, która najlepiej pasuje do potrzeb (auto-deploy z GitHuba czy większa kontrola), zawsze pamiętając, by frontend i backend działały pod jednym originem.

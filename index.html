@@ -42,10 +42,24 @@
         </nav>
         <div class="header-row">
           <h1>Formularz zamówień</h1>
-          <button id="theme-toggle" class="theme-toggle" aria-label="Przełącz tryb jasny/ciemny">
-            <i class="fas fa-moon"></i>
-            <i class="fas fa-sun"></i>
-          </button>
+          <div class="header-actions">
+            <a href="/clients" id="clients-link" class="btn btn--secondary" style="display: none;">
+              <i class="fas fa-users"></i>
+              Moi Klienci
+            </a>
+            <a href="/admin" id="admin-link" class="btn btn--secondary" style="display: none;">
+              <i class="fas fa-cog"></i>
+              Panel admina
+            </a>
+            <button id="logout-btn" class="btn btn--danger" style="display: none;">
+              <i class="fas fa-sign-out-alt"></i>
+              Wyloguj
+            </button>
+            <button id="theme-toggle" class="theme-toggle" aria-label="Przełącz tryb jasny/ciemny">
+              <i class="fas fa-moon"></i>
+              <i class="fas fa-sun"></i>
+            </button>
+          </div>
         </div>
         <p class="tagline">
           Wyszukaj produkty po nazwie lub ID, sprawdź stan magazynowy i dodaj je do koszyka zamówienia.
@@ -103,7 +117,7 @@
                 <span>Produkt</span>
                 <label class="gallery-lock">
                   <input type="checkbox" id="gallery-lock-product" />
-                  <span class="gallery-lock__text">Trzymaj produkt przy zmianie miejscowości</span>
+                  <span class="gallery-lock__text">Nie zmieniaj wybranego produktu przy zmianie miejscowości ani trybu</span>
                 </label>
               </span>
               <select id="gallery-product" class="field__input" aria-label="Wybierz produkt" disabled>
@@ -173,6 +187,30 @@
               <tr class="table__placeholder"><td colspan="6">Brak wyników do wyświetlenia.</td></tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- Pasek klienta zamówienia -->
+      <section class="panel panel--customer-bar" aria-label="Klient zamówienia">
+        <div class="panel__header panel__header--customer">
+          <div class="order-customer">
+            <span class="order-customer__label">Klient zamówienia:</span>
+            <span id="order-customer-name" class="order-customer__value order-customer__value--empty">
+              Brak wybranego klienta
+            </span>
+          </div>
+          <div class="order-customer__actions">
+            <label class="field field--inline">
+              <span class="field__label">Szukaj</span>
+              <input id="order-customer-search" class="field__input field__input--sm" placeholder="Nazwa, miasto, email" />
+            </label>
+            <label class="field field--inline">
+              <span class="field__label">Lista klientów</span>
+              <select id="order-customer-select" class="field__input field__input--sm" aria-label="Wybierz klienta">
+                <option value="">--- wybierz klienta ---</option>
+              </select>
+            </label>
+          </div>
         </div>
       </section>
 

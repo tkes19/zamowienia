@@ -1,0 +1,376 @@
+document.addEventListener('DOMContentLoaded', () => {
+    // Elementy DOM
+    const clientsTableBody = document.getElementById('clients-table-body');
+    const clientsSearchInput = document.getElementById('clients-search-input');
+    const refreshClientsBtn = document.getElementById('refresh-clients-btn');
+    const newClientBtn = document.getElementById('new-client-btn');
+    const clientModal = document.getElementById('client-modal');
+    const clientModalTitle = document.getElementById('client-modal-title');
+    const clientModalClose = document.getElementById('client-modal-close');
+    const clientForm = document.getElementById('client-form');
+    const clientFormCancel = document.getElementById('client-form-cancel');
+    const clientFormError = document.getElementById('client-form-error');
+    const clientsTableInfo = document.getElementById('clients-table-info');
+    const logoutBtn = document.getElementById('logout-btn');
+    const adminLink = document.getElementById('admin-link');
+
+    let allClients = [];
+    let filteredClients = [];
+    let currentEditingClientId = null;
+    let currentUserRole = null;
+
+    // Sprawdzenie autoryzacji i roli użytkownika
+    async function checkAuth() {
+        try {
+            const response = await fetch('/api/auth/me', {
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                window.location.href = '/login.html';
+                return false;
+            }
+
+            const userData = await response.json();
+            currentUserRole = userData.role;
+
+            // Pokaż link do panelu admina dla ADMIN
+            if (currentUserRole === 'ADMIN') {
+                adminLink.style.display = 'flex';
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Błąd sprawdzania autoryzacji:', error);
+            window.location.href = '/login.html';
+            return false;
+        }
+    }
+
+    // Inicjalizacja
+    async function init() {
+        const isAuthorized = await checkAuth();
+        if (!isAuthorized) return;
+
+        fetchClients();
+    }
+
+    // Event listenery
+    refreshClientsBtn.addEventListener('click', fetchClients);
+    newClientBtn.addEventListener('click', () => openClientForm());
+    clientModalClose.addEventListener('click', closeClientForm);
+    clientFormCancel.addEventListener('click', closeClientForm);
+    clientForm.addEventListener('submit', handleClientFormSubmit);
+
+    clientsSearchInput.addEventListener('input', (e) => {
+        filterClients(e.target.value);
+    });
+
+    clientsTableBody.addEventListener('click', handleTableClick);
+
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+            window.location.href = '/login.html';
+        } catch (error) {
+            console.error('Błąd wylogowania:', error);
+            window.location.href = '/login.html';
+        }
+    });
+
+    // Pobieranie klientów
+    async function fetchClients() {
+        try {
+            clientsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="p-8 text-center text-gray-500">
+                        <div class="flex flex-col items-center gap-2">
+                            <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                            <span>Ładowanie klientów...</span>
+                        </div>
+                    </td>
+                </tr>
+            `;
+
+            const response = await fetch('/api/clients', {
+                credentials: 'include',
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                allClients = result.data || [];
+                filterClients(clientsSearchInput.value);
+            } else {
+                throw new Error(result.message || 'Nie udało się pobrać klientów');
+            }
+        } catch (error) {
+            console.error('Błąd pobierania klientów:', error);
+            clientsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="p-8 text-center text-red-600">
+                        <div class="flex flex-col items-center gap-2">
+                            <i class="fas fa-exclamation-circle text-2xl"></i>
+                            <span>Błąd: ${error.message}</span>
+                            <button onclick="location.reload()" class="mt-2 text-blue-600 underline text-sm">Spróbuj ponownie</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
+    // Filtrowanie klientów
+    function filterClients(searchTerm = '') {
+        const term = searchTerm.toLowerCase().trim();
+
+        filteredClients = allClients.filter(client => {
+            return !term ||
+                (client.name && client.name.toLowerCase().includes(term)) ||
+                (client.email && client.email.toLowerCase().includes(term)) ||
+                (client.phone && client.phone.toLowerCase().includes(term)) ||
+                (client.city && client.city.toLowerCase().includes(term));
+        });
+
+        renderClientsTable();
+    }
+
+    // Renderowanie tabeli klientów
+    function renderClientsTable() {
+        if (filteredClients.length === 0) {
+            clientsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="p-8 text-center text-gray-500">
+                        ${allClients.length === 0 ? 'Brak klientów do wyświetlenia' : 'Brak klientów spełniających kryteria wyszukiwania'}
+                    </td>
+                </tr>
+            `;
+            clientsTableInfo.textContent = `Pokazuje 0 z ${allClients.length} klientów`;
+            return;
+        }
+
+        clientsTableBody.innerHTML = filteredClients.map(client => {
+            const createdDate = client.createdAt ? new Date(client.createdAt).toLocaleDateString('pl-PL') : '-';
+            
+            const contactInfo = [
+                client.email ? `<div><i class="fas fa-envelope text-gray-400 mr-1"></i>${client.email}</div>` : '',
+                client.phone ? `<div><i class="fas fa-phone text-gray-400 mr-1"></i>${client.phone}</div>` : ''
+            ].filter(Boolean).join('');
+
+            const addressInfo = [
+                client.address,
+                client.city && client.zipCode ? `${client.zipCode} ${client.city}` : client.city || client.zipCode,
+                client.country && client.country !== 'Poland' ? client.country : ''
+            ].filter(Boolean).join(', ');
+
+            return `
+                <tr class="hover:bg-gray-50 transition-colors" data-client-id="${client.id}">
+                    <td class="p-4">
+                        <div class="font-medium text-gray-900">${client.name}</div>
+                    </td>
+                    <td class="p-4">
+                        <div class="space-y-1 text-sm text-gray-600">
+                            ${contactInfo || '<span class="text-gray-400">Brak danych kontaktowych</span>'}
+                        </div>
+                    </td>
+                    <td class="p-4">
+                        <div class="text-sm text-gray-600">
+                            ${addressInfo || '<span class="text-gray-400">Brak adresu</span>'}
+                        </div>
+                    </td>
+                    <td class="p-4">
+                        <div class="text-sm text-gray-600 max-w-xs truncate">
+                            ${client.notes || '<span class="text-gray-400">Brak uwag</span>'}
+                        </div>
+                    </td>
+                    <td class="p-4 text-center text-sm text-gray-600">
+                        ${createdDate}
+                    </td>
+                    <td class="p-4 text-right">
+                        <div class="flex items-center justify-end gap-2">
+                            <button class="text-blue-600 hover:text-blue-800 p-2 rounded hover:bg-blue-50 transition-colors" data-action="new-order" data-client-id="${client.id}" title="Nowe zamówienie">
+                                <i class="fas fa-shopping-cart"></i>
+                            </button>
+                            <button class="text-green-600 hover:text-green-800 p-2 rounded hover:bg-green-50 transition-colors" data-action="edit-client" data-client-id="${client.id}" title="Edytuj klienta">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="text-red-600 hover:text-red-800 p-2 rounded hover:bg-red-50 transition-colors" data-action="delete-client" data-client-id="${client.id}" title="Usuń klienta">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        clientsTableInfo.textContent = `Pokazuje ${filteredClients.length} z ${allClients.length} klientów`;
+    }
+
+    // Obsługa kliknięć w tabeli
+    function handleTableClick(e) {
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+
+        const action = target.dataset.action;
+        const clientId = target.dataset.clientId;
+        const client = allClients.find(c => c.id === clientId);
+
+        if (!client) return;
+
+        switch (action) {
+            case 'new-order':
+                // Przekierowanie do formularza zamówień z wypełnionym klientem
+                const clientData = encodeURIComponent(JSON.stringify({
+                    id: client.id,
+                    name: client.name,
+                    email: client.email,
+                    phone: client.phone,
+                    address: client.address,
+                    city: client.city,
+                    zipCode: client.zipCode,
+                    country: client.country
+                }));
+                window.location.href = `/?client=${clientData}`;
+                break;
+            case 'edit-client':
+                openClientForm(client);
+                break;
+            case 'delete-client':
+                handleDeleteClient(client);
+                break;
+        }
+    }
+
+    // Otwieranie formularza klienta
+    function openClientForm(client = null) {
+        currentEditingClientId = client ? client.id : null;
+        clientFormError.classList.add('hidden');
+        clientFormError.textContent = '';
+
+        if (client) {
+            // Edycja
+            clientModalTitle.textContent = 'Edytuj klienta';
+            clientForm.querySelector('[name="name"]').value = client.name || '';
+            clientForm.querySelector('[name="email"]').value = client.email || '';
+            clientForm.querySelector('[name="phone"]').value = client.phone || '';
+            clientForm.querySelector('[name="address"]').value = client.address || '';
+            clientForm.querySelector('[name="city"]').value = client.city || '';
+            clientForm.querySelector('[name="zipCode"]').value = client.zipCode || '';
+            clientForm.querySelector('[name="country"]').value = client.country || 'Poland';
+            clientForm.querySelector('[name="notes"]').value = client.notes || '';
+            clientForm.querySelector('button[type="submit"] span').textContent = 'Zapisz zmiany';
+        } else {
+            // Nowy klient
+            clientModalTitle.textContent = 'Dodaj nowego klienta';
+            clientForm.reset();
+            clientForm.querySelector('[name="country"]').value = 'Poland';
+            clientForm.querySelector('button[type="submit"] span').textContent = 'Zapisz klienta';
+        }
+
+        clientModal.classList.remove('hidden');
+    }
+
+    // Zamykanie formularza klienta
+    function closeClientForm() {
+        clientModal.classList.add('hidden');
+        clientForm.reset();
+        currentEditingClientId = null;
+        clientFormError.classList.add('hidden');
+        clientFormError.textContent = '';
+    }
+
+    // Obsługa zapisu klienta
+    async function handleClientFormSubmit(e) {
+        e.preventDefault();
+        clientFormError.classList.add('hidden');
+        clientFormError.textContent = '';
+
+        const formData = new FormData(clientForm);
+        const data = {
+            name: formData.get('name'),
+            email: formData.get('email'),
+            phone: formData.get('phone'),
+            address: formData.get('address'),
+            city: formData.get('city'),
+            zipCode: formData.get('zipCode'),
+            country: formData.get('country'),
+            notes: formData.get('notes'),
+        };
+
+        // Walidacja
+        if (!data.name || !data.name.trim()) {
+            clientFormError.textContent = 'Nazwa klienta jest wymagana';
+            clientFormError.classList.remove('hidden');
+            return;
+        }
+
+        const submitBtn = clientForm.querySelector('button[type="submit"]');
+        const originalBtnText = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Zapisuję...</span>';
+
+        try {
+            const url = currentEditingClientId
+                ? `/api/clients/${currentEditingClientId}`
+                : '/api/clients';
+
+            const method = currentEditingClientId ? 'PATCH' : 'POST';
+
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(data),
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                closeClientForm();
+                fetchClients();
+            } else {
+                clientFormError.textContent = result.message || 'Błąd podczas zapisu klienta';
+                clientFormError.classList.remove('hidden');
+            }
+        } catch (error) {
+            console.error('Błąd podczas zapisu klienta:', error);
+            clientFormError.textContent = 'Błąd połączenia z serwerem';
+            clientFormError.classList.remove('hidden');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalBtnText;
+        }
+    }
+
+    // Usuwanie klienta
+    async function handleDeleteClient(client) {
+        if (!confirm(`Czy na pewno chcesz usunąć klienta "${client.name}"?\n\nTa operacja jest nieodwracalna.`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/clients/${client.id}`, {
+                method: 'DELETE',
+                credentials: 'include',
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                fetchClients();
+            } else {
+                alert(result.message || 'Nie udało się usunąć klienta');
+            }
+        } catch (error) {
+            console.error('Błąd podczas usuwania klienta:', error);
+            alert('Błąd połączenia z serwerem podczas usuwania klienta');
+        }
+    }
+
+    // Uruchomienie aplikacji
+    init();
+});

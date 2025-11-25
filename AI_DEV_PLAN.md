@@ -13,7 +13,7 @@ Celem jest odtworzenie zaawansowanej funkcjonalności systemu B2B (ERP/CRM) istn
 *   **Backend:** Node.js, Express.js
 *   **Baza Danych:** Supabase (PostgreSQL)
 *   **Frontend:** HTML5, CSS3, Vanilla JavaScript (ES6+ Modules)
-*   **Integracje:** QNAP (Galeria zdjęć), Nodemailer (E-maile)
+*   **Integracje:** QNAP (Galeria zdjęć)
 
 ---
 

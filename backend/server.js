@@ -1,11 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 const path = require('path');
 const crypto = require('crypto'); // Dodano import crypto
+const bcrypt = require('bcryptjs');
 const { createClient } = require('@supabase/supabase-js');
-const { createPdf } = require('./pdfGenerator');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -37,14 +36,168 @@ app.use(cors(corsOptions));
 // Middleware do parsowania JSON
 app.use(express.json({ limit: '10mb' }));
 
+// Proste parsowanie cookies (bez zewnętrznych bibliotek)
+function parseCookies(req) {
+    const header = req.headers.cookie;
+    if (!header) return {};
+
+    return header.split(';').reduce((acc, part) => {
+        const [rawKey, ...rest] = part.split('=');
+        if (!rawKey) return acc;
+        const key = rawKey.trim();
+        const value = rest.join('=').trim();
+        if (!key) return acc;
+        acc[key] = decodeURIComponent(value || '');
+        return acc;
+    }, {});
+}
+
+function setAuthCookies(res, { id, role }) {
+    const cookies = [];
+    const cookieBase = '; Path=/; HttpOnly; SameSite=Lax';
+
+    cookies.push(`auth_id=${encodeURIComponent(id)}${cookieBase}`);
+    cookies.push(`auth_role=${encodeURIComponent(role)}${cookieBase}`);
+
+    res.setHeader('Set-Cookie', cookies);
+}
+
+function clearAuthCookies(res) {
+    const expired = '; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
+    res.setHeader('Set-Cookie', [
+        `auth_id=${expired}`,
+        `auth_role=${expired}`,
+    ]);
+}
+
+function requireRole(allowedRoles = []) {
+    return (req, res, next) => {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const role = cookies.auth_role;
+
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Nieautoryzowany – zaloguj się.' });
+        }
+
+        if (Array.isArray(allowedRoles) && allowedRoles.length && !allowedRoles.includes(role)) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu.' });
+        }
+
+        req.user = { id: userId, role };
+        next();
+    };
+}
+
 // Główna ścieżka - serwowanie pliku index.html
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../index.html'));
 });
 
+// Panel admina – wymaga zalogowania jako ADMIN
+app.get('/admin', requireRole(['ADMIN']), (req, res) => {
+  res.sendFile(path.join(__dirname, '../admin/index.html'));
+});
+
+// Panel klientów – wymaga zalogowania jako SALES_REP, SALES_DEPT lub ADMIN
+app.get('/clients', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), (req, res) => {
+  res.sendFile(path.join(__dirname, '../clients.html'));
+});
+
 // Test endpoint
 app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'Serwer działa poprawnie' });
+});
+
+// Prosty endpoint logowania – sprawdza użytkownika w Supabase.User po emailu i haśle (plain text)
+app.post('/api/auth/login', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { email, password } = req.body || {};
+
+    if (!email || !password) {
+        return res.status(400).json({ status: 'error', message: 'Podaj email i hasło.' });
+    }
+
+    try {
+        const { data: user, error } = await supabase
+            .from('User')
+            .select('id, email, password, role, isActive')
+            .eq('email', email)
+            .single();
+
+        if (error || !user) {
+            return res.status(401).json({ status: 'error', message: 'Nieprawidłowe dane logowania.' });
+        }
+
+        if (user.isActive === false) {
+            return res.status(403).json({ status: 'error', message: 'Konto jest nieaktywne.' });
+        }
+
+        if (!user.password) {
+            return res.status(401).json({ status: 'error', message: 'Nieprawidłowe dane logowania.' });
+        }
+
+        let passwordOk = false;
+
+        // Jeśli hasło wygląda na hash bcrypta (tak jak w starym systemie), porównaj przez bcrypt
+        if (typeof user.password === 'string' && user.password.startsWith('$2')) {
+            try {
+                passwordOk = await bcrypt.compare(password, user.password);
+            } catch (compareError) {
+                console.warn('Błąd porównania hasła bcrypt:', compareError);
+                passwordOk = false;
+            }
+        } else {
+            // Fallback: proste porównanie 1:1 (dla ewentualnych nowych kont testowych)
+            passwordOk = user.password === password;
+        }
+
+        if (!passwordOk) {
+            return res.status(401).json({ status: 'error', message: 'Nieprawidłowe dane logowania.' });
+        }
+
+        const role = user.role || 'NEW_USER';
+
+        setAuthCookies(res, { id: user.id, role });
+
+        return res.json({
+            status: 'success',
+            data: {
+                id: user.id,
+                email: user.email,
+                role,
+            },
+        });
+    } catch (err) {
+        console.error('Błąd logowania:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas logowania', details: err.message });
+    }
+});
+
+// Wylogowanie – czyści ciasteczka auth
+app.post('/api/auth/logout', (req, res) => {
+    clearAuthCookies(res);
+    return res.json({ status: 'success', message: 'Wylogowano.' });
+});
+
+// Sprawdzenie aktualnego użytkownika
+app.get('/api/auth/me', (req, res) => {
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const role = cookies.auth_role;
+
+    if (!userId || !role) {
+        return res.status(401).json({ status: 'error', message: 'Nieautoryzowany' });
+    }
+
+    return res.json({
+        status: 'success',
+        id: userId,
+        role: role
+    });
 });
 
 // Test połączenia z Supabase – proste zapytanie do tabeli produktów
@@ -78,28 +231,93 @@ app.get('/api/supabase/health', async (req, res) => {
     }
 });
 
-// Proxy endpoint do pobierania produktów
+// Endpoint produktów dla głównego formularza zamówień
+// Dane pochodzą z Supabase (Product + Inventory), ale struktura odpowiedzi
+// jest zgodna z tym, czego oczekuje istniejący frontend (name, pc_id, stock, stock_optimal itd.).
 app.get('/api/v1/products', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({
+            status: 'error',
+            message: 'Supabase nie jest skonfigurowany. Ustaw SUPABASE_URL i SUPABASE_SERVICE_ROLE_KEY w backend/.env.'
+        });
+    }
+
+    const { search } = req.query;
+
     try {
-        const { search } = req.query;
-        let apiUrl = 'https://rezon-api.vercel.app/api/v1/products';
-        
-        if (search) {
-            apiUrl += `?search=${encodeURIComponent(search)}`;
+        let query = supabase
+            .from('Product')
+            .select(`
+                id,
+                identifier,
+                index,
+                price,
+                category,
+                description,
+                isActive,
+                new,
+                Inventory (
+                    stock,
+                    stockOptimal,
+                    stockOrdered,
+                    stockReserved,
+                    location
+                )
+            `)
+            .eq('isActive', true)
+            .order('identifier', { ascending: true });
+
+        if (search && typeof search === 'string' && search.trim()) {
+            const term = `%${search.trim()}%`;
+            query = query.or(
+                `identifier.ilike.${term},index.ilike.${term},description.ilike.${term}`
+            );
         }
-        
-        const response = await fetch(apiUrl);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania produktów z Supabase dla /api/v1/products:', error);
+            return res.status(500).json({
+                status: 'error',
+                message: 'Nie udało się pobrać produktów z bazy',
+                details: error.message,
+            });
         }
-        const data = await response.json();
-        res.json(data);
+
+        const products = (data || []).map((product) => {
+            const invArray = Array.isArray(product.Inventory) ? product.Inventory : [];
+            const mainInventory = invArray.find((inv) => inv.location === 'MAIN') || {};
+
+            return {
+                // klucze zgodne z tym, co wykorzystuje scripts/app.js
+                _id: product.id,
+                name: product.identifier,          // w UI używamy identifier jako nazwy
+                pc_id: product.index,              // dawny indeks techniczny
+                price: Number(product.price || 0),
+                category: product.category,
+                description: product.description || '',
+                stock: Number(mainInventory.stock || 0),
+                stock_optimal: Number(mainInventory.stockOptimal || 0),
+                stock_ordered: Number(mainInventory.stockOrdered || 0),
+                stock_reserved: Number(mainInventory.stockReserved || 0),
+                isActive: product.isActive !== false,
+                new: !!product.new,
+            };
+        });
+
+        // Struktura kompatybilna z istniejącym frontendem (json.data?.products || ...)
+        return res.json({
+            data: {
+                products,
+            },
+        });
     } catch (error) {
-        console.error('Błąd podczas pobierania produktów:', error);
-        res.status(500).json({ 
-            status: 'error', 
+        console.error('Wyjątek w /api/v1/products (Supabase):', error);
+        return res.status(500).json({
+            status: 'error',
             message: 'Nie udało się pobrać produktów',
-            error: error.message 
+            error: error.message,
         });
     }
 });
@@ -219,8 +437,9 @@ app.get('/api/gallery/image', async (req, res) => {
             return res.status(400).json({ error: 'Brak parametru url' });
         }
 
-        // Nie pozwalamy proxy’ować czegokolwiek – tylko zasoby z GALLERY_BASE
-        if (!imageUrl.startsWith(GALLERY_BASE)) {
+        // Nie pozwalamy proxy’ować czegokolwiek – tylko zasoby z hosta GALLERY_BASE
+        const galleryOrigin = new URL(GALLERY_BASE).origin; // np. http://rezon.myqnapcloud.com:81
+        if (!imageUrl.startsWith(galleryOrigin)) {
             return res.status(400).json({ error: 'Nieprawidłowy adres obrazka' });
         }
 
@@ -247,62 +466,6 @@ app.get('/api/gallery/image', async (req, res) => {
     }
 });
 
-// Email configuration
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    },
-});
-
-// Send order via email
-app.post('/api/orders/send', async (req, res) => {
-    try {
-        const { orderData, fileName = 'zamowienie' } = req.body;
-        
-        if (!orderData || !orderData.length) {
-            return res.status(400).json({ error: 'Brak danych zamówienia' });
-        }
-
-        // Generate PDF
-        const pdfBuffer = await createPdf(orderData, fileName);
-
-        // Send email with PDF attachment
-        const info = await transporter.sendMail({
-            from: `"Formularz Zamówień" <${process.env.EMAIL_FROM}>`,
-            to: process.env.EMAIL_TO,
-            subject: `Nowe zamówienie - ${new Date().toLocaleDateString('pl-PL')}`,
-            text: 'W załączniku znajdziesz szczegóły zamówienia.',
-            html: `
-                <h2>Nowe zamówienie</h2>
-                <p>Data: ${new Date().toLocaleString('pl-PL')}</p>
-                <p>Liczba pozycji: ${orderData.length}</p>
-                <p>Szczegóły w załączonym pliku PDF.</p>
-            `,
-            attachments: [{
-                filename: `${fileName}.pdf`,
-                content: pdfBuffer,
-                contentType: 'application/pdf'
-            }]
-        });
-
-        console.log('Wysłano email z zamówieniem:', info.messageId);
-        res.json({ 
-            success: true, 
-            message: 'Zamówienie zostało wysłane',
-            messageId: info.messageId 
-        });
-    } catch (error) {
-        console.error('Błąd podczas wysyłania zamówienia:', error);
-        res.status(500).json({ 
-            error: 'Błąd podczas wysyłania zamówienia',
-            details: error.message 
-        });
-    }
-});
 
 // Mapowanie kategorii z API Rezon na ENUM w Supabase
 const CATEGORY_MAPPING = {
@@ -331,7 +494,7 @@ const CATEGORY_MAPPING = {
 };
 
 // Endpoint do synchronizacji z zewnętrznym API
-app.post('/api/admin/sync-from-external-api', async (req, res) => {
+app.post('/api/admin/sync-from-external-api', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -484,7 +647,7 @@ app.post('/api/admin/sync-from-external-api', async (req, res) => {
 });
 
 // Endpoint dla panelu admina - lista produktów ze stanami magazynowymi
-app.get('/api/admin/products-with-stock', async (req, res) => {
+app.get('/api/admin/products-with-stock', requireRole(['ADMIN', 'SALES_REP', 'WAREHOUSE', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ 
             status: 'error', 
@@ -560,7 +723,7 @@ app.get('/api/admin/products-with-stock', async (req, res) => {
 // -----------------------------
 
 // Pobierz pojedynczy produkt
-app.get('/api/admin/products/:id', async (req, res) => {
+app.get('/api/admin/products/:id', requireRole(['ADMIN', 'SALES_REP', 'WAREHOUSE', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -587,7 +750,7 @@ app.get('/api/admin/products/:id', async (req, res) => {
 });
 
 // Utwórz nowy produkt
-app.post('/api/admin/products', async (req, res) => {
+app.post('/api/admin/products', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -644,7 +807,7 @@ app.post('/api/admin/products', async (req, res) => {
 });
 
 // Aktualizuj istniejący produkt
-app.patch('/api/admin/products/:id', async (req, res) => {
+app.patch('/api/admin/products/:id', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -675,7 +838,7 @@ app.patch('/api/admin/products/:id', async (req, res) => {
 });
 
 // Usuń produkt
-app.delete('/api/admin/products/:id', async (req, res) => {
+app.delete('/api/admin/products/:id', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -701,7 +864,7 @@ app.delete('/api/admin/products/:id', async (req, res) => {
 });
 
 // Aktualizacja stanów magazynowych produktu (Inventory, location='MAIN')
-app.patch('/api/admin/products/:id/inventory', async (req, res) => {
+app.patch('/api/admin/products/:id/inventory', requireRole(['ADMIN', 'WAREHOUSE', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -770,6 +933,438 @@ app.patch('/api/admin/products/:id/inventory', async (req, res) => {
     } catch (err) {
         console.error('Wyjątek w PATCH /api/admin/products/:id/inventory:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd podczas zapisu stanów magazynowych', details: err.message });
+    }
+});
+
+// -----------------------------
+// Admin API - Zarządzanie użytkownikami
+// -----------------------------
+
+// Lista działów
+app.get('/api/admin/departments', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('Department')
+            .select('id, name, createdAt')
+            .order('name', { ascending: true });
+
+        if (error) {
+            console.error('Błąd pobierania działów:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać działów', details: error.message });
+        }
+
+        return res.json({ status: 'success', data: data || [] });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/departments:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas pobierania działów', details: err.message });
+    }
+});
+
+// Lista użytkowników z działami
+app.get('/api/admin/users', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('User')
+            .select(`
+                id,
+                name,
+                email,
+                role,
+                isActive,
+                createdAt,
+                departmentId,
+                Department (name)
+            `)
+            .order('createdAt', { ascending: false });
+
+        if (error) {
+            console.error('Błąd pobierania użytkowników:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać użytkowników', details: error.message });
+        }
+
+        const users = (data || []).map(user => ({
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            isActive: user.isActive,
+            createdAt: user.createdAt,
+            departmentId: user.departmentId,
+            departmentName: user.Department?.name || null,
+        }));
+
+        return res.json({ status: 'success', data: users });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/users:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas pobierania użytkowników', details: err.message });
+    }
+});
+
+// Tworzenie nowego użytkownika
+app.post('/api/admin/users', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { name, email, password, role, departmentId } = req.body || {};
+
+    if (!email || !password || !role) {
+        return res.status(400).json({ status: 'error', message: 'Wymagane pola: email, password, role' });
+    }
+
+    if (password.length < 6) {
+        return res.status(400).json({ status: 'error', message: 'Hasło musi mieć co najmniej 6 znaków' });
+    }
+
+    try {
+        // Sprawdź, czy email już istnieje
+        const { data: existing } = await supabase
+            .from('User')
+            .select('id')
+            .eq('email', email)
+            .single();
+
+        if (existing) {
+            return res.status(400).json({ status: 'error', message: 'Użytkownik o tym adresie email już istnieje' });
+        }
+
+        // Hash hasła
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const userData = {
+            name: name || null,
+            email,
+            password: hashedPassword,
+            role,
+            departmentId: departmentId || null,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+
+        const { data: newUser, error } = await supabase
+            .from('User')
+            .insert(userData)
+            .select('id, name, email, role, isActive, createdAt, departmentId')
+            .single();
+
+        if (error) {
+            console.error('Błąd tworzenia użytkownika:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć użytkownika', details: error.message });
+        }
+
+        return res.status(201).json({ status: 'success', data: newUser });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/admin/users:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas tworzenia użytkownika', details: err.message });
+    }
+});
+
+// Edycja użytkownika
+app.patch('/api/admin/users/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+    const { name, role, departmentId, isActive, password } = req.body || {};
+
+    const updateData = {
+        updatedAt: new Date().toISOString(),
+    };
+
+    if (name !== undefined) updateData.name = name;
+    if (role !== undefined) updateData.role = role;
+    if (departmentId !== undefined) updateData.departmentId = departmentId;
+    if (typeof isActive === 'boolean') updateData.isActive = isActive;
+
+    try {
+        if (password !== undefined) {
+            if (!password || password.length < 6) {
+                return res.status(400).json({ status: 'error', message: 'Nowe hasło musi mieć co najmniej 6 znaków' });
+            }
+
+            const hashedPassword = await bcrypt.hash(password, 10);
+            updateData.password = hashedPassword;
+        }
+
+        const { data, error } = await supabase
+            .from('User')
+            .update(updateData)
+            .eq('id', id)
+            .select('id, name, email, role, isActive, departmentId')
+            .single();
+
+        if (error) {
+            console.error('Błąd aktualizacji użytkownika:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować użytkownika', details: error.message });
+        }
+
+        return res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/admin/users/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas aktualizacji użytkownika', details: err.message });
+    }
+});
+
+// Usunięcie użytkownika
+app.delete('/api/admin/users/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('User')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Błąd usuwania użytkownika:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć użytkownika', details: error.message });
+        }
+
+        return res.json({ status: 'success', message: 'Użytkownik usunięty' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/admin/users/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas usuwania użytkownika', details: err.message });
+    }
+});
+
+// -----------------------------
+// API - Zarządzanie klientami
+// -----------------------------
+
+// Lista klientów (handlowiec widzi tylko swoich, admin wszystkich)
+app.get('/api/clients', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN', 'WAREHOUSE']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { role, id: userId } = req.user;
+    const { search } = req.query;
+
+    try {
+        let query = supabase.from('Customer').select(`
+            id,
+            name,
+            email,
+            phone,
+            address,
+            city,
+            zipCode,
+            country,
+            notes,
+            salesRepId,
+            createdAt,
+            updatedAt
+        `);
+
+        // SALES_REP widzi tylko swoich klientów
+        if (role === 'SALES_REP') {
+            query = query.eq('salesRepId', userId);
+        }
+        // ADMIN, SALES_DEPT, WAREHOUSE widzą wszystkich
+
+        if (search && typeof search === 'string' && search.trim()) {
+            const term = `%${search.trim()}%`;
+            query = query.or(
+                `name.ilike.${term},email.ilike.${term},phone.ilike.${term},city.ilike.${term}`
+            );
+        }
+
+        query = query.order('name', { ascending: true });
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania klientów:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać klientów', details: error.message });
+        }
+
+        return res.json({ status: 'success', data: data || [] });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/clients:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas pobierania klientów', details: err.message });
+    }
+});
+
+// Dodanie nowego klienta
+app.post('/api/clients', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { role, id: userId } = req.user;
+    const { name, email, phone, address, city, zipCode, country, notes, salesRepId } = req.body || {};
+
+    if (!name || !name.trim()) {
+        return res.status(400).json({ status: 'error', message: 'Nazwa klienta jest wymagana' });
+    }
+
+    try {
+        const clientData = {
+            name: name.trim(),
+            email: email?.trim() || null,
+            phone: phone?.trim() || null,
+            address: address?.trim() || null,
+            city: city?.trim() || null,
+            zipCode: zipCode?.trim() || null,
+            country: country?.trim() || 'Poland',
+            notes: notes?.trim() || null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+
+        // Przypisanie do handlowca
+        if (role === 'SALES_REP') {
+            // Handlowiec może dodawać tylko swoich klientów
+            clientData.salesRepId = userId;
+        } else if (['ADMIN', 'SALES_DEPT'].includes(role)) {
+            // Admin/SALES_DEPT może przypisać do dowolnego handlowca
+            clientData.salesRepId = salesRepId || userId;
+        }
+
+        const { data, error } = await supabase
+            .from('Customer')
+            .insert(clientData)
+            .select('*')
+            .single();
+
+        if (error) {
+            console.error('Błąd tworzenia klienta:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć klienta', details: error.message });
+        }
+
+        return res.status(201).json({ status: 'success', data });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/clients:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas tworzenia klienta', details: err.message });
+    }
+});
+
+// Edycja klienta
+app.patch('/api/clients/:id', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { role, id: userId } = req.user;
+    const { id } = req.params;
+    const { name, email, phone, address, city, zipCode, country, notes, salesRepId } = req.body || {};
+
+    try {
+        // Sprawdź czy klient istnieje i czy użytkownik ma do niego dostęp
+        let clientQuery = supabase.from('Customer').select('id, salesRepId').eq('id', id);
+        
+        if (role === 'SALES_REP') {
+            clientQuery = clientQuery.eq('salesRepId', userId);
+        }
+
+        const { data: existingClient, error: fetchError } = await clientQuery.single();
+
+        if (fetchError || !existingClient) {
+            return res.status(404).json({ status: 'error', message: 'Klient nie znaleziony lub brak uprawnień' });
+        }
+
+        const updateData = {
+            updatedAt: new Date().toISOString(),
+        };
+
+        if (name !== undefined) updateData.name = name.trim();
+        if (email !== undefined) updateData.email = email?.trim() || null;
+        if (phone !== undefined) updateData.phone = phone?.trim() || null;
+        if (address !== undefined) updateData.address = address?.trim() || null;
+        if (city !== undefined) updateData.city = city?.trim() || null;
+        if (zipCode !== undefined) updateData.zipCode = zipCode?.trim() || null;
+        if (country !== undefined) updateData.country = country?.trim() || 'Poland';
+        if (notes !== undefined) updateData.notes = notes?.trim() || null;
+
+        // Tylko ADMIN/SALES_DEPT może zmieniać przypisanie handlowca
+        if (['ADMIN', 'SALES_DEPT'].includes(role) && salesRepId !== undefined) {
+            updateData.salesRepId = salesRepId;
+        }
+
+        const { data, error } = await supabase
+            .from('Customer')
+            .update(updateData)
+            .eq('id', id)
+            .select('*')
+            .single();
+
+        if (error) {
+            console.error('Błąd aktualizacji klienta:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować klienta', details: error.message });
+        }
+
+        return res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/clients/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas aktualizacji klienta', details: err.message });
+    }
+});
+
+// Usunięcie klienta
+app.delete('/api/clients/:id', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { role, id: userId } = req.user;
+    const { id } = req.params;
+
+    try {
+        // Sprawdź czy klient istnieje i czy użytkownik ma do niego dostęp
+        let clientQuery = supabase.from('Customer').select('id, name, salesRepId').eq('id', id);
+        
+        if (role === 'SALES_REP') {
+            clientQuery = clientQuery.eq('salesRepId', userId);
+        }
+
+        const { data: existingClient, error: fetchError } = await clientQuery.single();
+
+        if (fetchError || !existingClient) {
+            return res.status(404).json({ status: 'error', message: 'Klient nie znaleziony lub brak uprawnień' });
+        }
+
+        // Sprawdź czy klient ma zamówienia (opcjonalnie - można to pominąć)
+        const { data: orders } = await supabase
+            .from('Order')
+            .select('id')
+            .eq('customerId', id)
+            .limit(1);
+
+        if (orders && orders.length > 0) {
+            return res.status(400).json({ 
+                status: 'error', 
+                message: 'Nie można usunąć klienta, który ma zamówienia. Dezaktywuj go zamiast tego.' 
+            });
+        }
+
+        const { error } = await supabase
+            .from('Customer')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Błąd usuwania klienta:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć klienta', details: error.message });
+        }
+
+        return res.json({ status: 'success', message: `Klient "${existingClient.name}" został usunięty` });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/clients/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas usuwania klienta', details: err.message });
     }
 });
 
