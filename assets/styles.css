@@ -1306,7 +1306,8 @@ main.layout {
 }
 
 /* Logika ilości na projekty */
-.qty-controls {
+.qty-controls,
+.qty-controls-results {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -1316,7 +1317,8 @@ main.layout {
   font-weight: 500;
 }
 
-.qty-per-project-input {
+.qty-per-project-input,
+.qty-per-project-input-results {
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -1326,12 +1328,14 @@ main.layout {
   font-family: monospace;
 }
 
-.qty-per-project-input::placeholder {
+.qty-per-project-input::placeholder,
+.qty-per-project-input-results::placeholder {
   color: var(--color-muted);
   font-family: var(--font-base);
 }
 
-.qty-per-project-input:focus {
+.qty-per-project-input:focus,
+.qty-per-project-input-results:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);

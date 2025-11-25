@@ -1151,13 +1151,21 @@ function renderResults(products) {
       <td class="price-column">${formatCurrency(product.price)}</td>
       <td>${createBadge(product.stock, product.stock_optimal)}</td>
       <td>
-        <input
-          type="number"
-          class="qty-input"
-          value="1"
-          min="1"
-          ${product.stock > 0 ? '' : 'disabled'}
-        />
+        <div class="qty-controls-results">
+          <input
+            type="number"
+            class="qty-input"
+            value="1"
+            min="1"
+            placeholder="Łącznie"
+            ${product.stock > 0 ? '' : 'disabled'}
+          />
+          <input
+            type="text"
+            class="qty-per-project-input-results"
+            placeholder="po 20 lub 20,30,40"
+          />
+        </div>
       </td>
       <td>
         <button type="button" class="btn btn--primary" ${product.stock > 0 ? '' : 'disabled'}>
@@ -1177,6 +1185,7 @@ function renderResults(products) {
 
     const projectsInput = row.querySelector('.projects-input');
     const qtyInput = row.querySelector('.qty-input');
+    const qtyPerProjectInput = row.querySelector('.qty-per-project-input-results');
     const addBtn = row.querySelector('button');
 
     projectsInput.addEventListener('input', () => {
@@ -1200,9 +1209,9 @@ function renderResults(products) {
     });
 
     addBtn.addEventListener('click', () => {
-      const value = parseInt(qtyInput.value, 10);
-      const quantity = Number.isFinite(value) && value > 0 ? value : 1;
       const projectsValue = projectsInput.value.trim();
+      const qtyTotalValue = parseInt(qtyInput.value, 10);
+      const qtyPerProjectValue = qtyPerProjectInput.value.trim();
 
       if (projectsValue && !isValidProjectInput(projectsValue)) {
         alert('Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.');
@@ -1210,8 +1219,30 @@ function renderResults(products) {
         return;
       }
 
-      const normalizedProjects = sanitizeProjectsValue(projectsValue);
-      addToCart(product, quantity, normalizedProjects);
+      // Jeśli wpisano ilości na projekty, oblicz rozkład
+      if (qtyPerProjectValue) {
+        const normalizedProjects = sanitizeProjectsValue(projectsValue);
+        const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, qtyPerProjectValue);
+        
+        if (!result.success) {
+          alert(result.error);
+          qtyPerProjectInput.focus();
+          return;
+        }
+
+        // Dodaj do koszyka z obliczonym rozkładem
+        addToCartWithQuantityBreakdown(product, result);
+      } else {
+        // Zwykłe dodanie bez rozkładu
+        const quantity = Number.isFinite(qtyTotalValue) && qtyTotalValue > 0 ? qtyTotalValue : 1;
+        const normalizedProjects = sanitizeProjectsValue(projectsValue);
+        addToCart(product, quantity, normalizedProjects);
+      }
+
+      // Czyszczenie pól po dodaniu
+      projectsInput.value = '';
+      qtyInput.value = '1';
+      qtyPerProjectInput.value = '';
     });
 
     row.addEventListener('click', () => {
@@ -1247,6 +1278,29 @@ function addToCart(product, quantity, projects) {
   });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka.`, 'success');
+}
+
+function addToCartWithQuantityBreakdown(product, computeResult) {
+  const stock = product.stock ?? 0;
+  if (stock <= 0) {
+    setStatus(`Produkt ${product.name} jest niedostępny.`, 'error');
+    return;
+  }
+
+  const key = product._id;
+  const entry = cart.get(key);
+  const { totalQuantity, perProjectQuantities, mode, quantityInput } = computeResult;
+
+  cart.set(key, { 
+    product, 
+    quantity: totalQuantity, 
+    projects: computeResult.projects?.join(',') || '',
+    quantityInputTotal: mode === 'total' ? totalQuantity : '',
+    quantityInputPerProject: mode !== 'total' ? quantityInput : '',
+    perProjectQuantities: perProjectQuantities
+  });
+  renderCart();
+  setStatus(`Dodano produkt ${product.name} do koszyka (rozkład na projekty).`, 'success');
 }
 
 function isValidProjectInput(value) {
