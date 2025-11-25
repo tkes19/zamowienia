@@ -1341,7 +1341,8 @@ main.layout {
   box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
 }
 
-.qty-preview {
+.qty-preview,
+.qty-preview-results {
   font-size: 0.8rem;
   color: var(--color-muted);
   padding: 0.4rem 0.6rem;
@@ -1349,4 +1350,19 @@ main.layout {
   border-radius: 4px;
   font-family: monospace;
   word-break: break-word;
+  margin-top: 0.3rem;
+}
+
+.qty-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.qty-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }

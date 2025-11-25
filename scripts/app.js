@@ -1152,19 +1152,25 @@ function renderResults(products) {
       <td>${createBadge(product.stock, product.stock_optimal)}</td>
       <td>
         <div class="qty-controls-results">
-          <input
-            type="number"
-            class="qty-input"
-            value="1"
-            min="1"
-            placeholder="Łącznie"
-            ${product.stock > 0 ? '' : 'disabled'}
-          />
-          <input
-            type="text"
-            class="qty-per-project-input-results"
-            placeholder="po 20 lub 20,30,40"
-          />
+          <div class="qty-field">
+            <label class="qty-label">Łącznie szt.</label>
+            <input
+              type="number"
+              class="qty-input"
+              value="1"
+              min="1"
+              ${product.stock > 0 ? '' : 'disabled'}
+            />
+          </div>
+          <div class="qty-field">
+            <label class="qty-label">Ilości na proj.</label>
+            <input
+              type="text"
+              class="qty-per-project-input-results"
+              placeholder="po 20 lub 20,30,40"
+            />
+          </div>
+          <div class="qty-preview-results" style="display:none;"></div>
         </div>
       </td>
       <td>
@@ -1186,6 +1192,7 @@ function renderResults(products) {
     const projectsInput = row.querySelector('.projects-input');
     const qtyInput = row.querySelector('.qty-input');
     const qtyPerProjectInput = row.querySelector('.qty-per-project-input-results');
+    const qtyPreviewResults = row.querySelector('.qty-preview-results');
     const addBtn = row.querySelector('button');
 
     projectsInput.addEventListener('input', () => {
@@ -1206,6 +1213,38 @@ function renderResults(products) {
       }
 
       projectsInput.value = sanitizeProjectsValue(value);
+    });
+
+    // Event listener do pola "Ilości na proj." – podgląd na żywo
+    qtyPerProjectInput.addEventListener('input', () => {
+      const projectsValue = projectsInput.value.trim();
+      const qtyTotalValue = parseInt(qtyInput.value, 10);
+      const qtyPerProjectValue = qtyPerProjectInput.value.trim();
+
+      if (!qtyPerProjectValue) {
+        qtyPreviewResults.style.display = 'none';
+        return;
+      }
+
+      if (!projectsValue) {
+        qtyPreviewResults.innerHTML = '<span style="color: red; font-size: 0.8rem;">⚠️ Wpisz numery projektów</span>';
+        qtyPreviewResults.style.display = 'block';
+        return;
+      }
+
+      // Oblicz rozkład na żywo
+      const result = computePerProjectQuantities(projectsValue, qtyTotalValue, qtyPerProjectValue);
+      
+      if (!result.success) {
+        qtyPreviewResults.innerHTML = `<span style="color: red; font-size: 0.8rem;">❌ ${result.error}</span>`;
+        qtyPreviewResults.style.display = 'block';
+      } else {
+        const preview = result.perProjectQuantities
+          .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
+          .join(' | ');
+        qtyPreviewResults.innerHTML = `<span style="color: green; font-size: 0.8rem;">✓ Łącznie: ${result.totalQuantity} | ${preview}</span>`;
+        qtyPreviewResults.style.display = 'block';
+      }
     });
 
     addBtn.addEventListener('click', () => {
