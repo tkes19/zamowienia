@@ -1195,6 +1195,7 @@ function renderResults(products) {
     const qtyPreviewResults = row.querySelector('.qty-preview-results');
     const addBtn = row.querySelector('button');
 
+    // --- Walidacja projektów ---
     projectsInput.addEventListener('input', () => {
       projectsInput.value = projectsInput.value.replace(/[^0-9,\-\s]/g, '');
     });
@@ -1215,13 +1216,41 @@ function renderResults(products) {
       projectsInput.value = sanitizeProjectsValue(value);
     });
 
-    // Funkcja do aktualizacji podglądu i przeliczania
-    const updateQtyPreview = () => {
-      const projectsValue = projectsInput.value.trim();
-      const qtyTotalValue = parseInt(qtyInput.value, 10);
-      const qtyPerProjectValue = qtyPerProjectInput.value.trim();
+    // --- Funkcje pomocnicze dla dwukierunkowej logiki ---
 
-      if (!qtyPerProjectValue) {
+    // Na podstawie total + projektów zbuduj listę np. 16 -> 6,5,5
+    const buildPerProjectListFromTotal = () => {
+      const projectsValue = projectsInput.value.trim();
+      const totalValue = parseInt(qtyInput.value, 10);
+      if (!projectsValue || !Number.isFinite(totalValue) || totalValue <= 0) {
+        qtyPreviewResults.style.display = 'none';
+        return;
+      }
+
+      const result = computePerProjectQuantities(projectsValue, totalValue, '');
+      if (!result.success) {
+        qtyPreviewResults.innerHTML = `<span style="color: red; font-size: 0.8rem;">❌ ${result.error}</span>`;
+        qtyPreviewResults.style.display = 'block';
+        return;
+      }
+
+      // Wpisujemy dokładną listę do pola B
+      const list = result.perProjectQuantities.map(p => p.qty).join(',');
+      qtyPerProjectInput.value = list;
+
+      const preview = result.perProjectQuantities
+        .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
+        .join(' | ');
+      qtyPreviewResults.innerHTML = `<span style="color: green; font-size: 0.8rem;">✓ Łącznie: ${result.totalQuantity} | ${preview}</span>`;
+      qtyPreviewResults.style.display = 'block';
+    };
+
+    // Na podstawie pola B (po X lub lista) przelicz total + podgląd
+    const buildTotalFromPerProject = () => {
+      const projectsValue = projectsInput.value.trim();
+      const perValue = qtyPerProjectInput.value.trim();
+
+      if (!perValue) {
         qtyPreviewResults.style.display = 'none';
         return;
       }
@@ -1232,29 +1261,53 @@ function renderResults(products) {
         return;
       }
 
-      // Oblicz rozkład na żywo
-      const result = computePerProjectQuantities(projectsValue, qtyTotalValue, qtyPerProjectValue);
-      
+      // Używamy computePerProjectQuantities z total=0 → funkcja sama wyliczy total z pola B
+      const result = computePerProjectQuantities(projectsValue, 0, perValue);
       if (!result.success) {
         qtyPreviewResults.innerHTML = `<span style="color: red; font-size: 0.8rem;">❌ ${result.error}</span>`;
         qtyPreviewResults.style.display = 'block';
-      } else {
-        // AUTOMATYCZNIE PRZELICZ pole "Łącznie szt."
-        qtyInput.value = result.totalQuantity;
-        
-        const preview = result.perProjectQuantities
-          .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
-          .join(' | ');
-        qtyPreviewResults.innerHTML = `<span style="color: green; font-size: 0.8rem;">✓ Łącznie: ${result.totalQuantity} | ${preview}</span>`;
-        qtyPreviewResults.style.display = 'block';
+        return;
       }
+
+      qtyInput.value = result.totalQuantity;
+
+      const preview = result.perProjectQuantities
+        .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
+        .join(' | ');
+      qtyPreviewResults.innerHTML = `<span style="color: green; font-size: 0.8rem;">✓ Łącznie: ${result.totalQuantity} | ${preview}</span>`;
+      qtyPreviewResults.style.display = 'block';
     };
 
-    // Event listener do pola "Ilości na proj." – podgląd na żywo
-    qtyPerProjectInput.addEventListener('input', updateQtyPreview);
+    // --- Eventy dwukierunkowe ---
 
-    // Event listener do pola "Łącznie szt." – również aktualizuj podgląd
-    qtyInput.addEventListener('input', updateQtyPreview);
+    // Pisanie w A czyści B i podgląd, ale liczenie robimy dopiero na blur
+    qtyInput.addEventListener('input', () => {
+      qtyPerProjectInput.value = '';
+      qtyPreviewResults.style.display = 'none';
+    });
+
+    qtyInput.addEventListener('blur', () => {
+      if (!qtyInput.value.trim()) {
+        qtyPerProjectInput.value = '';
+        qtyPreviewResults.style.display = 'none';
+        return;
+      }
+      buildPerProjectListFromTotal();
+    });
+
+    // Pisanie w B czyści A, a na blur liczymy sumę z listy / trybu "po X"
+    qtyPerProjectInput.addEventListener('input', () => {
+      qtyInput.value = '';
+      qtyPreviewResults.style.display = 'none';
+    });
+
+    qtyPerProjectInput.addEventListener('blur', () => {
+      if (!qtyPerProjectInput.value.trim()) {
+        qtyPreviewResults.style.display = 'none';
+        return;
+      }
+      buildTotalFromPerProject();
+    });
 
     addBtn.addEventListener('click', () => {
       const projectsValue = projectsInput.value.trim();

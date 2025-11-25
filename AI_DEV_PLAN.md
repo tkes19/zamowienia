@@ -279,6 +279,37 @@ Ta sekcja służy jako "słownik" między starym API (Next.js/Prisma) a nowym ar
 - Handlowiec: projekty `4,5,6`, ilości `20,30,40`
 - System: suma `20+30+40 = 90` → Proj. 4: 20, Proj. 5: 30, Proj. 6: 40
 
+#### UX pól ilości w formularzu (finalne zachowanie)
+
+W tabeli "Wybrane produkty" dla każdej pozycji są **dwa powiązane pola**:
+
+- `Łącznie szt.` (A) – liczba całkowita.
+- `Ilości na proj.` (B) – tekst: `po 20` **lub** lista `20,30,40`.
+
+Zasady działania:
+
+1. **Pola działają dwukierunkowo, ale aktywne jest zawsze to, w którym użytkownik ostatnio pisał**:
+   - gdy użytkownik zaczyna wpisywać w A → B jest czyszczone;
+   - gdy zaczyna pisać w B → A jest czyszczone.
+
+2. **Po zakończeniu edycji (blur / TAB / klik poza pole)** system automatycznie uzupełnia drugie pole:
+   - jeśli wypełnione jest A (łączna ilość) i są projekty `1,2,3`:
+     - system liczy listę wg algorytmu z Trybu 1 (dzielenie z resztą)
+     - np. 15 → `5,5,5`, 16 → `6,5,5`, 200 (4 projekty) → `50,50,50,50`;
+     - wpisuje tę listę do B (`Ilości na proj.`) i pokazuje podgląd.
+   - jeśli wypełnione jest B:
+     - przypadek `po 20` → system liczy `20 × liczba_projektów` i wpisuje wynik do A;
+     - przypadek `20,30,40` → system liczy sumę, sprawdza długość listy == liczba projektów, wpisuje sumę do A.
+
+3. **Podgląd rozkładu**:
+   - poniżej pól wyświetlany jest kompaktowy, kolorowy podgląd:
+     - zielony ✓ przy poprawnych danych (np. `✓ łącznie: 62 | Proj. 1: 22 | Proj. 2: 20 | Proj. 3: 20`),
+     - czerwony ❌ przy błędach (np. zła liczba elementów listy).
+
+4. **Enter/TAB**:
+   - TAB / kliknięcie poza pole → wywołuje `blur` i przeliczenie drugiego pola + podglądu;
+   - Enter **nie ma specjalnej logiki** (został wyłączony, żeby nie powodować side‑effectów typu przebudowa wiersza) – w przyszłości można go dodać ponownie jako osobne, dobrze przetestowane zadanie.
+
 #### Oba pola wypełnione
 - System liczy z pola B, sprawdza czy suma = pole A
 - Jeśli nie → żółte ostrzeżenie, nie można wysłać
