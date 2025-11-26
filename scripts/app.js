@@ -1275,14 +1275,25 @@ function renderResults(products) {
         <div class="product-name">${product.name ?? '-'}</div>
         <div class="product-id">${product.pc_id || ''}</div>
       </td>
-      <td>
-        <input
-          type="text"
-          class="projects-input"
-          placeholder="np. 1-5,7"
-          inputmode="numeric"
-          pattern="[0-9,\-\s]*"
-        />
+      <td class="projects-cell">
+        <div class="projects-field">
+          <label class="projects-field__label">Nr projektów</label>
+          <input
+            type="text"
+            class="projects-input"
+            placeholder="np. 1-5,7"
+            inputmode="numeric"
+            pattern="[0-9,\-\s]*"
+          />
+        </div>
+        <div class="projects-field">
+          <label class="projects-field__label">Ilości na proj.</label>
+          <input
+            type="text"
+            class="qty-per-project-input-results"
+            placeholder="po 20 lub 20,30,40"
+          />
+        </div>
       </td>
       <td class="price-column">${formatCurrency(product.price)}</td>
       <td>${createBadge(product.stock, product.stock_optimal)}</td>
@@ -1298,15 +1309,6 @@ function renderResults(products) {
               ${product.stock > 0 ? '' : 'disabled'}
             />
           </div>
-          <div class="qty-field">
-            <label class="qty-label">Ilości na proj.</label>
-            <input
-              type="text"
-              class="qty-per-project-input-results"
-              placeholder="po 20 lub 20,30,40"
-            />
-          </div>
-          <div class="qty-preview-results" style="display:none;"></div>
         </div>
       </td>
       <td>
@@ -1328,7 +1330,28 @@ function renderResults(products) {
     const projectsInput = row.querySelector('.projects-input');
     const qtyInput = row.querySelector('.qty-input');
     const qtyPerProjectInput = row.querySelector('.qty-per-project-input-results');
-    const qtyPreviewResults = row.querySelector('.qty-preview-results');
+    const qtyPreviewContainer = document.createElement('div');
+    qtyPreviewContainer.className = 'qty-preview-results';
+    const previewRow = document.createElement('tr');
+    previewRow.className = 'results-preview-row';
+    previewRow.style.display = 'none';
+    const previewCell = document.createElement('td');
+    previewCell.colSpan = 6;
+    previewCell.appendChild(qtyPreviewContainer);
+    previewRow.appendChild(previewCell);
+
+    const hideQtyPreview = () => {
+      qtyPreviewContainer.innerHTML = '';
+      previewRow.style.display = 'none';
+      qtyPreviewContainer.removeAttribute('data-variant');
+    };
+
+    const showQtyPreview = (message, variant = 'success') => {
+      qtyPreviewContainer.innerHTML = `<span class="qty-preview-message qty-preview-message--${variant}">${message}</span>`;
+      qtyPreviewContainer.setAttribute('data-variant', variant);
+      previewRow.style.display = '';
+    };
+
     const addBtn = row.querySelector('button');
 
     // --- Walidacja projektów ---
@@ -1359,14 +1382,13 @@ function renderResults(products) {
       const projectsValue = projectsInput.value.trim();
       const totalValue = parseInt(qtyInput.value, 10);
       if (!projectsValue || !Number.isFinite(totalValue) || totalValue <= 0) {
-        qtyPreviewResults.style.display = 'none';
+        hideQtyPreview();
         return;
       }
 
       const result = computePerProjectQuantities(projectsValue, totalValue, '');
       if (!result.success) {
-        qtyPreviewResults.innerHTML = `<span style="color: red; font-size: 0.8rem;">❌ ${result.error}</span>`;
-        qtyPreviewResults.style.display = 'block';
+        showQtyPreview(`❌ ${result.error}`, 'error');
         return;
       }
 
@@ -1377,8 +1399,7 @@ function renderResults(products) {
       const preview = result.perProjectQuantities
         .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
         .join(' | ');
-      qtyPreviewResults.innerHTML = `<span style="color: green; font-size: 0.8rem;">✓ Łącznie: ${result.totalQuantity} | ${preview}</span>`;
-      qtyPreviewResults.style.display = 'block';
+      showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${preview}`, 'success');
     };
 
     // Na podstawie pola B (po X lub lista) przelicz total + podgląd
@@ -1387,45 +1408,37 @@ function renderResults(products) {
       const perValue = qtyPerProjectInput.value.trim();
 
       if (!perValue) {
-        qtyPreviewResults.style.display = 'none';
+        hideQtyPreview();
         return;
       }
 
       if (!projectsValue) {
-        qtyPreviewResults.innerHTML = '<span style="color: red; font-size: 0.8rem;">⚠️ Wpisz numery projektów</span>';
-        qtyPreviewResults.style.display = 'block';
+        showQtyPreview('⚠️ Wpisz numery projektów', 'warning');
         return;
       }
 
-      // Używamy computePerProjectQuantities z total=0 → funkcja sama wyliczy total z pola B
-      const result = computePerProjectQuantities(projectsValue, 0, perValue);
+      const result = computePerProjectQuantities(projectsValue, '', perValue);
       if (!result.success) {
-        qtyPreviewResults.innerHTML = `<span style="color: red; font-size: 0.8rem;">❌ ${result.error}</span>`;
-        qtyPreviewResults.style.display = 'block';
+        showQtyPreview(`❌ ${result.error}`, 'error');
         return;
       }
 
       qtyInput.value = result.totalQuantity;
-
       const preview = result.perProjectQuantities
         .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
         .join(' | ');
-      qtyPreviewResults.innerHTML = `<span style="color: green; font-size: 0.8rem;">✓ Łącznie: ${result.totalQuantity} | ${preview}</span>`;
-      qtyPreviewResults.style.display = 'block';
+      showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${preview}`, 'success');
     };
 
-    // --- Eventy dwukierunkowe ---
-
-    // Pisanie w A czyści B i podgląd, ale liczenie robimy dopiero na blur
     qtyInput.addEventListener('input', () => {
       qtyPerProjectInput.value = '';
-      qtyPreviewResults.style.display = 'none';
+      hideQtyPreview();
     });
 
     qtyInput.addEventListener('blur', () => {
       if (!qtyInput.value.trim()) {
         qtyPerProjectInput.value = '';
-        qtyPreviewResults.style.display = 'none';
+        hideQtyPreview();
         return;
       }
       buildPerProjectListFromTotal();
@@ -1434,12 +1447,12 @@ function renderResults(products) {
     // Pisanie w B czyści A, a na blur liczymy sumę z listy / trybu "po X"
     qtyPerProjectInput.addEventListener('input', () => {
       qtyInput.value = '';
-      qtyPreviewResults.style.display = 'none';
+      hideQtyPreview();
     });
 
     qtyPerProjectInput.addEventListener('blur', () => {
       if (!qtyPerProjectInput.value.trim()) {
-        qtyPreviewResults.style.display = 'none';
+        hideQtyPreview();
         return;
       }
       buildTotalFromPerProject();
@@ -1480,6 +1493,7 @@ function renderResults(products) {
       projectsInput.value = '';
       qtyInput.value = '1';
       qtyPerProjectInput.value = '';
+      hideQtyPreview();
     });
 
     row.addEventListener('click', () => {
@@ -1488,6 +1502,7 @@ function renderResults(products) {
     });
 
     resultsBody.appendChild(row);
+    resultsBody.appendChild(previewRow);
   });
 }
 
@@ -2295,6 +2310,12 @@ function initOrderCustomerControls() {
 
 // Sprawdzenie autoryzacji i inicjalizacja
 async function checkAuthAndInitialize() {
+  const headerLoginToggle = document.getElementById('header-login-toggle');
+  const headerLoginForm = document.getElementById('header-login-form');
+  const headerUser = document.getElementById('header-user');
+  const headerUserName = document.getElementById('header-user-name');
+  const headerUserRole = document.getElementById('header-user-role');
+
   try {
     const response = await fetch('/api/auth/me', {
       credentials: 'include'
@@ -2303,10 +2324,47 @@ async function checkAuthAndInitialize() {
     if (response.ok) {
       const userData = await response.json();
       currentUser = userData;
+
+      // Usuń tryb gościa – pokaż pełny widok
+      document.body.classList.remove('hide-guest');
+
+      // Ukryj przycisk i panel logowania, pokaż info o użytkowniku
+      if (headerLoginToggle) headerLoginToggle.style.display = 'none';
+      if (headerLoginForm) headerLoginForm.style.display = 'none';
+      if (headerUser) headerUser.style.display = 'flex';
+
+      // Wyświetl dane użytkownika w pasku – imię i nazwisko (lub inna nazwa) w pierwszej linii
+      if (headerUserName) {
+        const displayName = userData.fullName || userData.name || userData.email || '';
+        headerUserName.textContent = displayName;
+      }
+      if (headerUserRole) {
+        const roleLabels = {
+          'ADMIN': 'Administrator',
+          'SALES_REP': 'Handlowiec',
+          'SALES_DEPT': 'Dział sprzedaży',
+          'WAREHOUSE': 'Magazyn',
+          'NEW_USER': 'Nowy użytkownik'
+        };
+        headerUserRole.textContent = roleLabels[userData.role] || userData.role || '';
+      }
+
       showUserNavigation(userData.role);
+    } else {
+      // Niezalogowany – tryb gościa
+      currentUser = null;
+      document.body.classList.add('hide-guest');
+
+      if (headerLoginToggle) headerLoginToggle.style.display = 'inline-flex';
+      if (headerUser) headerUser.style.display = 'none';
     }
   } catch (error) {
     console.log('Użytkownik niezalogowany lub błąd autoryzacji');
+    currentUser = null;
+    document.body.classList.add('hide-guest');
+
+    if (headerLoginToggle) headerLoginToggle.style.display = 'inline-flex';
+    if (headerUser) headerUser.style.display = 'none';
   }
 
   // Inicjalizacja niezależnie od stanu logowania
@@ -2334,11 +2392,11 @@ function showUserNavigation(role) {
 async function handleLogout() {
   try {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-    window.location.href = '/login.html';
   } catch (error) {
     console.error('Błąd wylogowania:', error);
-    window.location.href = '/login.html';
   }
+  // Po wylogowaniu przeładuj stronę – checkAuthAndInitialize ustawi tryb gościa
+  window.location.href = '/';
 }
 
 // ========================================
@@ -2348,72 +2406,98 @@ async function handleLogout() {
 function initGalleryZoom() {
   const galleryFrame = document.getElementById('gallery-preview-frame');
   const galleryImage = document.getElementById('gallery-preview-image');
-  const zoomModal = document.getElementById('gallery-zoom-modal');
-  const zoomImage = document.getElementById('gallery-zoom-image');
-  const zoomClose = document.getElementById('gallery-zoom-close');
 
-  if (!galleryFrame || !galleryImage || !zoomModal || !zoomImage) return;
+  if (!galleryFrame || !galleryImage) return;
 
-  let lastTap = 0;
-  const doubleTapDelay = 300;
+  let isZoomed = false;
+  let scale = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
 
-  // Double-tap na obrazku
-  galleryImage.addEventListener('click', (e) => {
-    const now = Date.now();
-    if (now - lastTap < doubleTapDelay) {
-      // Double-tap
-      e.preventDefault();
-      openZoomModal();
-    }
-    lastTap = now;
+  // Drag – przesuwanie powiększonego obrazu
+  galleryImage.addEventListener('mousedown', (e) => {
+    if (!isZoomed || e.button !== 0) return; // tylko lewy przycisk i tylko w trybie zoom
+    isDragging = true;
+    dragStartX = e.clientX - offsetX;
+    dragStartY = e.clientY - offsetY;
+    galleryImage.style.cursor = 'grabbing';
   });
 
-  // Kliknięcie na obrazek (single-tap) – otwiera modal
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging || !isZoomed) return; // bez isDragging nie przesuwaj
+    offsetX = e.clientX - dragStartX;
+    offsetY = e.clientY - dragStartY;
+    updateImageTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    isDragging = false;
+    galleryImage.style.cursor = isZoomed ? 'grab' : 'auto';
+  });
+
+  // Scroll do powiększania/zmniejszania
+  galleryImage.addEventListener('wheel', (e) => {
+    // Jeśli nie jesteśmy w trybie zoomu – pozwól na normalne przewijanie strony
+    if (!isZoomed) {
+      return;
+    }
+
+    e.preventDefault();
+
+    const rect = galleryImage.getBoundingClientRect();
+    const cursorX = e.clientX - rect.left;
+    const cursorY = e.clientY - rect.top;
+
+    const zoomSpeed = 0.1;
+    const newScale = e.deltaY > 0 ? scale - zoomSpeed : scale + zoomSpeed;
+
+    if (newScale < 1 || newScale > 5) return;
+
+    // Przelicz offset tak, aby punkt pod kursorem pozostał pod kursorem
+    const prevScale = scale;
+    scale = newScale;
+
+    const scaleRatio = scale / prevScale;
+    offsetX = cursorX - (cursorX - offsetX) * scaleRatio;
+    offsetY = cursorY - (cursorY - offsetY) * scaleRatio;
+
+    if (scale <= 1) {
+      resetZoom();
+    } else {
+      updateImageTransform();
+    }
+  }, { passive: false });
+
+  // Double-click – przełącz zoom (włącz/wyłącz)
   galleryImage.addEventListener('dblclick', (e) => {
     e.preventDefault();
-    openZoomModal();
-  });
-
-  // Zamknięcie modala
-  zoomClose.addEventListener('click', closeZoomModal);
-  zoomModal.addEventListener('click', (e) => {
-    if (e.target === zoomModal) {
-      closeZoomModal();
+    if (isZoomed) {
+      resetZoom();
+    } else {
+      // Włącz zoom startowy
+      isZoomed = true;
+      scale = 2;
+      offsetX = 0;
+      offsetY = 0;
+      updateImageTransform();
     }
   });
 
-  // Klawisz ESC do zamknięcia
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && zoomModal.getAttribute('data-active') === 'true') {
-      closeZoomModal();
-    }
-  });
-
-  // Touch support – umożliwia scrollowanie na mobile
-  let touchStartX = 0;
-  let touchStartY = 0;
-
-  galleryFrame.addEventListener('touchstart', (e) => {
-    touchStartX = e.touches[0].clientX;
-    touchStartY = e.touches[0].clientY;
-  }, { passive: true });
-
-  galleryFrame.addEventListener('touchmove', (e) => {
-    // Pozwól na naturalne scrollowanie
-  }, { passive: true });
-
-  function openZoomModal() {
-    if (!galleryImage.src || galleryImage.hidden) return;
-
-    zoomImage.src = galleryImage.src;
-    zoomImage.alt = galleryImage.alt;
-    zoomModal.setAttribute('data-active', 'true');
-    document.body.style.overflow = 'hidden';
+  function resetZoom() {
+    isZoomed = false;
+    scale = 1;
+    offsetX = 0;
+    offsetY = 0;
+    updateImageTransform();
+    galleryImage.style.cursor = 'auto';
   }
 
-  function closeZoomModal() {
-    zoomModal.setAttribute('data-active', 'false');
-    document.body.style.overflow = '';
+  function updateImageTransform() {
+    galleryImage.style.transform = `scale(${scale}) translate(${offsetX / scale}px, ${offsetY / scale}px)`;
+    galleryImage.style.cursor = isZoomed ? 'grab' : 'auto';
   }
 }
 
@@ -2639,26 +2723,50 @@ async function showOrderDetails(orderId) {
   }
 }
 
-// Obsługa przycisków
-ordersNavBtn.addEventListener('click', () => {
-  ordersSection.style.display = '';
-  orderDetailsSection.style.display = 'none';
-  loadUserRole();
-  loadOrders();
-});
+// Obsługa przycisków (tylko jeśli elementy istnieją w aktualnym widoku)
+if (ordersNavBtn && ordersSection && orderDetailsSection) {
+  ordersNavBtn.addEventListener('click', () => {
+    ordersSection.style.display = '';
+    orderDetailsSection.style.display = 'none';
+    loadUserRole();
+    loadOrders();
+  });
+}
 
-ordersFilterApply.addEventListener('click', loadOrders);
-ordersFilterReset.addEventListener('click', () => {
-  ordersFilterStatus.value = '';
-  ordersFilterUser.value = '';
-  ordersFilterDateFrom.value = '';
-  ordersFilterDateTo.value = '';
-  loadOrders();
-});
+if (ordersFilterApply && ordersFilterReset) {
+  ordersFilterApply.addEventListener('click', loadOrders);
+  ordersFilterReset.addEventListener('click', () => {
+    ordersFilterStatus.value = '';
+    ordersFilterUser.value = '';
+    ordersFilterDateFrom.value = '';
+    ordersFilterDateTo.value = '';
+    loadOrders();
+  });
+}
 
-orderDetailsBack.addEventListener('click', () => {
-  orderDetailsSection.style.display = 'none';
-  ordersSection.style.display = '';
-});
+if (orderDetailsBack && orderDetailsSection && ordersSection) {
+  orderDetailsBack.addEventListener('click', () => {
+    orderDetailsSection.style.display = 'none';
+    ordersSection.style.display = '';
+  });
+}
+
+// Dropdown logowania w nagłówku
+const headerLoginToggle = document.getElementById('header-login-toggle');
+const headerLoginForm = document.getElementById('header-login-form');
+const headerAuth = document.querySelector('.header__auth');
+
+if (headerLoginToggle && headerLoginForm && headerAuth) {
+  headerLoginToggle.addEventListener('click', () => {
+    const isVisible = headerLoginForm.style.display === 'block';
+    headerLoginForm.style.display = isVisible ? 'none' : 'block';
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!headerAuth.contains(event.target)) {
+      headerLoginForm.style.display = 'none';
+    }
+  });
+}
 
 document.addEventListener('DOMContentLoaded', checkAuthAndInitialize);

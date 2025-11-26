@@ -111,7 +111,8 @@
       <section class="hero">
         <h1 class="hero__title">Formularz zamówień</h1>
         <p class="hero__subtitle">
-          Wyszukaj produkty po nazwie lub ID, sprawdź stan magazynowy i dodaj je do koszyka zamówienia.
+          Wyszukaj produkty po nazwie lub identyfikatorze i sprawdź dostępność w magazynie.
+          Aby składać zamówienia i przypisywać je do klientów, zaloguj się.
         </p>
       </section>
 
@@ -186,11 +187,7 @@
 
           <!-- Modal do powiększenia obrazka -->
           <div class="gallery-zoom-modal" id="gallery-zoom-modal" data-active="false">
-            <button class="gallery-zoom-modal__close" id="gallery-zoom-close" aria-label="Zamknij powiększenie">
-              <i class="fas fa-times"></i>
-            </button>
             <img id="gallery-zoom-image" class="gallery-zoom-modal__image" alt="Powiększony podgląd produktu" />
-            <div class="gallery-zoom-hint">Kliknij, aby zamknąć</div>
           </div>
         </section>
       </section>
@@ -272,7 +269,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel guest-hidden">
         <div class="panel__header">
           <h2>Koszyk zamówienia</h2>
           <button id="clear-cart" class="btn btn--link" type="button">Wyczyść koszyk</button>

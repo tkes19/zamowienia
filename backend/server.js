@@ -94,6 +94,11 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../index.html'));
 });
 
+// Strona logowania (publiczna)
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, '../login.html'));
+});
+
 // Panel admina – wymaga zalogowania jako ADMIN
 app.get('/admin', requireRole(['ADMIN']), (req, res) => {
   res.sendFile(path.join(__dirname, '../admin/index.html'));
@@ -184,7 +189,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // Sprawdzenie aktualnego użytkownika
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
     const cookies = parseCookies(req);
     const userId = cookies.auth_id;
     const role = cookies.auth_role;
@@ -193,11 +198,42 @@ app.get('/api/auth/me', (req, res) => {
         return res.status(401).json({ status: 'error', message: 'Nieautoryzowany' });
     }
 
-    return res.json({
-        status: 'success',
-        id: userId,
-        role: role
-    });
+    // Jeśli Supabase nie jest skonfigurowany – zwróć minimalne dane z ciasteczka
+    if (!supabase) {
+        return res.json({
+            status: 'success',
+            id: userId,
+            role: role
+        });
+    }
+
+    try {
+        const { data: user, error } = await supabase
+            .from('User')
+            .select('id, email, name')
+            .eq('id', userId)
+            .single();
+
+        if (error) {
+            console.error('Błąd pobierania użytkownika w /api/auth/me:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania użytkownika' });
+        }
+
+        if (!user) {
+            return res.status(404).json({ status: 'error', message: 'Użytkownik nie znaleziony' });
+        }
+
+        return res.json({
+            status: 'success',
+            id: user.id,
+            role: role,
+            email: user.email || null,
+            name: user.name || null
+        });
+    } catch (err) {
+        console.error('Wyjątek w /api/auth/me:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas pobierania użytkownika' });
+    }
 });
 
 // Test połączenia z Supabase – proste zapytanie do tabeli produktów
