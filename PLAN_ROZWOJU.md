@@ -14,18 +14,18 @@
    - [x] **Nowe:** Możliwość przypisania klienta do handlowca (dla ADMIN/SALES_DEPT w panelu klientów).
    - [x] **Nowe:** Wyświetlanie nazwy handlowca w dropdownie klientów formularza zamówień.
 
-2. [ ] **Zaprojektować i wdrożyć prosty system logowania i ról**
-   - [ ] Role: `handlowiec`, `produkcja`, `magazyn` (opcjonalnie `admin`).
-   - [ ] Logowanie po stronie backendu (Express) + ochrona wybranych endpointów.
+2. [x] **Zaprojektować i wdrożyć prosty system logowania i ról**
+   - [x] Role: `handlowiec` (`SALES_REP`), `Dział Sprzedaży` (`SALES_DEPT`), `admin` (`ADMIN`), `magazyn`, `produkcja`.
+   - [x] Logowanie po stronie backendu (Express) + ochrona wybranych endpointów (cookies `auth_id`, `auth_role`).
 
-3. [ ] **Dodać bazę danych i API do zapisu zamówień oraz historii**
-   - [ ] Wykorzystać Supabase jako bazę (zgodnie z `supabase/schema.sql`).
-   - [ ] Tabele: `User`, `Order`, `OrderItem`, `Inventory` (już istnieją w schemacie).
-   - [ ] Endpointy API do tworzenia i pobierania zamówień.
+3. [x] **Dodać bazę danych i API do zapisu zamówień oraz historii**
+   - [x] Wykorzystać Supabase jako bazę (zgodnie z `supabase/schema.sql`).
+   - [x] Tabele: `User`, `Order`, `OrderItem` (magazyn `Inventory` będzie rozwijany później).
+   - [x] Endpointy API do tworzenia i pobierania zamówień: `POST /api/orders`, `GET /api/orders/my`, `GET /api/orders/:id`.
 
-4. [ ] **Zbudować widok historii zamówień dla handlowca**
-   - [ ] Lista jego zamówień (data, status, kwota, liczba pozycji).
-   - [ ] Widok szczegółów konkretnego zamówienia.
+4. [x] **Zbudować widok historii zamówień dla handlowca**
+   - [x] Lista jego zamówień w formularzu (`index.html`) – numer, klient, data, status, suma.
+   - [x] Widok szczegółów konkretnego zamówienia (pozycje, projekty, ilości, miejscowość).
 
 5. [ ] **Zbudować panel produkcji**
    - [ ] Widok wszystkich zamówień z filtrowaniem (data, handlowiec, status).

@@ -39,6 +39,14 @@
           >
             Projekty hasła
           </button>
+          <button
+            type="button"
+            class="mode-nav__item"
+            id="orders-nav-btn"
+            data-mode="orders"
+          >
+            <i class="fas fa-list"></i> Zamówienia
+          </button>
         </nav>
         <div class="header-row">
           <h1>Formularz zamówień</h1>
@@ -254,13 +262,92 @@
       </section>
 
       <section class="panel panel--note">
-        <h2>Eksport danych</h2>
-        <p>Pobierz aktualny koszyk w wybranym formacie:</p>
+        <h2>Eksport danych i wysyłka</h2>
+        <p>Pobierz aktualny koszyk w wybranym formacie lub wyślij zamówienie do bazy:</p>
         <div class="export-buttons">
           <button id="export-json" class="btn" type="button">Pobierz koszyk (JSON)</button>
           <button id="export-pdf" class="btn btn--primary" type="button">Pobierz zamówienie (PDF)</button>
+          <button id="submit-order" class="btn btn--success" type="button">
+            <i class="fas fa-paper-plane"></i> Wyślij zamówienie
+          </button>
+          <p id="cart-status" class="status" aria-live="polite"></p>
         </div>
         <a id="download-link" class="visually-hidden" download="zamowienie.json">Pobierz</a>
+      </section>
+
+      <!-- Widok Zamówienia -->
+      <section id="orders-section" class="panel" style="display: none;">
+        <div class="panel__header">
+          <h2>Zamówienia</h2>
+        </div>
+
+        <!-- Filtry -->
+        <div class="orders-filters">
+          <label class="field">
+            <span class="field__label">Status</span>
+            <select id="orders-filter-status" class="field__input">
+              <option value="">Wszystkie statusy</option>
+              <option value="PENDING">PENDING (czeka)</option>
+              <option value="APPROVED">APPROVED (zatwierdzone)</option>
+              <option value="IN_PRODUCTION">IN_PRODUCTION (w produkcji)</option>
+              <option value="READY">READY (gotowe)</option>
+              <option value="COMPLETED">COMPLETED (zakończone)</option>
+              <option value="CANCELLED">CANCELLED (anulowane)</option>
+            </select>
+          </label>
+
+          <label class="field" id="orders-filter-user-label" style="display: none;">
+            <span class="field__label">Handlowiec</span>
+            <select id="orders-filter-user" class="field__input">
+              <option value="">Wszyscy handlowcy</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Od daty</span>
+            <input id="orders-filter-date-from" type="date" class="field__input" />
+          </label>
+
+          <label class="field">
+            <span class="field__label">Do daty</span>
+            <input id="orders-filter-date-to" type="date" class="field__input" />
+          </label>
+
+          <button id="orders-filter-apply" class="btn btn--primary">Filtruj</button>
+          <button id="orders-filter-reset" class="btn btn--link">Resetuj</button>
+        </div>
+
+        <!-- Tabela zamówień -->
+        <div class="table-wrapper">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Numer zamówienia</th>
+                <th>Data</th>
+                <th>Klient</th>
+                <th id="orders-table-header-user" style="display: none;">Handlowiec</th>
+                <th>Status</th>
+                <th class="price-column">Suma</th>
+                <th>Akcje</th>
+              </tr>
+            </thead>
+            <tbody id="orders-body">
+              <tr class="table__placeholder"><td colspan="7">Ładowanie zamówień…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Widok szczegółów zamówienia -->
+      <section id="order-details-section" class="panel" style="display: none;">
+        <div class="panel__header">
+          <h2 id="order-details-title">Szczegóły zamówienia</h2>
+          <button id="order-details-back" class="btn btn--link" type="button">← Wróć do listy</button>
+        </div>
+
+        <div id="order-details-content">
+          <!-- Będzie wypełnione przez JS -->
+        </div>
       </section>
     </main>
 

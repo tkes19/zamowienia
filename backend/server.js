@@ -1389,14 +1389,676 @@ app.delete('/api/clients/:id', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN'])
     }
 });
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`Serwer działa na porcie ${PORT}`);    
-    console.log(`Środowisko: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Adres testowy: http://localhost:${PORT}/api/health`);
+// ========================================
+// Helpers do generowania shortCode i orderNumber
+// ========================================
+
+/**
+ * Normalizuje tekst: usuwa spacje, zamienia znaki PL na ASCII, wielkie litery
+ */
+function normalizeText(text) {
+    if (!text) return '';
+    const plToAscii = {
+        'Ł': 'L', 'ł': 'L',
+        'Ś': 'S', 'ś': 'S',
+        'Ż': 'Z', 'ż': 'Z',
+        'Ź': 'Z', 'ź': 'Z',
+        'Ć': 'C', 'ć': 'C',
+        'Ń': 'N', 'ń': 'N',
+        'Ó': 'O', 'ó': 'O',
+        'Ę': 'E', 'ę': 'E',
+        'Ą': 'A', 'ą': 'A'
+    };
+    
+    return text
+        .split('')
+        .map(char => plToAscii[char] || char)
+        .join('')
+        .toUpperCase()
+        .trim();
+}
+
+/**
+ * Generuje 3-znakowy skrót z imienia i nazwiska
+ * Bazowo: Imię[0] + Nazwisko[0..1] (z zachowaniem polskich znaków)
+ * Przy kolizji: Imię[0] + Nazwisko[0] + cyfra
+ * 
+ * Przykłady:
+ * - Jan Kowalski → JKO
+ * - Mariusz Łukaszewicz → MŁU
+ * - Kolizja: Mariusz Łukaszewicz (drugi) → MŁ1
+ */
+async function generateShortCode(firstName, lastName) {
+    if (!firstName || !lastName) {
+        throw new Error('firstName i lastName są wymagane');
+    }
+
+    const first = firstName.trim().toUpperCase();
+    const last = lastName.trim().toUpperCase();
+
+    if (!first || !last) {
+        throw new Error('Nie można wygenerować kodu z pustych imienia/nazwiska');
+    }
+
+    // Bazowy kod: F + LL (pierwsze 2 litery nazwiska, z polskimi znakami)
+    const base = first[0] + last.substring(0, 2);
+
+    // Sprawdź, czy istnieje
+    const { data: existing } = await supabase
+        .from('User')
+        .select('id')
+        .eq('shortCode', base)
+        .single();
+
+    if (!existing) {
+        // Kod jest wolny
+        return base;
+    }
+
+    // Kolizja – szukamy wolnego kodu z cyfrą
+    // Rdzeń: F + L (pierwsza litera nazwiska)
+    const root = first[0] + last[0];
+
+    // Znajdź wszystkie kody zaczynające się od root
+    const { data: existingCodes } = await supabase
+        .from('User')
+        .select('shortCode')
+        .ilike('shortCode', `${root}%`);
+
+    const codes = (existingCodes || []).map(u => u.shortCode);
+
+    // Szukaj pierwszej wolnej cyfry
+    let digit = 1;
+    while (codes.includes(`${root}${digit}`)) {
+        digit++;
+    }
+
+    return `${root}${digit}`;
+}
+
+/**
+ * Generuje numer zamówienia w formacie: YYYY/N/XXX
+ * gdzie YYYY = rok, N = kolejny numer w roku, XXX = shortCode handlowca
+ */
+async function generateOrderNumber(userId) {
+    if (!supabase) {
+        throw new Error('Supabase nie jest skonfigurowany');
+    }
+
+    // Pobierz shortCode użytkownika
+    const { data: user, error: userError } = await supabase
+        .from('User')
+        .select('shortCode')
+        .eq('id', userId)
+        .single();
+
+    if (userError || !user || !user.shortCode) {
+        throw new Error('Nie znaleziono użytkownika lub brak shortCode');
+    }
+
+    const shortCode = user.shortCode;
+    const year = new Date().getFullYear();
+
+    // Policz zamówienia w danym roku
+    const { data: yearOrders, error: countError } = await supabase
+        .from('Order')
+        .select('id', { count: 'exact' })
+        .ilike('orderNumber', `${year}/%`);
+
+    if (countError) {
+        throw new Error(`Błąd przy liczeniu zamówień: ${countError.message}`);
+    }
+
+    const sequence = (yearOrders?.length || 0) + 1;
+
+    return `${year}/${sequence}/${shortCode}`;
+}
+
+// ========================================
+// Endpoint: POST /api/orders
+// ========================================
+
+app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const { customerId, notes, items } = req.body || {};
+
+    // Walidacja
+    if (!customerId) {
+        return res.status(400).json({ status: 'error', message: 'customerId jest wymagane' });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'items musi być niepustą tablicą' });
+    }
+
+    // Walidacja każdej pozycji
+    for (const item of items) {
+        if (!item.productCode) {
+            return res.status(400).json({ status: 'error', message: 'productCode jest wymagane dla każdej pozycji' });
+        }
+        if (!item.quantity || item.quantity <= 0) {
+            return res.status(400).json({ status: 'error', message: 'quantity musi być > 0' });
+        }
+        if (item.unitPrice === undefined || item.unitPrice < 0) {
+            return res.status(400).json({ status: 'error', message: 'unitPrice jest wymagane i musi być >= 0' });
+        }
+    }
+
+    try {
+        // Sprawdź, czy klient istnieje
+        const { data: customer, error: customerError } = await supabase
+            .from('Customer')
+            .select('id')
+            .eq('id', customerId)
+            .single();
+
+        if (customerError || !customer) {
+            return res.status(404).json({ status: 'error', message: 'Klient nie znaleziony' });
+        }
+
+        // Policz total
+        const total = items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+
+        // Wygeneruj orderNumber
+        const orderNumber = await generateOrderNumber(userId);
+
+        // Utwórz Order
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .insert({
+                customerId,
+                userId,
+                orderNumber,
+                status: 'PENDING',
+                total: parseFloat(total.toFixed(2)),
+                notes: notes || null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            })
+            .select('id')
+            .single();
+
+        if (orderError || !order) {
+            console.error('Błąd tworzenia Order:', orderError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć zamówienia', details: orderError?.message });
+        }
+
+        const orderId = order.id;
+
+        // Zmapuj productCode (pc_id / index) -> Product.id
+        const uniqueCodes = Array.from(new Set(items.map(i => i.productCode).filter(Boolean)));
+
+        const { data: products, error: productsError } = await supabase
+            .from('Product')
+            .select('id, index')
+            .in('index', uniqueCodes);
+
+        if (productsError) {
+            console.error('Błąd pobierania produktów dla zamówienia:', productsError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać produktów dla zamówienia', details: productsError.message });
+        }
+
+        const productIdByCode = new Map();
+        (products || []).forEach(p => {
+            if (p.index) {
+                productIdByCode.set(p.index, p.id);
+            }
+        });
+
+        for (const item of items) {
+            if (!item.productCode || !productIdByCode.get(item.productCode)) {
+                console.error('Brak produktu o kodzie (index/pc_id):', item.productCode);
+                return res.status(400).json({ status: 'error', message: `Nie znaleziono produktu o kodzie ${item.productCode}` });
+            }
+        }
+
+        // Wstaw OrderItems
+        const orderItems = items.map(item => ({
+            orderId,
+            productId: productIdByCode.get(item.productCode),
+            quantity: item.quantity,
+            unitPrice: parseFloat(item.unitPrice),
+            selectedProjects: item.selectedProjects || null,
+            projectQuantities: item.projectQuantities || null,
+            totalQuantity: item.totalQuantity || item.quantity,
+            source: item.source || 'MIEJSCOWOSCI',
+            locationName: item.locationName || null,
+            projectName: item.projectName || null,
+            customization: item.customization || null,
+            productionNotes: item.productionNotes || null
+        }));
+
+        const { error: itemsError } = await supabase
+            .from('OrderItem')
+            .insert(orderItems);
+
+        if (itemsError) {
+            console.error('Błąd tworzenia OrderItems:', itemsError);
+            // Spróbuj usunąć Order (rollback)
+            await supabase.from('Order').delete().eq('id', orderId);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się dodać pozycji do zamówienia', details: itemsError.message });
+        }
+
+        console.log(`✅ Zamówienie ${orderNumber} utworzone (ID: ${orderId})`);
+
+        return res.status(201).json({
+            status: 'success',
+            message: 'Zamówienie zostało utworzone',
+            data: {
+                orderId,
+                orderNumber,
+                total,
+                itemCount: items.length
+            }
+        });
+
+    } catch (error) {
+        console.error('Wyjątek w POST /api/orders:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas tworzenia zamówienia', details: error.message });
+    }
+});
+
+// ============================================
+// GET /api/user - Dane bieżącego użytkownika
+// ============================================
+app.get('/api/user', async (req, res) => {
+    try {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const role = cookies.auth_role;
+        
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const { data: user, error } = await supabase
+            .from('User')
+            .select('id, name, email, role, shortCode')
+            .eq('id', userId)
+            .single();
+
+        if (error || !user) {
+            return res.status(404).json({ status: 'error', message: 'Użytkownik nie znaleziony' });
+        }
+
+        res.json({
+            status: 'success',
+            data: user
+        });
+    } catch (error) {
+        console.error('Błąd w GET /api/user:', error);
+        res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/users - Lista handlowców (dla każdego zalogowanego)
+// ============================================
+app.get('/api/users', async (req, res) => {
+    try {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const role = cookies.auth_role;
+        
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        // Pobierz wszystkich handlowców (bez ograniczenia roli)
+        const { data: users, error } = await supabase
+            .from('User')
+            .select('id, name, shortCode')
+            .eq('role', 'SALES_REP')
+            .order('name');
+
+        if (error) {
+            console.error('Błąd pobierania handlowców:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać handlowców' });
+        }
+
+        res.json({
+            status: 'success',
+            data: users || []
+        });
+    } catch (error) {
+        console.error('Błąd w GET /api/users:', error);
+        res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/orders/my - Zamówienia bieżącego handlowca
+// ============================================
+app.get('/api/orders/my', async (req, res) => {
+    try {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        
+        console.log('[GET /api/orders/my] cookies:', cookies);
+        console.log('[GET /api/orders/my] userId:', userId);
+        
+        if (!userId) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const { status, customerId, dateFrom, dateTo } = req.query;
+
+        let query = supabase
+            .from('Order')
+            .select(`
+                id,
+                orderNumber,
+                customerId,
+                userId,
+                status,
+                total,
+                notes,
+                createdAt,
+                updatedAt,
+                Customer:customerId(id, name),
+                User:userId(id, name, shortCode)
+            `)
+            .eq('userId', userId)
+            .order('createdAt', { ascending: false });
+
+        if (status) {
+            query = query.eq('status', status);
+        }
+
+        if (customerId) {
+            query = query.eq('customerId', customerId);
+        }
+
+        if (dateFrom) {
+            query = query.gte('createdAt', new Date(dateFrom).toISOString());
+        }
+
+        if (dateTo) {
+            const endOfDay = new Date(dateTo);
+            endOfDay.setHours(23, 59, 59, 999);
+            query = query.lte('createdAt', endOfDay.toISOString());
+        }
+
+        const { data: orders, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania zamówień:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać zamówień' });
+        }
+
+        res.json({
+            status: 'success',
+            data: orders || []
+        });
+    } catch (error) {
+        console.error('Błąd w GET /api/orders/my:', error);
+        res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/orders - Zamówienia (wg roli: SALES_REP tylko swoje, ADMIN/SALES_DEPT/WAREHOUSE wszystkie)
+// ============================================
+app.get('/api/orders', async (req, res) => {
+    try {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const role = cookies.auth_role;
+
+        console.log('[GET /api/orders] start', { cookies, userId, role });
+        
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        // Kontrola dostępu wg roli (wzorzec z legacy)
+        if (!['SALES_REP', 'ADMIN', 'SALES_DEPT', 'WAREHOUSE'].includes(role)) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu' });
+        }
+
+        const { status, userId: filterUserId, customerId, dateFrom, dateTo } = req.query;
+
+        let query = supabase
+            .from('Order')
+            .select(`
+                id,
+                orderNumber,
+                customerId,
+                userId,
+                status,
+                total,
+                notes,
+                createdAt,
+                updatedAt,
+                Customer:customerId(id, name),
+                User:userId(name, shortCode)
+            `)
+            .order('createdAt', { ascending: false });
+
+        // Jeśli SALES_REP, widzi tylko swoje zamówienia
+        if (role === 'SALES_REP') {
+            query = query.eq('userId', userId);
+        }
+        // ADMIN, SALES_DEPT, WAREHOUSE widzą wszystkie – bez ograniczenia
+
+        // Filtry z query (mogą być stosowane niezależnie od roli)
+        if (status) {
+            query = query.eq('status', status);
+        }
+
+        if (filterUserId) {
+            query = query.eq('userId', filterUserId);
+        }
+
+        if (customerId) {
+            query = query.eq('customerId', customerId);
+        }
+
+        if (dateFrom) {
+            query = query.gte('createdAt', dateFrom);
+        }
+
+        if (dateTo) {
+            query = query.lte('createdAt', dateTo);
+        }
+
+        const { data: orders, error } = await query;
+
+        if (error) {
+            console.error('Błąd Supabase w GET /api/orders:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania zamówień' });
+        }
+
+        console.log('[GET /api/orders] returning', { count: (orders || []).length });
+
+        return res.json({
+            status: 'success',
+            data: orders || []
+        });
+    } catch (error) {
+        console.error('Błąd w GET /api/orders:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/admin/orders - Endpoint dla panelu admina (bez konfliktu z legacy)
+// ============================================
+app.get('/api/admin/orders', async (req, res) => {
+    try {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const role = cookies.auth_role;
+
+        console.log('[GET /api/admin/orders] start', { userId, role });
+        
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        // Kontrola dostępu wg roli
+        if (!['SALES_REP', 'ADMIN', 'SALES_DEPT', 'WAREHOUSE'].includes(role)) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu' });
+        }
+
+        const { status, userId: filterUserId, customerId, dateFrom, dateTo } = req.query;
+
+        let query = supabase
+            .from('Order')
+            .select(`
+                id,
+                orderNumber,
+                customerId,
+                userId,
+                status,
+                total,
+                notes,
+                createdAt,
+                updatedAt,
+                Customer:customerId(id, name),
+                User:userId(id, name, shortCode)
+            `)
+            .order('createdAt', { ascending: false });
+
+        // Jeśli SALES_REP, widzi tylko swoje zamówienia
+        if (role === 'SALES_REP') {
+            query = query.eq('userId', userId);
+        }
+        // ADMIN, SALES_DEPT, WAREHOUSE widzą wszystkie – bez ograniczenia
+
+        // Filtry z query
+        if (status) {
+            query = query.eq('status', status);
+        }
+
+        if (filterUserId) {
+            query = query.eq('userId', filterUserId);
+        }
+
+        if (customerId) {
+            query = query.eq('customerId', customerId);
+        }
+
+        if (dateFrom) {
+            query = query.gte('createdAt', dateFrom);
+        }
+
+        if (dateTo) {
+            query = query.lte('createdAt', dateTo);
+        }
+
+        const { data: orders, error } = await query;
+
+        if (error) {
+            console.error('Błąd Supabase w GET /api/admin/orders:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania zamówień' });
+        }
+
+        console.log('[GET /api/admin/orders] returning', { count: (orders || []).length });
+
+        return res.json({
+            status: 'success',
+            data: orders || []
+        });
+    } catch (error) {
+        console.error('Błąd w GET /api/admin/orders:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/orders/:id - Szczegóły zamówienia
+// ============================================
+app.get('/api/orders/:id', async (req, res) => {
+    try {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const role = cookies.auth_role;
+        
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const { id } = req.params;
+
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .select(`
+                id,
+                orderNumber,
+                customerId,
+                userId,
+                status,
+                total,
+                notes,
+                createdAt,
+                updatedAt,
+                Customer:customerId(id, name, email, phone),
+                User:userId(id, name, shortCode)
+            `)
+            .eq('id', id)
+            .single();
+
+        if (orderError || !order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+        }
+
+        // Sprawdź uprawnienia: handlowiec widzi tylko swoje, ADMIN / SALES_DEPT widzą wszystkie
+        if (!['ADMIN', 'SALES_DEPT'].includes(role) && order.userId !== userId) {
+            return res.status(403).json({ status: 'error', message: 'Brak dostępu do tego zamówienia' });
+        }
+
+        // Pobierz pozycje zamówienia
+        const { data: items, error: itemsError } = await supabase
+            .from('OrderItem')
+            .select(`
+                id,
+                orderId,
+                productId,
+                quantity,
+                unitPrice,
+                selectedProjects,
+                projectQuantities,
+                totalQuantity,
+                source,
+                locationName,
+                projectName,
+                customization,
+                productionNotes,
+                Product:productId(id, name, identifier, index, pc_id)
+            `)
+            .eq('orderId', id);
+
+        if (itemsError) {
+            console.error('Błąd pobierania pozycji:', itemsError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać pozycji zamówienia' });
+        }
+
+        res.json({
+            status: 'success',
+            data: {
+                ...order,
+                items: items || []
+            }
+        });
+    } catch (error) {
+        console.error('Błąd w GET /api/orders/:id:', error);
+        res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
     console.error('Niezłapany błąd:', err);
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Serwer działa na porcie ${PORT}`);    
+    console.log(`Środowisko: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Adres testowy: http://localhost:${PORT}/api/health`);
 });

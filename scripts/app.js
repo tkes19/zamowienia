@@ -43,7 +43,9 @@ const cartBody = document.getElementById('cart-body');
 const cartTotal = document.querySelector('#cart-total');
 const clearCartBtn = document.getElementById('clear-cart');
 const exportBtn = document.getElementById('export-json');
+const submitOrderBtn = document.getElementById('submit-order');
 const statusMessage = document.getElementById('status-message');
+const cartStatus = document.getElementById('cart-status');
 const downloadLink = document.getElementById('download-link');
 const formModeNav = document.getElementById('form-mode-nav');
 const galleryCitySelect = document.getElementById('gallery-city');
@@ -817,15 +819,149 @@ function formatCurrencyPlain(value) {
     .replace('.', ',') + ' zł';
 }
 
+// Alias używany w widoku Zamówienia
+function formatPrice(value) {
+  return formatCurrencyPlain(value);
+}
+
 function safeSplitText(doc, text, maxWidth) {
   if (!text) return [];
   const rawLines = doc.splitTextToSize(text, maxWidth) || [];
   return rawLines.map(line => line.replace(/[&]/g, ' ').trim()).filter(Boolean);
 }
 
-function setStatus(message, type = 'info') {
-  statusMessage.textContent = message;
-  statusMessage.className = `status status--${type}`;
+function setStatus(message, type = 'info', target = 'global') {
+  const el = target === 'cart' ? cartStatus : statusMessage;
+  if (!el) return;
+  el.textContent = message;
+  el.className = `status status--${type}`;
+}
+
+async function submitOrder() {
+  try {
+    console.log('[ORDER] submitOrder() wywołane');
+
+    // Walidacja: użytkownik
+    if (!currentUser) {
+      console.warn('[ORDER] Brak currentUser');
+      setStatus('Musisz być zalogowany, aby wysłać zamówienie.', 'error', 'cart');
+      return;
+    }
+    console.log('[ORDER] currentUser OK');
+
+    // Walidacja: klient
+    if (!currentCustomer || !currentCustomer.id) {
+      console.warn('[ORDER] Brak currentCustomer.id');
+      setStatus('Wybierz klienta przed wysłaniem zamówienia.', 'error', 'cart');
+      return;
+    }
+    console.log('[ORDER] currentCustomer OK, id:', currentCustomer.id);
+
+    // Walidacja: koszyk
+    if (!cart || cart.size === 0) {
+      console.warn('[ORDER] Koszyk pusty');
+      setStatus('Koszyk jest pusty. Dodaj produkty przed wysłaniem zamówienia.', 'error', 'cart');
+      return;
+    }
+    console.log('[ORDER] cart.size:', cart.size);
+
+    // Budowanie listy items
+    const items = [];
+    for (const [key, item] of cart.entries()) {
+      console.log('[ORDER] Przetwarzam pozycję:', key, item);
+
+      // Sprawdź product.pc_id
+      if (!item.product || !item.product.pc_id) {
+        console.warn('[ORDER] Brak product.pc_id, pomijam:', item);
+        continue;
+      }
+
+      // Sprawdź quantity
+      const qty = Number(item.quantity);
+      if (!qty || qty <= 0) {
+        console.warn('[ORDER] quantity <= 0, pomijam:', item);
+        continue;
+      }
+
+      const unitPrice = Number(item.product.price ?? 0);
+      const selectedProjects = item.projects ?? '';
+      const projectQuantities = Array.isArray(item.perProjectQuantities) && item.perProjectQuantities.length > 0
+        ? JSON.stringify(item.perProjectQuantities)
+        : null;
+
+      items.push({
+        productCode: item.product.pc_id,
+        quantity: qty,
+        unitPrice,
+        selectedProjects,
+        projectQuantities,
+        totalQuantity: qty,
+        locationName: item.locationName || null,
+        source: item.locationName ? 'MIEJSCOWOSCI' : 'KATALOG_INDYWIDUALNY'
+      });
+    }
+
+    console.log('[ORDER] items zebrane:', items);
+
+    if (items.length === 0) {
+      console.warn('[ORDER] Brak pozycji do wysłania');
+      setStatus('W koszyku nie ma żadnych pozycji z dodatnią ilością.', 'error', 'cart');
+      return;
+    }
+
+    setStatus('Wysyłam zamówienie…', 'info', 'cart');
+
+    const payload = {
+      customerId: currentCustomer.id,
+      notes: null,
+      items,
+    };
+
+    console.log('[ORDER] Payload do wysłania:', payload);
+    console.log('[ORDER] Wysyłam POST /api/orders');
+
+    const response = await fetch('/api/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+
+    console.log('[ORDER] Response status:', response.status);
+
+    const result = await response.json().catch(() => null);
+    console.log('[ORDER] Response body:', result);
+
+    if (!response.ok) {
+      const message = result?.message || 'Nie udało się wysłać zamówienia.';
+      setStatus(message, 'error', 'cart');
+      console.error('[ORDER] Błąd wysyłki:', result || response.statusText);
+      return;
+    }
+
+    const orderNumber = result?.data?.orderNumber;
+    const total = result?.data?.total;
+
+    setStatus(
+      orderNumber
+        ? `✅ Zamówienie wysłane! Numer: ${orderNumber}`
+        : '✅ Zamówienie wysłane poprawnie.',
+      'success',
+      'cart'
+    );
+
+    console.log('[ORDER] Sukces! orderNumber:', orderNumber, 'total:', total);
+
+    // Wyczyść koszyk
+    cart.clear();
+    renderCart();
+
+  } catch (error) {
+    console.error('[ORDER] Wyjątek:', error);
+    setStatus('Wystąpił błąd podczas wysyłania zamówienia.', 'error', 'cart');
+  }
 }
 
 function setGalleryError(message) {
@@ -1369,13 +1505,19 @@ function addToCart(product, quantity, projects) {
   const sanitizedProjects = sanitizeProjectsValue(projects);
   const currentProjects = sanitizedProjects || entry?.projects || '';
 
+  // Pobierz nazwę miejscowości z selecta (dla PM)
+  const locationName = (currentFormMode === 'projekty-miejscowosci' && galleryCitySelect) 
+    ? galleryCitySelect.value 
+    : null;
+
   cart.set(key, { 
     product, 
     quantity: newQty, 
     projects: currentProjects,
     quantityInputTotal: '',  // Pole A: łącznie sztuk
     quantityInputPerProject: '',  // Pole B: ilości na projekty
-    perProjectQuantities: []  // Rozkład na projekty
+    perProjectQuantities: [],  // Rozkład na projekty
+    locationName  // Nazwa miejscowości (PM) lub null (KI)
   });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka.`, 'success');
@@ -1392,13 +1534,19 @@ function addToCartWithQuantityBreakdown(product, computeResult) {
   const entry = cart.get(key);
   const { totalQuantity, perProjectQuantities, mode, quantityInput } = computeResult;
 
+  // Pobierz nazwę miejscowości z selecta (dla PM)
+  const locationName = (currentFormMode === 'projekty-miejscowosci' && galleryCitySelect) 
+    ? galleryCitySelect.value 
+    : null;
+
   cart.set(key, { 
     product, 
     quantity: totalQuantity, 
     projects: computeResult.projects?.join(',') || '',
     quantityInputTotal: mode === 'total' ? totalQuantity : '',
     quantityInputPerProject: mode !== 'total' ? quantityInput : '',
-    perProjectQuantities: perProjectQuantities
+    perProjectQuantities: perProjectQuantities,
+    locationName  // Nazwa miejscowości (PM) lub null (KI)
   });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka (rozkład na projekty).`, 'success');
@@ -1530,7 +1678,7 @@ function renderCart() {
         return;
       }
 
-      cart.set(id, { product: entry.product, quantity: value, projects: entry.projects ?? '' });
+      cart.set(id, { ...entry, quantity: value });
       renderCart();
     });
   });
@@ -1548,7 +1696,7 @@ function renderCart() {
       if (!entry) return;
 
       if (!value) {
-        cart.set(id, { product: entry.product, quantity: entry.quantity, projects: '' });
+        cart.set(id, { ...entry, projects: '' });
         projectsInput.value = '';
         return;
       }
@@ -1560,7 +1708,7 @@ function renderCart() {
       }
 
       const normalized = sanitizeProjectsValue(value);
-      cart.set(id, { product: entry.product, quantity: entry.quantity, projects: normalized });
+      cart.set(id, { ...entry, projects: normalized });
       projectsInput.value = normalized;
     });
   });
@@ -1901,8 +2049,13 @@ function initialize() {
     clearCartBtn.addEventListener('click', clearCart);
   }
 
-  if (exportBtn) {
-    exportBtn.addEventListener('click', exportCart);
+  // Przycisk eksportu JSON – tymczasowo bez akcji (funkcja handleExportJson została usunięta)
+  // if (exportBtn) {
+  //   exportBtn.addEventListener('click', handleExportJson);
+  // }
+
+  if (submitOrderBtn) {
+    submitOrderBtn.addEventListener('click', submitOrder);
   }
 
   if (exportPdfBtn) {
@@ -2263,5 +2416,249 @@ function initGalleryZoom() {
     document.body.style.overflow = '';
   }
 }
+
+// ============================================
+// WIDOK ZAMÓWIENIA
+// ============================================
+
+const ordersSection = document.getElementById('orders-section');
+const orderDetailsSection = document.getElementById('order-details-section');
+const ordersBody = document.getElementById('orders-body');
+const ordersNavBtn = document.getElementById('orders-nav-btn');
+const ordersFilterStatus = document.getElementById('orders-filter-status');
+const ordersFilterUser = document.getElementById('orders-filter-user');
+const ordersFilterUserLabel = document.getElementById('orders-filter-user-label');
+const ordersFilterDateFrom = document.getElementById('orders-filter-date-from');
+const ordersFilterDateTo = document.getElementById('orders-filter-date-to');
+const ordersFilterApply = document.getElementById('orders-filter-apply');
+const ordersFilterReset = document.getElementById('orders-filter-reset');
+const ordersTableHeaderUser = document.getElementById('orders-table-header-user');
+const orderDetailsBack = document.getElementById('order-details-back');
+const orderDetailsContent = document.getElementById('order-details-content');
+const orderDetailsTitle = document.getElementById('order-details-title');
+
+let currentUserRole = null;
+let allOrders = [];
+
+// Pobierz rolę użytkownika
+async function loadUserRole() {
+  try {
+    const response = await fetch('/api/user', { credentials: 'include' });
+    if (!response.ok) return;
+    const result = await response.json();
+    currentUserRole = result.data?.role;
+    
+    // Jeśli ADMIN lub SALES_DEPT, pokaż filtr handlowca i kolumnę w tabeli
+    if (currentUserRole === 'ADMIN' || currentUserRole === 'SALES_DEPT') {
+      ordersFilterUserLabel.style.display = '';
+      ordersTableHeaderUser.style.display = '';
+      loadAllUsers();
+    }
+  } catch (error) {
+    console.error('Błąd pobierania roli:', error);
+  }
+}
+
+// Załaduj listę handlowców (dla admina)
+async function loadAllUsers() {
+  try {
+    const response = await fetch('/api/users', { credentials: 'include' });
+    if (!response.ok) return;
+    const result = await response.json();
+    const users = result.data || [];
+    
+    ordersFilterUser.innerHTML = '<option value="">Wszyscy handlowcy</option>' +
+      users.map(u => `<option value="${u.id}">${u.shortCode} - ${u.name}</option>`).join('');
+  } catch (error) {
+    console.error('Błąd pobierania handlowców:', error);
+  }
+}
+
+// Załaduj zamówienia
+async function loadOrders() {
+  try {
+    ordersBody.innerHTML = '<tr class="table__placeholder"><td colspan="7">Ładowanie…</td></tr>';
+    
+    const endpoint = (currentUserRole === 'ADMIN' || currentUserRole === 'SALES_DEPT')
+      ? '/api/orders'
+      : '/api/orders/my';
+    const params = new URLSearchParams();
+    
+    if (ordersFilterStatus.value) params.append('status', ordersFilterStatus.value);
+    if (ordersFilterDateFrom.value) params.append('dateFrom', ordersFilterDateFrom.value);
+    if (ordersFilterDateTo.value) params.append('dateTo', ordersFilterDateTo.value);
+    if (currentUserRole === 'ROLE_ADMIN' && ordersFilterUser.value) {
+      params.append('userId', ordersFilterUser.value);
+    }
+    
+    const url = `${endpoint}?${params.toString()}`;
+    const response = await fetch(url, { credentials: 'include' });
+    
+    if (!response.ok) {
+      ordersBody.innerHTML = '<tr class="table__placeholder"><td colspan="7">Błąd ładowania zamówień</td></tr>';
+      return;
+    }
+    
+    const result = await response.json();
+    allOrders = result.data || [];
+    
+    renderOrdersTable();
+  } catch (error) {
+    console.error('Błąd pobierania zamówień:', error);
+    ordersBody.innerHTML = '<tr class="table__placeholder"><td colspan="7">Błąd ładowania zamówień</td></tr>';
+  }
+}
+
+// Renderuj tabelę zamówień
+function renderOrdersTable() {
+  if (allOrders.length === 0) {
+    ordersBody.innerHTML = '<tr class="table__placeholder"><td colspan="7">Brak zamówień</td></tr>';
+    return;
+  }
+  
+  ordersBody.innerHTML = allOrders.map(order => {
+    const date = new Date(order.createdAt).toLocaleDateString('pl-PL', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    
+    const statusClass = `status-badge--${order.status.toLowerCase().replace(/_/g, '-')}`;
+    const statusLabel = order.status;
+    
+    const userCell = (currentUserRole === 'ADMIN' || currentUserRole === 'SALES_DEPT') 
+      ? `<td>${order.User?.shortCode || '-'}</td>`
+      : '';
+    
+    return `
+      <tr>
+        <td><strong>${order.orderNumber}</strong></td>
+        <td>${date}</td>
+        <td>${order.Customer?.name || '-'}</td>
+        ${userCell}
+        <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+        <td class="price-column">${formatPrice(order.total)}</td>
+        <td>
+          <button class="btn btn--link btn--small" onclick="showOrderDetails('${order.id}')">
+            Szczegóły
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// Pokaż szczegóły zamówienia
+async function showOrderDetails(orderId) {
+  try {
+    const response = await fetch(`/api/orders/${orderId}`, { credentials: 'include' });
+    
+    if (!response.ok) {
+      alert('Nie udało się pobrać szczegółów zamówienia');
+      return;
+    }
+    
+    const result = await response.json();
+    const order = result.data;
+    
+    // Ukryj listę, pokaż szczegóły
+    ordersSection.style.display = 'none';
+    orderDetailsSection.style.display = '';
+    
+    orderDetailsTitle.textContent = `Zamówienie ${order.orderNumber}`;
+    
+    const statusClass = `status-badge--${order.status.toLowerCase().replace(/_/g, '-')}`;
+    
+    const itemsHtml = (order.items || []).map(item => `
+      <tr>
+        <td>${item.Product?.name || item.Product?.identifier || '-'}</td>
+        <td>${item.selectedProjects || '-'}</td>
+        <td>${item.quantity}</td>
+        <td class="price-column">${formatPrice(item.unitPrice)}</td>
+        <td class="price-column">${formatPrice(item.quantity * item.unitPrice)}</td>
+        <td>${item.locationName || '-'}</td>
+      </tr>
+    `).join('');
+    
+    orderDetailsContent.innerHTML = `
+      <div class="order-details-grid">
+        <div class="order-detail-item">
+          <div class="order-detail-item__label">Numer zamówienia</div>
+          <div class="order-detail-item__value">${order.orderNumber}</div>
+        </div>
+        <div class="order-detail-item">
+          <div class="order-detail-item__label">Klient</div>
+          <div class="order-detail-item__value">${order.Customer?.name || '-'}</div>
+        </div>
+        <div class="order-detail-item">
+          <div class="order-detail-item__label">Handlowiec</div>
+          <div class="order-detail-item__value">${order.User?.shortCode || '-'}</div>
+        </div>
+        <div class="order-detail-item">
+          <div class="order-detail-item__label">Status</div>
+          <div class="order-detail-item__value">
+            <span class="status-badge ${statusClass}">${order.status}</span>
+          </div>
+        </div>
+        <div class="order-detail-item">
+          <div class="order-detail-item__label">Data utworzenia</div>
+          <div class="order-detail-item__value">${new Date(order.createdAt).toLocaleDateString('pl-PL')}</div>
+        </div>
+        <div class="order-detail-item">
+          <div class="order-detail-item__label">Suma</div>
+          <div class="order-detail-item__value">${formatPrice(order.total)}</div>
+        </div>
+      </div>
+      
+      <h3>Pozycje zamówienia</h3>
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Produkt</th>
+              <th>Projekty</th>
+              <th>Ilość</th>
+              <th class="price-column">Cena j.</th>
+              <th class="price-column">Wartość</th>
+              <th>Lokalizacja</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHtml || '<tr><td colspan="6">Brak pozycji</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      
+      ${order.notes ? `<p><strong>Notatki:</strong> ${order.notes}</p>` : ''}
+    `;
+  } catch (error) {
+    console.error('Błąd pobierania szczegółów:', error);
+    alert('Błąd pobierania szczegółów zamówienia');
+  }
+}
+
+// Obsługa przycisków
+ordersNavBtn.addEventListener('click', () => {
+  ordersSection.style.display = '';
+  orderDetailsSection.style.display = 'none';
+  loadUserRole();
+  loadOrders();
+});
+
+ordersFilterApply.addEventListener('click', loadOrders);
+ordersFilterReset.addEventListener('click', () => {
+  ordersFilterStatus.value = '';
+  ordersFilterUser.value = '';
+  ordersFilterDateFrom.value = '';
+  ordersFilterDateTo.value = '';
+  loadOrders();
+});
+
+orderDetailsBack.addEventListener('click', () => {
+  orderDetailsSection.style.display = 'none';
+  ordersSection.style.display = '';
+});
 
 document.addEventListener('DOMContentLoaded', checkAuthAndInitialize);

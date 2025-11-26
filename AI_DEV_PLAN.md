@@ -417,4 +417,42 @@ Zasady działania:
 
 ---
 
+## 6.3. Panel Admina – Widok Zamówień (v2.3)
+
+**Status:** ✅ Ukończone (Nov 26, 2025)
+
+**Problem:**
+- Legacy endpoint `/api/orders` powodował redirect 302 → `/api/orders/my`
+- Panel admina nie mógł załadować zamówień z powodu konfliktu z legacy
+
+**Rozwiązanie:**
+- Utworzono nowy endpoint `GET /api/admin/orders` (bez konfliktu z legacy)
+
+**Backend (`backend/server.js`):**
+- Endpoint: `GET /api/admin/orders`
+- Kontrola ról:
+  - `SALES_REP` → tylko własne zamówienia (`userId = auth_id`)
+  - `ADMIN`, `SALES_DEPT`, `WAREHOUSE` → wszystkie zamówienia
+  - inne role → 403 Forbidden
+- Filtry query: `status`, `userId`, `customerId`, `dateFrom`, `dateTo`
+- Response: `{"status":"success","data":[...]}` z joinami `Customer` i `User`
+- Logging: `[GET /api/admin/orders] start` i `returning` dla debugowania
+
+**Frontend (`admin/index.html` + `admin/admin.js`):**
+- Zakładka "Zamówienia" w sidebar
+- Tabela z kolumnami: numer, data, klient, handlowiec, status, suma, akcje
+- Filtry: wyszukiwanie, status dropdown, handlowiec dropdown
+- Status badges z kolorami (PENDING=żółty, APPROVED=niebieski, itd.)
+- Fetch z `credentials: 'include'` dla cookie-based auth
+- Funkcje: `loadOrders()`, `renderOrdersTable()`, `loadOrdersUsers()`
+
+**Rezultat:**
+- ✅ Backend endpoint działa (200 OK)
+- ✅ Panel admina ładuje zamówienia poprawnie
+- ✅ Filtrowanie wg ról zaimplementowane
+- ✅ Cookie-based authentication działa
+- ⏳ Następny krok: Akcje edycji/anulowania dla zamówień PENDING
+
+---
+
 **Aktualny Priorytet:** FAZA 1 (Backend Produktów) + przygotowanie projektu pod zapis zamówień (FAZA 3/4).

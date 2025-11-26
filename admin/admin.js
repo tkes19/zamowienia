@@ -1035,4 +1035,156 @@ document.addEventListener('DOMContentLoaded', () => {
             usersRoleFilter.appendChild(opt);
         });
     }
+
+    // ============================================
+    // WIDOK ZAMÓWIENIA
+    // ============================================
+    const ordersTableBody = document.getElementById('orders-table-body');
+    const ordersTableInfo = document.getElementById('orders-table-info');
+    const ordersStatusFilter = document.getElementById('orders-status-filter');
+    const ordersUserFilter = document.getElementById('orders-user-filter');
+    const refreshOrdersBtn = document.getElementById('refresh-orders-btn');
+
+    let allOrders = [];
+
+    // Załaduj zamówienia
+    async function loadOrders() {
+        try {
+            ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-500"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i> Ładowanie…</td></tr>';
+
+            const params = new URLSearchParams();
+            if (ordersStatusFilter.value) params.append('status', ordersStatusFilter.value);
+            if (ordersUserFilter.value) params.append('userId', ordersUserFilter.value);
+
+            const url = `/api/admin/orders?${params.toString()}`;
+            const response = await fetch(url, { credentials: 'include' });
+
+            if (!response.ok) {
+                ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500">Błąd ładowania zamówień</td></tr>';
+                return;
+            }
+
+            const result = await response.json();
+            allOrders = result.data || [];
+
+            renderOrdersTable();
+            loadOrdersUsers();
+        } catch (error) {
+            console.error('Błąd pobierania zamówień:', error);
+            ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500">Błąd połączenia</td></tr>';
+        }
+    }
+
+    // Załaduj listę handlowców do filtra
+    async function loadOrdersUsers() {
+        try {
+            const response = await fetch('/api/users', { credentials: 'include' });
+            if (!response.ok) return;
+            const result = await response.json();
+            const users = result.data || [];
+
+            ordersUserFilter.innerHTML = '<option value="">Wszyscy handlowcy</option>' +
+                users.map(u => `<option value="${u.id}">${u.shortCode} - ${u.name}</option>`).join('');
+        } catch (error) {
+            console.error('Błąd pobierania handlowców:', error);
+        }
+    }
+
+    // Renderuj tabelę zamówień
+    function renderOrdersTable() {
+        if (allOrders.length === 0) {
+            ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-500">Brak zamówień</td></tr>';
+            ordersTableInfo.textContent = 'Pokazuje 0 z 0 zamówień';
+            return;
+        }
+
+        ordersTableBody.innerHTML = allOrders.map(order => {
+            const date = new Date(order.createdAt).toLocaleDateString('pl-PL', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            const statusColors = {
+                'PENDING': 'bg-yellow-100 text-yellow-800',
+                'APPROVED': 'bg-blue-100 text-blue-800',
+                'IN_PRODUCTION': 'bg-orange-100 text-orange-800',
+                'READY': 'bg-green-100 text-green-800',
+                'COMPLETED': 'bg-gray-100 text-gray-800',
+                'CANCELLED': 'bg-red-100 text-red-800'
+            };
+
+            const statusClass = statusColors[order.status] || 'bg-gray-100 text-gray-800';
+
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="p-4 font-semibold">${order.orderNumber}</td>
+                    <td class="p-4">${date}</td>
+                    <td class="p-4">${order.Customer?.name || '-'}</td>
+                    <td class="p-4">${order.User?.shortCode || '-'}</td>
+                    <td class="p-4"><span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${order.status}</span></td>
+                    <td class="p-4 text-right font-semibold">${(order.total || 0).toFixed(2)} zł</td>
+                    <td class="p-4 text-right">
+                        <button onclick="alert('Szczegóły: ${order.orderNumber}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                            Szczegóły
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        ordersTableInfo.textContent = `Pokazuje ${allOrders.length} z ${allOrders.length} zamówień`;
+    }
+
+    // Event listenery dla zamówień
+    if (refreshOrdersBtn) refreshOrdersBtn.addEventListener('click', loadOrders);
+    if (ordersStatusFilter) ordersStatusFilter.addEventListener('change', loadOrders);
+    if (ordersUserFilter) ordersUserFilter.addEventListener('change', loadOrders);
+
+    // Załaduj zamówienia przy otwarciu widoku
+    const viewContainers = document.querySelectorAll('[data-view]');
+    viewContainers.forEach(link => {
+        link.addEventListener('click', (e) => {
+            if (link.dataset.view === 'orders') {
+                loadOrders();
+            }
+        });
+    });
+
+    // ============================================
+    // OBSŁUGA PRZEŁĄCZANIA WIDOKÓW
+    // ============================================
+    const navLinks = document.querySelectorAll('nav [data-view]');
+    navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const viewName = link.dataset.view;
+
+            // Ukryj wszystkie widoki
+            document.querySelectorAll('.view-container').forEach(container => {
+                container.classList.add('hidden');
+            });
+
+            // Pokaż wybrany widok
+            const selectedView = document.getElementById(`view-${viewName}`);
+            if (selectedView) {
+                selectedView.classList.remove('hidden');
+            }
+
+            // Zaktualizuj aktywny link w menu
+            navLinks.forEach(l => {
+                l.classList.remove('text-blue-600', 'bg-blue-50', 'font-medium');
+                l.classList.add('text-gray-700');
+            });
+            link.classList.remove('text-gray-700');
+            link.classList.add('text-blue-600', 'bg-blue-50', 'font-medium');
+
+            // Załaduj dane dla wybranego widoku
+            if (viewName === 'orders') {
+                loadOrders();
+            }
+        });
+    });
 });
