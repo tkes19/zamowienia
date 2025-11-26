@@ -1471,3 +1471,275 @@ main.layout {
   font-weight: 500;
   color: var(--color-text);
 }
+
+/* --- HEADER: Pełnoszerokości belka nawigacji (jak apple.com) --- */
+
+header.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  width: 100%;
+  background: var(--color-surface);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding-block: 0.5rem;
+  padding-inline: 1.5rem;
+}
+
+.header__bar {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+/* Brand / Logo po lewej */
+.header__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.header__system-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text);
+}
+
+/* Nawigacja po środku */
+.header .mode-nav {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  background: transparent;
+  box-shadow: none;
+}
+
+.header .mode-nav__item {
+  font-size: 0.85rem;
+  color: var(--color-muted);
+  padding: 0.35rem 0;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s ease, border-color 0.2s ease;
+  white-space: nowrap;
+}
+
+.header .mode-nav__item:hover {
+  color: var(--color-text);
+}
+
+.header .mode-nav__item--active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-text);
+}
+
+/* Panel logowania / użytkownika po prawej */
+.header__auth {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 50;
+}
+
+.header__login-button {
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+
+.header__login-button:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.header__login-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 101;
+  padding: 1rem;
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 0.6rem;
+  min-width: 280px;
+}
+
+.header__login-input {
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+  background: var(--color-surface-secondary);
+  color: var(--color-text);
+}
+
+.header__login-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
+}
+
+.header__login-submit {
+  width: 100%;
+  font-size: 0.9rem;
+  padding: 0.6rem 1rem;
+  margin-top: 0.25rem;
+}
+
+.header__login-link {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  text-decoration: none;
+  text-align: center;
+}
+
+.header__login-link:hover {
+  text-decoration: underline;
+}
+
+.header__user {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.header__user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.header__user-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.header__user-role {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+}
+
+.header__user-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.header__user-actions .btn {
+  font-size: 0.75rem;
+  padding: 0.4rem 0.7rem;
+  min-height: auto;
+}
+
+.header .theme-toggle {
+  width: 32px;
+  height: 32px;
+  font-size: 0.9rem;
+}
+
+/* --- HERO: Sekcja tytułu i opisu --- */
+
+.hero {
+  text-align: center;
+  margin-bottom: 2.5rem;
+  padding-top: 1.5rem;
+  padding-bottom: 1rem;
+}
+
+.hero__title {
+  margin: 0 0 0.6rem;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.hero__subtitle {
+  margin: 0 auto;
+  max-width: 720px;
+  font-size: 1rem;
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .header__bar {
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .header__brand {
+    order: 1;
+  }
+
+  .header .mode-nav {
+    order: 3;
+    flex-basis: 100%;
+    gap: 1rem;
+  }
+
+  .header__auth {
+    order: 2;
+  }
+}
+
+@media (max-width: 720px) {
+  header.header {
+    padding-block: 0.4rem;
+    padding-inline: 1rem;
+  }
+
+  .header__bar {
+    gap: 0.75rem;
+  }
+
+  .header .mode-nav {
+    gap: 0.75rem;
+  }
+
+  .header .mode-nav__item {
+    font-size: 0.8rem;
+  }
+
+  .header__login-panel {
+    right: 1rem;
+    min-width: 260px;
+  }
+
+  .hero {
+    margin-bottom: 2rem;
+  }
+
+  .hero__title {
+    font-size: clamp(1.5rem, 3.5vw, 2.2rem);
+  }
+
+  .hero__subtitle {
+    font-size: 0.95rem;
+  }
+}
+
+/* Ukrywanie sekcji tylko dla gościa – body.hide-guest sterowane z JS/auth */
+body.hide-guest .guest-hidden {
+  display: none !important;
+}

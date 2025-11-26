@@ -335,6 +335,108 @@ Zasady działania:
 
 ---
 
+### 5.1.4. Scenariusz logowania i widoczności formularza (wariant B + `/login`)
+
+Ta sekcja opisuje, jak działa **logowanie**, co widzi **użytkownik niezalogowany**, a co widzą **różne role** po zalogowaniu.
+
+#### 1. Strona startowa i adresy URL
+
+- Główna strona formularza: `/zamowienia`.
+- Osobny adres `/login`:
+  - używany jako fallback (link w mailach, stronach pomocy),
+  - renderuje ten sam formularz logowania co panel w nagłówku, ale na osobnej stronie.
+- Start aplikacji (wewnętrznie i z zewnątrz) powinien kierować na `/zamowienia`.
+
+#### 2. Wariant B – logowanie w pasku (header)
+
+- Na górze każdej strony (`/zamowienia`, `/zamowienia/historia`, `/admin` itd.) jest **wspólny nagłówek** z trzema obszarami:
+  - **Lewa strona:** logo + nazwa systemu.
+  - **Środek:** zakładki nawigacji (np. „Projekty miejscowości”, „Klienci indywidualni”, „Projekty imienne”, „Hasła”, „Zamówienia”).
+  - **Prawa strona:** panel logowania / status użytkownika.
+- Dwa stany prawego panelu:
+  - **Niezalogowany:**
+    - przycisk lub link `Zaloguj się`,
+    - po kliknięciu rozwija się kompaktowy formularz (login/hasło) albo otwiera modal.
+  - **Zalogowany:**
+    - chip z informacją: `Imię Nazwisko (Rola)`,
+    - opcjonalnie dodatkowa etykieta (np. `Oddział: Południe`),
+    - przycisk `Wyloguj`.
+- Po wylogowaniu użytkownik zostaje na `/zamowienia`, ale wraca do trybu **tylko podgląd**.
+
+#### 3. Widoczność sekcji – matrix ról
+
+Definicje skrótów typów klientów: `PM`, `KI`, `PI`, `PH`, `OK` – pozostają takie jak w logice projektów.
+
+**Użytkownik niezalogowany (gość):**
+
+- **WIDZI:**
+  - górny pasek nawigacji z przyciskiem `Zaloguj się`,
+  - pole wyszukiwania + tryb wyszukiwania (np. po nazwie, identyfikatorze, mieście),
+  - listę miejscowości / obiektów / folderów **zgodną z regułami dostępu publicznego**,
+  - listę produktów i **podgląd graficzny** produktów (galeria),
+  - uproszczoną informację o dostępności (pasek stanów magazynowych – opis poniżej).
+- **NIE WIDZI:**
+  - selektorów `Handlowiec`, `Obiekt`,
+  - koszyka i sekcji „Wybrane produkty”,
+  - sekcji podsumowania zamówienia, eksportów (XLSX/PDF), historii zamówień,
+  - żadnych danych dotyczących konkretnego klienta (`Customer`),
+  - cen, rabatów, wartości zamówienia.
+
+**Rola `SALES_REP` (handlowiec) – po zalogowaniu:**
+
+- Widzi wszystko to, co gość **plus**:
+  - panel wyboru `Handlowiec` / `Obiekt` (w praktyce prefiltr na „swoje” obiekty),
+  - koszyk i tabelę „Wybrane produkty” z pełną logiką ilości/projektów (sekcja 5.1.3),
+  - sekcję „Zamówienie” (podsumowanie, eksporty, zapis zamówienia),
+  - listę **swoich** zamówień w zakładce „Zamówienia” / „Moje zamówienia”,
+  - dokładniejsze dane stanów magazynowych (np. konkretna liczba sztuk lub tooltip z liczbą).
+
+**Rola `ADMIN` / `SALES_DEPT`:**
+
+- To, co `SALES_REP`, plus:
+  - dostęp do dodatkowych zakładek (`Panel admina`, „Zarządzanie klientami”, itp.),
+  - możliwość przeglądania zamówień wszystkich użytkowników,
+  - konfiguracja dostępów do folderów/miejscowości i widoku publicznego (patrz punkt 4).
+
+**Rola `MANAGEMENT` (szefostwo, read-only):**
+
+- Po zalogowaniu widzi pełne dane (klienci, zamówienia, raporty) w trybie **tylko do odczytu**, zgodnie z tabelą ról.
+- Na `/zamowienia` może widzieć te same sekcje, co `SALES_DEPT`, ale bez przycisków zapisu/edycji.
+
+#### 4. Dostęp do folderów/miejscowości
+
+- W panelu admina (`/admin`) istnieje konfiguracja:
+  - **dla każdego użytkownika (np. `SALES_REP`)**: lista folderów/miejscowości, do których może składać zamówienia,
+  - **dla gości (niezalogowanych)**: lista folderów/miejscowości oznaczonych jako **publiczne**.
+- Zasady widoczności:
+  - **Gość:** widzi tylko foldery/miejscowości oznaczone jako publiczne.
+  - **Zalogowany `SALES_REP`:** widzi tylko te foldery, do których ma prawo (plus opcjonalnie publiczne – decyzja konfiguracyjna po stronie admina).
+  - **`ADMIN` / `SALES_DEPT` / `MANAGEMENT`:** mogą widzieć pełen katalog, jeśli tak zdecyduje konfiguracja ról.
+
+#### 5. Prezentacja stanów magazynowych – widok publiczny vs zalogowany
+
+- Backend wylicza stan produktu na podstawie pól magazynowych (`stock`, `stockReserved`, `stockOrdered`, itp.).
+- Frontend nie musi znać dokładnych wartości w widoku publicznym – dostaje jedynie **poziom dostępności**.
+
+**Dla użytkownika niezalogowanego (gość):**
+
+- Zamiast konkretnej liczby sztuk wyświetlany jest **pasek dostępności** z 3–4 poziomami, np.:
+  - `Niski` – mało sztuk,
+  - `Średni`,
+  - `Wysoki`,
+  - opcjonalnie `Brak`.
+- Pasek jest kolorowy (np. czerwony / żółty / zielony) i opisany tekstowo, bez pokazywania dokładnych ilości.
+- Dokładne progi (`lowThreshold`, `mediumThreshold`, `highThreshold`) trzymane są w konfiguracji backendu lub w bazie (do doprecyzowania w schemacie).
+
+**Dla zalogowanego `SALES_REP` / `SALES_DEPT` / `ADMIN`:**
+
+- Może być pokazywana:
+  - konkretna liczba dostępnych sztuk (`availableNow`), lub
+  - ten sam pasek, ale z dodatkowymi informacjami w tooltipie (np. „Dostępne teraz: 124 szt.”).
+- Decyzja, czy pokazywać liczby, może być konfigurowalna na poziomie roli.
+
+---
+
 ## 5. Wytyczne dla Przyszłych Agentów AI
 
 1.  **Zawsze zaczynaj od tego pliku (`AI_DEV_PLAN.md`)** – traktuj go jako główne źródło prawdy o tym, co już zostało zaplanowane.

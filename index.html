@@ -7,9 +7,16 @@
     <link rel="stylesheet" href="./assets/styles.css" />
     <link rel="stylesheet" href="./assets/vendor/fontawesome/all.min.css" />
   </head>
-  <body class="hide-prices">
-    <main class="layout">
-      <header>
+  <body class="hide-prices hide-guest">
+    <!-- Globalna belka nawigacji (pełna szerokość, jak apple.com) -->
+    <header class="header">
+      <div class="header__bar">
+        <!-- Logo / Brand po lewej -->
+        <div class="header__brand">
+          <span class="header__system-name">REZON</span>
+        </div>
+
+        <!-- Nawigacja po środku -->
         <nav id="form-mode-nav" class="mode-nav" aria-label="Tryb formularza">
           <button
             type="button"
@@ -39,40 +46,74 @@
           >
             Projekty hasła
           </button>
-          <button
-            type="button"
-            class="mode-nav__item"
-            id="orders-nav-btn"
-            data-mode="orders"
-          >
-            <i class="fas fa-list"></i> Zamówienia
-          </button>
         </nav>
-        <div class="header-row">
-          <h1>Formularz zamówień</h1>
-          <div class="header-actions">
-            <a href="/clients" id="clients-link" class="btn btn--secondary" style="display: none;">
-              <i class="fas fa-users"></i>
-              Moi Klienci
-            </a>
-            <a href="/admin" id="admin-link" class="btn btn--secondary" style="display: none;">
-              <i class="fas fa-cog"></i>
-              Panel admina
-            </a>
-            <button id="logout-btn" class="btn btn--danger" style="display: none;">
-              <i class="fas fa-sign-out-alt"></i>
-              Wyloguj
-            </button>
-            <button id="theme-toggle" class="theme-toggle" aria-label="Przełącz tryb jasny/ciemny">
-              <i class="fas fa-moon"></i>
-              <i class="fas fa-sun"></i>
-            </button>
+
+        <!-- Panel logowania / użytkownika po prawej -->
+        <div class="header__auth" data-auth-state="guest">
+          <!-- Stan: niezalogowany (domyślny) -->
+          <button id="header-login-toggle" class="header__login-button" type="button">
+            <i class="fas fa-sign-in-alt"></i>
+            <span>Zaloguj się</span>
+          </button>
+
+          <form id="header-login-form" class="header__login-panel" autocomplete="on" style="display: none;">
+            <input
+              type="email"
+              name="email"
+              class="header__login-input"
+              placeholder="Email"
+              autocomplete="username"
+            />
+            <input
+              type="password"
+              name="password"
+              class="header__login-input"
+              placeholder="Hasło"
+              autocomplete="current-password"
+            />
+            <button type="submit" class="header__login-submit">Zaloguj</button>
+            <a href="/login" class="header__login-link">Więcej opcji logowania</a>
+          </form>
+
+          <!-- Stan: zalogowany (pokazywany przez JS zamiast panelu logowania) -->
+          <div id="header-user" class="header__user" style="display: none;">
+            <div class="header__user-info">
+              <span id="header-user-name" class="header__user-name">&nbsp;</span>
+              <span id="header-user-role" class="header__user-role">&nbsp;</span>
+            </div>
+            <div class="header__user-actions">
+              <a href="/clients" id="clients-link" class="btn btn--secondary" style="display: none;">
+                <i class="fas fa-users"></i>
+                Moi Klienci
+              </a>
+              <a href="/admin" id="admin-link" class="btn btn--secondary" style="display: none;">
+                <i class="fas fa-cog"></i>
+                Panel admina
+              </a>
+              <button id="logout-btn" class="btn btn--danger" style="display: none;">
+                <i class="fas fa-sign-out-alt"></i>
+                Wyloguj
+              </button>
+            </div>
           </div>
+
+          <button id="theme-toggle" class="theme-toggle" aria-label="Przełącz tryb jasny/ciemny">
+            <i class="fas fa-moon"></i>
+            <i class="fas fa-sun"></i>
+          </button>
         </div>
-        <p class="tagline">
+      </div>
+    </header>
+
+    <!-- Główna treść strony -->
+    <main class="layout">
+      <!-- Hero: tytuł i opis -->
+      <section class="hero">
+        <h1 class="hero__title">Formularz zamówień</h1>
+        <p class="hero__subtitle">
           Wyszukaj produkty po nazwie lub ID, sprawdź stan magazynowy i dodaj je do koszyka zamówienia.
         </p>
-      </header>
+      </section>
 
       <section class="panel panel--search-gallery">
         <form id="search-form" class="search-form" autocomplete="off">
@@ -154,7 +195,7 @@
         </section>
       </section>
 
-      <section class="panel">
+      <section class="panel guest-hidden">
         <div class="panel__header">
           <h2>Wybrane produkty</h2>
           <div class="table-controls">
@@ -208,7 +249,7 @@
       </section>
 
       <!-- Pasek klienta zamówienia -->
-      <section class="panel panel--customer-bar" aria-label="Klient zamówienia">
+      <section class="panel panel--customer-bar guest-hidden" aria-label="Klient zamówienia">
         <div class="panel__header panel__header--customer">
           <div class="order-customer">
             <span class="order-customer__label">Klient zamówienia:</span>
@@ -261,7 +302,7 @@
         </div>
       </section>
 
-      <section class="panel panel--note">
+      <section class="panel panel--note guest-hidden">
         <h2>Eksport danych i wysyłka</h2>
         <p>Pobierz aktualny koszyk w wybranym formacie lub wyślij zamówienie do bazy:</p>
         <div class="export-buttons">
@@ -276,7 +317,7 @@
       </section>
 
       <!-- Widok Zamówienia -->
-      <section id="orders-section" class="panel" style="display: none;">
+      <section id="orders-section" class="panel guest-hidden" style="display: none;">
         <div class="panel__header">
           <h2>Zamówienia</h2>
         </div>
