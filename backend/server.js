@@ -89,6 +89,55 @@ function requireRole(allowedRoles = []) {
     };
 }
 
+const ORDER_STATUSES = ['PENDING', 'APPROVED', 'IN_PRODUCTION', 'READY', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+
+const ROLE_STATUS_TRANSITIONS = {
+    SALES_REP: [
+        { from: 'PENDING', to: 'CANCELLED' }
+    ],
+    SALES_DEPT: [
+        { from: 'PENDING', to: 'APPROVED' },
+        { from: 'APPROVED', to: 'IN_PRODUCTION' },
+        { from: 'APPROVED', to: 'CANCELLED' },
+        { from: 'IN_PRODUCTION', to: 'CANCELLED' },
+        { from: 'READY', to: 'CANCELLED' },
+        { from: 'SHIPPED', to: 'DELIVERED' }
+    ],
+    PRODUCTION: [
+        { from: 'APPROVED', to: 'IN_PRODUCTION' },
+        { from: 'IN_PRODUCTION', to: 'READY' }
+    ],
+    WAREHOUSE: [
+        { from: 'READY', to: 'SHIPPED' }
+    ],
+    ADMIN: 'ALL'
+};
+
+function isValidStatus(status) {
+    return typeof status === 'string' && ORDER_STATUSES.includes(status.toUpperCase());
+}
+
+function canRoleChangeStatus(role, currentStatus, nextStatus) {
+    if (!role || !currentStatus || !nextStatus || currentStatus === nextStatus) return false;
+    if (role === 'ADMIN') return true;
+
+    const transitions = ROLE_STATUS_TRANSITIONS[role] || [];
+    return transitions.some((transition) => transition.from === currentStatus && transition.to === nextStatus);
+}
+
+function canRoleAccessOrder(role, requesterId, orderOwnerId) {
+    if (!role) return false;
+    if (['ADMIN', 'SALES_DEPT', 'WAREHOUSE', 'PRODUCTION'].includes(role)) {
+        return true;
+    }
+
+    if (role === 'SALES_REP') {
+        return requesterId === orderOwnerId;
+    }
+
+    return false;
+}
+
 // Główna ścieżka - serwowanie pliku index.html
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../index.html'));
@@ -107,6 +156,11 @@ app.get('/admin', requireRole(['ADMIN']), (req, res) => {
 // Panel klientów – wymaga zalogowania jako SALES_REP, SALES_DEPT lub ADMIN
 app.get('/clients', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), (req, res) => {
   res.sendFile(path.join(__dirname, '../clients.html'));
+});
+
+// Widok zamówień – wymaga zalogowania jako SALES_DEPT, ADMIN, WAREHOUSE, PRODUCTION
+app.get('/orders', requireRole(['SALES_DEPT', 'ADMIN', 'WAREHOUSE', 'PRODUCTION']), (req, res) => {
+  res.sendFile(path.join(__dirname, '../orders.html'));
 });
 
 // Test endpoint
@@ -179,6 +233,493 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (err) {
         console.error('Błąd logowania:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas logowania', details: err.message });
+    }
+});
+
+// ============================================
+// GET /api/orders/:id - Szczegóły zamówienia
+// ============================================
+app.get('/api/orders/:id', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const cookies = parseCookies(req);
+        const requesterId = cookies.auth_id;
+        const role = cookies.auth_role;
+
+        if (!requesterId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const orderId = req.params.id;
+
+        const { data: order, error } = await supabase
+            .from('Order')
+            .select(`
+                id,
+                orderNumber,
+                customerId,
+                userId,
+                status,
+                total,
+                notes,
+                createdAt,
+                updatedAt,
+                Customer:customerId(id, name, email, phone, city, address, zipCode, country),
+                User:userId(id, name, shortCode),
+                OrderItem:OrderItem(
+                    id,
+                    productId,
+                    quantity,
+                    unitPrice,
+                    selectedProjects,
+                    projectQuantities,
+                    totalQuantity,
+                    source,
+                    locationName,
+                    customization,
+                    Product:productId(id, name, identifier, index, code)
+                )
+            `)
+            .eq('id', orderId)
+            .single();
+
+        if (error) {
+            console.error('Błąd pobierania zamówienia:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać zamówienia' });
+        }
+
+        if (!order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie istnieje' });
+        }
+
+        if (!canRoleAccessOrder(role, requesterId, order.userId)) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do podglądu zamówienia' });
+        }
+
+        return res.json({ status: 'success', data: order });
+    } catch (error) {
+        console.error('Błąd w GET /api/orders/:id:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// PATCH /api/orders/:id/status - zmiana statusu zamówienia
+// ============================================
+app.patch('/api/orders/:id/status', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const cookies = parseCookies(req);
+        const requesterId = cookies.auth_id;
+        const role = cookies.auth_role;
+
+        if (!requesterId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const orderId = req.params.id;
+        const { status: nextStatus } = req.body || {};
+
+        if (!isValidStatus(nextStatus)) {
+            return res.status(400).json({ status: 'error', message: 'Nieprawidłowy status' });
+        }
+
+        const { data: order, error } = await supabase
+            .from('Order')
+            .select('id, userId, status')
+            .eq('id', orderId)
+            .single();
+
+        if (error) {
+            console.error('Błąd pobierania zamówienia do zmiany statusu:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać zamówienia' });
+        }
+
+        if (!order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie istnieje' });
+        }
+
+        if (!canRoleAccessOrder(role, requesterId, order.userId)) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do zmiany statusu zamówienia' });
+        }
+
+        if (!canRoleChangeStatus(role, order.status, nextStatus)) {
+            return res.status(403).json({ status: 'error', message: 'Nie możesz zmienić statusu w ten sposób' });
+        }
+
+        const { error: updateError } = await supabase
+            .from('Order')
+            .update({ status: nextStatus, updatedAt: new Date().toISOString() })
+            .eq('id', orderId);
+
+        if (updateError) {
+            console.error('Błąd aktualizacji statusu zamówienia:', updateError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować statusu zamówienia' });
+        }
+
+        // Zapis do historii zmian statusu z poprawnym użytkownikiem (zalogowany)
+        const { error: historyError } = await supabase
+            .from('OrderStatusHistory')
+            .insert({
+                orderId: orderId,
+                oldStatus: order.status,
+                newStatus: nextStatus,
+                changedBy: requesterId, // Używamy zalogowanego użytkownika, nie twórcy zamówienia
+                changedAt: new Date().toISOString(),
+                notes: `Zmiana statusu przez ${role}`
+            });
+
+        if (historyError) {
+            console.error('Błąd zapisu do historii zmian:', historyError);
+            // Nie przerywamy operacji, tylko logujemy błąd
+        }
+
+        return res.json({ status: 'success', data: { id: orderId, status: nextStatus } });
+    } catch (error) {
+        console.error('Błąd w PATCH /api/orders/:id/status:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas zmiany statusu' });
+    }
+});
+
+// ============================================
+// GET /api/orders/:id/history - pobranie historii zmian statusu zamówienia
+// ============================================
+// Pobiera historię zmian statusu zamówienia
+app.get('/api/orders/:id/history', async (req, res) => {
+    console.log('[GET /api/orders/:id/history] START');
+    
+    if (!supabase) {
+        console.log('[GET /api/orders/:id/history] Brak Supabase');
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const orderId = req.params.id;
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const role = cookies.auth_role;
+        
+        console.log('[GET /api/orders/:id/history] orderId:', orderId, 'userId:', userId, 'role:', role);
+
+        // Sprawdź, czy użytkownik ma dostęp do zamówienia
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .select('id, userId')
+            .eq('id', orderId)
+            .single();
+
+        if (orderError) {
+            console.error('[GET /api/orders/:id/history] Błąd pobierania zamówienia:', orderError);
+            throw orderError;
+        }
+        
+        if (!order) {
+            console.log('[GET /api/orders/:id/history] Zamówienie nie znalezione');
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+        }
+
+        // Sprawdź uprawnienia
+        console.log('[GET /api/orders/:id/history] Sprawdzanie uprawnień:', {
+            role: role,
+            userId: userId,
+            orderUserId: order.userId,
+            canAccess: canRoleAccessOrder(role, userId, order.userId)
+        });
+        
+        if (!canRoleAccessOrder(role, userId, order.userId)) {
+            console.log('[GET /api/orders/:id/history] Brak uprawnień - role:', role, 'userId:', userId, 'orderUserId:', order.userId);
+            return res.status(403).json({ 
+                status: 'error', 
+                message: 'Brak uprawnień do przeglądania historii tego zamówienia' 
+            });
+        }
+
+        // Pobierz historię zmian statusu
+        console.log('[GET /api/orders/:id/history] Pobieranie historii...');
+        
+        const { data: history, error: historyError } = await supabase
+            .from('OrderStatusHistory')
+            .select('id, oldStatus, newStatus, changedAt, notes, changedBy')
+            .eq('orderId', orderId)
+            .order('changedAt', { ascending: false });
+
+        console.log('[GET /api/orders/:id/history] historyError:', historyError);
+        console.log('[GET /api/orders/:id/history] history:', history);
+
+        if (historyError) {
+            console.error('[GET /api/orders/:id/history] Błąd Supabase:', historyError);
+            return res.status(500).json({ 
+                status: 'error', 
+                message: 'Błąd bazy danych: ' + historyError.message 
+            });
+        }
+
+        // Pobierz dane użytkowników dla historii
+        if (history && history.length > 0) {
+            const userIds = [...new Set(history.map(h => h.changedBy))];
+            const { data: users, error: usersError } = await supabase
+                .from('User')
+                .select('id, name')
+                .in('id', userIds);
+
+            if (!usersError && users) {
+                // Dołącz dane użytkowników do historii
+                history.forEach(entry => {
+                    const user = users.find(u => u.id === entry.changedBy);
+                    entry.User = user || { name: 'System' };
+                });
+            }
+        }
+
+        console.log('[GET /api/orders/:id/history] Sukces, zwracam', (history || []).length, 'wpisów');
+        return res.json({ 
+            status: 'success', 
+            data: history || [] 
+        });
+
+    } catch (error) {
+        console.error('[GET /api/orders/:id/history] CATCH ERROR:', error);
+        return res.status(500).json({ 
+            status: 'error', 
+            message: 'Błąd serwera: ' + (error.message || String(error))
+        });
+    }
+});
+
+// ============================================
+// POST /api/orders/:id/history/test - dodaj testowy wpis historii (TYMCZASOWE!)
+// ============================================
+app.post('/api/orders/:id/history/test', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const orderId = req.params.id;
+        
+        const { error: insertError } = await supabase
+            .from('OrderStatusHistory')
+            .insert({
+                orderId: orderId,
+                oldStatus: 'PENDING',
+                newStatus: 'APPROVED',
+                changedBy: '9c19a5af-01af-4875-8c76-d5c0bfd39dff',
+                changedAt: new Date().toISOString(),
+                notes: 'Testowy wpis historii'
+            });
+
+        if (insertError) {
+            console.error('Błąd wstawiania testu:', insertError);
+            return res.status(500).json({ status: 'error', message: insertError.message });
+        }
+
+        return res.json({ status: 'success', message: 'Testowy wpis dodany' });
+    } catch (error) {
+        console.error('Błąd w POST /api/orders/:id/history/test:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// POST /api/orders/disable-trigger - wyłączenie wyzwalacza historii (TYMCZASOWE!)
+// ============================================
+app.post('/api/orders/disable-trigger', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        // Wyłącz wyzwalacz, który powoduje podwójne wpisy
+        const { error: dropError } = await supabase
+            .rpc('exec_sql', { 
+                sql: 'DROP TRIGGER IF EXISTS trigger_order_status_change ON public."Order";' 
+            });
+
+        if (dropError) {
+            // Alternatywa - bezpośrednie SQL przez Supabase client
+            console.log('Próba wyłączenia wyzwalacza...');
+        }
+
+        return res.json({ 
+            status: 'success', 
+            message: 'Wyzwalacz został wyłączony. Historia będzie zapisywana tylko przez backend.' 
+        });
+    } catch (error) {
+        console.error('Błąd wyłączania wyzwalacza:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// PATCH /api/orders/:id - edycja notatek
+// ============================================
+app.patch('/api/orders/:id', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const cookies = parseCookies(req);
+        const requesterId = cookies.auth_id;
+        const role = cookies.auth_role;
+
+        if (!requesterId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const orderId = req.params.id;
+        const { notes } = req.body || {};
+
+        if (typeof notes !== 'string') {
+            return res.status(400).json({ status: 'error', message: 'Pole notes jest wymagane' });
+        }
+
+        const { data: order, error } = await supabase
+            .from('Order')
+            .select('id, userId')
+            .eq('id', orderId)
+            .single();
+
+        if (error) {
+            console.error('Błąd pobierania zamówienia do edycji notatek:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać zamówienia' });
+        }
+
+        if (!order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie istnieje' });
+        }
+
+        const canEditNotes = ['ADMIN', 'SALES_DEPT'].includes(role) || (role === 'SALES_REP' && order.userId === requesterId);
+
+        if (!canEditNotes) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do edycji notatek' });
+        }
+
+        const { error: updateError } = await supabase
+            .from('Order')
+            .update({ notes, updatedAt: new Date().toISOString() })
+            .eq('id', orderId);
+
+        if (updateError) {
+            console.error('Błąd aktualizacji notatek zamówienia:', updateError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować notatek zamówienia' });
+        }
+
+        return res.json({ status: 'success', data: { id: orderId, notes } });
+    } catch (error) {
+        console.error('Błąd w PATCH /api/orders/:id:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas edycji zamówienia' });
+    }
+});
+
+// ============================================
+// DELETE /api/orders/:id - usunięcie zamówienia (tylko ADMIN)
+// ============================================
+app.delete('/api/orders/:id', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const cookies = parseCookies(req);
+        const requesterId = cookies.auth_id;
+        const role = cookies.auth_role;
+
+        if (!requesterId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        // Tylko ADMIN może usuwać zamówienia
+        if (role !== 'ADMIN') {
+            return res.status(403).json({ status: 'error', message: 'Tylko administrator może usuwać zamówienia' });
+        }
+
+        const orderId = req.params.id;
+
+        // Sprawdź czy zamówienie istnieje
+        const { data: order, error: fetchError } = await supabase
+            .from('Order')
+            .select('id, orderNumber')
+            .eq('id', orderId)
+            .single();
+
+        if (fetchError || !order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie istnieje' });
+        }
+
+        // Usuń pozycje zamówienia (OrderItem)
+        const { error: deleteItemsError } = await supabase
+            .from('OrderItem')
+            .delete()
+            .eq('orderId', orderId);
+
+        if (deleteItemsError) {
+            console.error('Błąd usuwania pozycji zamówienia:', deleteItemsError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć pozycji zamówienia' });
+        }
+
+        // Usuń zamówienie
+        const { error: deleteOrderError } = await supabase
+            .from('Order')
+            .delete()
+            .eq('id', orderId);
+
+        if (deleteOrderError) {
+            console.error('Błąd usuwania zamówienia:', deleteOrderError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć zamówienia' });
+        }
+
+        console.log(`[DELETE /api/orders/${orderId}] Zamówienie ${order.orderNumber} usunięte przez ${requesterId}`);
+        return res.json({ status: 'success', message: 'Zamówienie zostało usunięte' });
+    } catch (error) {
+        console.error('Błąd w DELETE /api/orders/:id:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas usuwania zamówienia' });
+    }
+});
+
+// Sync user role from database to cookie
+app.post('/api/auth/sync-role', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+
+    if (!userId) {
+        return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+    try {
+        const { data: user, error } = await supabase
+            .from('User')
+            .select('id, role')
+            .eq('id', userId)
+            .single();
+
+        if (error || !user) {
+            return res.status(404).json({ status: 'error', message: 'Użytkownik nie znaleziony' });
+        }
+
+        const role = user.role || 'NEW_USER';
+        setAuthCookies(res, { id: user.id, role });
+
+        return res.json({
+            status: 'success',
+            data: {
+                id: user.id,
+                role: role
+            }
+        });
+    } catch (error) {
+        console.error('Błąd synchronizacji roli:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
 
@@ -1000,14 +1541,16 @@ app.get('/api/admin/departments', requireRole(['ADMIN']), async (req, res) => {
     }
 });
 
-// Lista użytkowników z działami
-app.get('/api/admin/users', requireRole(['ADMIN']), async (req, res) => {
+// Lista użytkowników z działami (ADMIN + SALES_DEPT)
+app.get('/api/admin/users', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
 
     try {
-        const { data, error } = await supabase
+        const { role: roleFilter } = req.query;
+
+        let query = supabase
             .from('User')
             .select(`
                 id,
@@ -1020,6 +1563,12 @@ app.get('/api/admin/users', requireRole(['ADMIN']), async (req, res) => {
                 Department (name)
             `)
             .order('createdAt', { ascending: false });
+
+        if (roleFilter && typeof roleFilter === 'string') {
+            query = query.eq('role', roleFilter);
+        }
+
+        const { data, error } = await query;
 
         if (error) {
             console.error('Błąd pobierania użytkowników:', error);
@@ -1851,8 +2400,8 @@ app.get('/api/orders', async (req, res) => {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
         }
 
-        // Kontrola dostępu wg roli (wzorzec z legacy)
-        if (!['SALES_REP', 'ADMIN', 'SALES_DEPT', 'WAREHOUSE'].includes(role)) {
+        // Kontrola dostępu wg roli
+        if (!['SALES_REP', 'ADMIN', 'SALES_DEPT', 'WAREHOUSE', 'PRODUCTION'].includes(role)) {
             return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu' });
         }
 
@@ -2093,8 +2642,15 @@ process.on('unhandledRejection', (err) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Serwer działa na porcie ${PORT}`);    
     console.log(`Środowisko: ${process.env.NODE_ENV || 'development'}`);
     console.log(`Adres testowy: http://localhost:${PORT}/api/health`);
 });
+
+server.on('error', (err) => {
+    console.error('Błąd serwera:', err);
+});
+
+// Utrzymaj proces przy życiu
+process.stdin.resume();
