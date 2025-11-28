@@ -978,7 +978,7 @@ async function submitOrder() {
         projectQuantities,
         totalQuantity: qty,
         locationName: item.locationName || null,
-        source: item.locationName ? 'MIEJSCOWOSCI' : 'KATALOG_INDYWIDUALNY'
+        source: item.source || 'MIEJSCOWOSCI'
       });
     }
 
@@ -1183,6 +1183,7 @@ async function searchProducts(event) {
   event.preventDefault();
   const mode = document.querySelector('#mode').value;
   const query = document.querySelector('#query').value.trim();
+  const exactMatch = document.querySelector('#exact-match-toggle')?.checked || false;
 
   if (!query) {
     setStatus('Podaj frazę wyszukiwania.', 'error');
@@ -1194,6 +1195,7 @@ async function searchProducts(event) {
 
   try {
     const searchTerms = tokenizeQuery(query);
+    const normalizedQuery = normalizeForMatching(query);
 
     if (!searchTerms.length) {
       setStatus('Nieprawidłowe zapytanie wyszukiwania.', 'error');
@@ -1202,12 +1204,31 @@ async function searchProducts(event) {
 
     let products = await fetchProducts(query);
 
-    if (!products.length && searchTerms.length > 1) {
+    if (!products.length && (searchTerms.length > 1 || exactMatch)) {
       products = await fetchProducts();
     }
 
     const filteredProducts = products.filter(product => {
       if (!product) return false;
+
+      // Tryb dokładnego dopasowania: licz słowa niezależnie od kolejności,
+      // pozwalając na dopasowanie prefiksów ("mag" -> "magnes")
+      if (exactMatch) {
+        const targetValue = mode === 'pc_id' ? product.pc_id : product.name;
+        const targetTokens = tokenizeQuery(targetValue);
+
+        if (targetTokens.length !== searchTerms.length) {
+          return false;
+        }
+
+        const availableTokens = [...targetTokens];
+        return searchTerms.every(term => {
+          const idx = availableTokens.findIndex(token => token.startsWith(term));
+          if (idx === -1) return false;
+          availableTokens.splice(idx, 1);
+          return true;
+        });
+      }
 
       const idTokens = getFieldTokens(product.pc_id);
       const nameTokens = getFieldTokens(product.name);
@@ -1601,10 +1622,17 @@ function addToCart(product, quantity, projects) {
   const sanitizedProjects = sanitizeProjectsValue(projects);
   const currentProjects = sanitizedProjects || entry?.projects || '';
 
-  // Pobierz nazwę miejscowości z selecta (dla PM)
-  const locationName = (currentFormMode === 'projekty-miejscowosci' && galleryCitySelect) 
-    ? galleryCitySelect.value 
-    : null;
+  // Pobierz nazwę lokalizacji i źródło w zależności od trybu
+  let locationName = null;
+  let source = 'MIEJSCOWOSCI';
+  
+  if (currentFormMode === 'projekty-miejscowosci' && galleryCitySelect) {
+    locationName = galleryCitySelect.value || null;
+    source = 'MIEJSCOWOSCI';
+  } else if (currentFormMode === 'klienci-indywidualni' && galleryObjectSelect) {
+    locationName = galleryObjectSelect.value || null;
+    source = 'KATALOG_INDYWIDUALNY';
+  }
 
   cart.set(key, { 
     product, 
@@ -1613,7 +1641,8 @@ function addToCart(product, quantity, projects) {
     quantityInputTotal: '',  // Pole A: łącznie sztuk
     quantityInputPerProject: '',  // Pole B: ilości na projekty
     perProjectQuantities: [],  // Rozkład na projekty
-    locationName  // Nazwa miejscowości (PM) lub null (KI)
+    locationName,  // Nazwa miejscowości (PM) lub obiektu KI
+    source  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
   });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka.`, 'success');
@@ -1630,10 +1659,17 @@ function addToCartWithQuantityBreakdown(product, computeResult) {
   const entry = cart.get(key);
   const { totalQuantity, perProjectQuantities, mode, quantityInput } = computeResult;
 
-  // Pobierz nazwę miejscowości z selecta (dla PM)
-  const locationName = (currentFormMode === 'projekty-miejscowosci' && galleryCitySelect) 
-    ? galleryCitySelect.value 
-    : null;
+  // Pobierz nazwę lokalizacji i źródło w zależności od trybu
+  let locationName = null;
+  let source = 'MIEJSCOWOSCI';
+  
+  if (currentFormMode === 'projekty-miejscowosci' && galleryCitySelect) {
+    locationName = galleryCitySelect.value || null;
+    source = 'MIEJSCOWOSCI';
+  } else if (currentFormMode === 'klienci-indywidualni' && galleryObjectSelect) {
+    locationName = galleryObjectSelect.value || null;
+    source = 'KATALOG_INDYWIDUALNY';
+  }
 
   cart.set(key, { 
     product, 
@@ -1642,7 +1678,8 @@ function addToCartWithQuantityBreakdown(product, computeResult) {
     quantityInputTotal: mode === 'total' ? totalQuantity : '',
     quantityInputPerProject: mode !== 'total' ? quantityInput : '',
     perProjectQuantities: perProjectQuantities,
-    locationName  // Nazwa miejscowości (PM) lub null (KI)
+    locationName,  // Nazwa miejscowości (PM) lub obiektu KI
+    source  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
   });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka (rozkład na projekty).`, 'success');
@@ -1947,10 +1984,12 @@ async function exportToPDF() {
     // Tytuły kolumn
     setFont('bold');
     doc.setTextColor(0, 0, 0);
+    doc.setFontSize(9);
     addText('Lp.', 15, 50);
-    addText('Nazwa produktu', 30, 50);
+    addText('Nazwa produktu', 25, 50);
+    addText('Lokalizacja', 95, 50);
     addText('Ilość', 140, 50, { align: 'right' });
-    addText('Cena', 160, 50, { align: 'right' });
+    addText('Cena', 162, 50, { align: 'right' });
     addText('Wartość', 190, 50, { align: 'right' });
     
     // Linie oddzielające
@@ -1964,13 +2003,28 @@ async function exportToPDF() {
     // Pobierz produkty w tej samej kolejności co w koszyku
     const cartItems = Array.from(cart.entries());
     
+    // Sprawdź czy są mieszane źródła (PM + KI)
+    const allSources = cartItems.map(([_, item]) => item.source).filter(Boolean);
+    const uniqueSources = new Set(allSources);
+    const showSourceBadge = uniqueSources.size > 1;
+    
+    // Mapowanie źródeł na skróty
+    const SOURCE_LABELS_PDF = {
+      MIEJSCOWOSCI: 'PM',
+      KATALOG_INDYWIDUALNY: 'KI',
+      KLIENCI_INDYWIDUALNI: 'KI',
+      IMIENNE: 'Im',
+      HASLA: 'H',
+      OKOLICZNOSCIOWE: 'Ok'
+    };
+    
     // Dane produktów
     const startY = 60;
     let currentY = startY;
     let total = 0;
     
     // Rysowanie listy produktów w kolejności z koszyka
-    cartItems.forEach(([index, { product, quantity }], i) => {
+    cartItems.forEach(([index, { product, quantity, locationName, source }], i) => {
       const productTotal = product.price * quantity;
       total += productTotal;
       
@@ -1982,12 +2036,12 @@ async function exportToPDF() {
       
       // Numer porządkowy
       setFont('normal');
-      doc.setFontSize(10);
+      doc.setFontSize(9);
       addText((i + 1) + '.', 15, currentY);
       
       // Nazwa produktu z zawijaniem tekstu
-      const maxNameWidth = 100; // Maksymalna szerokość nazwy w mm
-      const lineHeight = 5; // Wysokość linii w mm
+      const maxNameWidth = 60; // Maksymalna szerokość nazwy w mm (zmniejszona dla lokalizacji)
+      const lineHeight = 4; // Wysokość linii w mm
       
       // Przygotuj nazwę produktu - usuń podwójne spacje i przyciąć białe znaki
       const cleanName = (product.name || '').replace(/\s+/g, ' ').trim();
@@ -1997,24 +2051,40 @@ async function exportToPDF() {
       
       // Narysuj każdą linię nazwy
       nameLines.forEach((line, lineIndex) => {
-        addText(line.trim(), 30, currentY + (lineIndex * lineHeight));
+        addText(line.trim(), 25, currentY + (lineIndex * lineHeight));
       });
       
       // ID produktu (mniejszą czcionką pod nazwą)
       if (product.pc_id) {
-        doc.setFontSize(8);
+        doc.setFontSize(7);
         setFont('normal');
         doc.setTextColor(100);
-        addText(`ID: ${product.pc_id}`, 30, currentY + (nameLines.length * lineHeight) + 2);
+        addText(`ID: ${product.pc_id}`, 25, currentY + (nameLines.length * lineHeight) + 1);
       }
+
+      // Lokalizacja (PM: miejscowość, KI: obiekt) z opcjonalnym badge'em źródła
+      setFont('normal');
+      doc.setFontSize(8);
+      doc.setTextColor(80);
+      
+      // Dodaj prefix [PM] lub [KI] tylko gdy są mieszane źródła
+      const sourcePrefix = showSourceBadge && source ? `[${SOURCE_LABELS_PDF[source] || source}] ` : '';
+      const locationDisplay = sourcePrefix + (locationName || '-');
+      
+      // Skróć lokalizację jeśli za długa
+      const maxLocWidth = 40;
+      const locLines = safeSplitText(doc, locationDisplay, maxLocWidth);
+      locLines.slice(0, 2).forEach((line, lineIndex) => {
+        addText(line.trim(), 95, currentY + (lineIndex * lineHeight));
+      });
 
       // Ilość i ceny
       setFont('normal');
-      doc.setFontSize(10);
+      doc.setFontSize(9);
       doc.setTextColor(0, 0, 0);
       
       // Oblicz wysokość dla wielolinijkowej nazwy produktu
-      const nameHeight = nameLines.length * lineHeight + (product.pc_id ? 6 : 0);
+      const nameHeight = nameLines.length * lineHeight + (product.pc_id ? 5 : 0);
       const contentHeight = Math.max(nameHeight, 8); // Minimalna wysokość wiersza
       
       // Wyśrodkuj ilość i ceny względem całego wiersza
@@ -2022,7 +2092,7 @@ async function exportToPDF() {
       
       // Wyświetl ilość, cenę i wartość
       addText(quantity.toString(), 140, textY, { align: 'right' });
-      addText(formatCurrencyPlain(product.price), 160, textY, { align: 'right' });
+      addText(formatCurrencyPlain(product.price), 162, textY, { align: 'right' });
       addText(formatCurrencyPlain(productTotal), 190, textY, { align: 'right' });
       
       // Linia oddzielająca produkty
@@ -3021,7 +3091,7 @@ async function saveTemplate() {
         : null,
       totalQuantity: qty,
       locationName: item.locationName || null,
-      source: item.locationName ? 'MIEJSCOWOSCI' : 'KATALOG_INDYWIDUALNY'
+      source: item.source || 'MIEJSCOWOSCI'
     });
   }
 
@@ -3086,7 +3156,8 @@ async function useTemplate(templateId) {
         quantity: item.quantity,
         projects: item.selectedProjects || '',
         perProjectQuantities: item.projectQuantities ? JSON.parse(item.projectQuantities) : [],
-        locationName: item.locationName
+        locationName: item.locationName,
+        source: item.source || 'MIEJSCOWOSCI'
       });
     }
 

@@ -132,10 +132,10 @@ Takie podejście skaluje się na handlowców, adminów oraz klientów, zapewniaj
 *Cel: Odcięcie zewnętrznego API i pełna kontrola nad danymi.*
 
 1.  **Migracja Endpointu Produktów (`GET /api/v1/products`)** – **STATUS: w dużej mierze UKOŃCZONE**:
-    *   ✅ Backend czyta dane z tabel `Product` + `Inventory` w Supabase (bezpośrednio, bez zewnętrznego API).
-    *   ✅ Dane są mapowane do struktury zgodnej z obecnym frontendem (`data.products[...]`).
-    *   🔄 Zewnętrzne API `https://rezon-api.vercel.app/api/v1/products` jest używane **tylko** w endpointzie admina `POST /api/admin/sync-from-external-api` do okresowej synchronizacji produktów do bazy.
-    *   ⏳ Do dopracowania później: pełne wyszukiwanie `ILIKE` po wszystkich wymaganych kolumnach (jeśli frontend tego potrzebuje ponad aktualny zakres).
+    *   Backend czyta dane z tabel `Product` + `Inventory` w Supabase (bezpośrednio, bez zewnętrznego API).
+    *   Dane są mapowane do struktury zgodnej z obecnym frontendem (`data.products[...]`).
+    *   Zewnętrzne API `https://rezon-api.vercel.app/api/v1/products` jest używane **tylko** w endpointzie admina `POST /api/admin/sync-from-external-api` do okresowej synchronizacji produktów do bazy.
+    *   Do dopracowania później: pełne wyszukiwanie `ILIKE` po wszystkich wymaganych kolumnach (jeśli frontend tego potrzebuje ponad aktualny zakres).
 
 ### FAZA 2: Tożsamość i Kontekst (Auth)
 *Cel: System musi wiedzieć, kto pracuje.*
@@ -156,14 +156,14 @@ Takie podejście skaluje się na handlowców, adminów oraz klientów, zapewniaj
     *   **Korzyść:** Handlowiec nie traci koszyka po zmianie urządzenia.
 2.  **Wybór Klienta & Przypisanie do Handlowca**:
     *   **Stan obecny:**
-        - ✅ Endpoint `GET /api/clients` z filtrowaniem po roli (handlowiec widzi tylko swoich klientów).
-        - ✅ Endpoint `GET /api/clients` wzbogacony o `salesRepName` dla `ADMIN` i `SALES_DEPT`.
-        - ✅ Panel "Moi klienci" (`/clients`) – pełny CRUD z poziomu handlowca/administracji.
-        - ✅ Kolumna "Przypisany do" w tabeli klientów (widoczna dla `ADMIN` i `SALES_DEPT`).
-        - ✅ Pole "Przypisz do handlowca" w modalu edycji klienta (dostępne dla `ADMIN` i `SALES_DEPT`).
-        - ✅ Dropdown w formularzu zamówień: pasek "Klient zamówienia" z polem "Szukaj" i listą klientów.
-        - ✅ Filtrowanie po dowolnym fragmencie tekstu (nazwa, miasto, email, telefon) + auto-wybór przy jednym wyniku.
-        - ✅ Wyświetlanie nazwy handlowca w dropdownie klientów formularza zamówień (format: `Klient (handlowiec: Imię Nazwisko)`).
+        - Dodano endpoint `GET /api/clients` z filtrowaniem po roli (handlowiec widzi tylko swoich klientów).
+        - Dodano endpoint `GET /api/clients` wzbogacony o `salesRepName` dla `ADMIN` i `SALES_DEPT`.
+        - Dodano panel "Moi klienci" (`/clients`) – pełny CRUD z poziomu handlowca/administracji.
+        - Dodano kolumnę "Przypisany do" w tabeli klientów (widoczna dla `ADMIN` i `SALES_DEPT`).
+        - Dodano pole "Przypisz do handlowca" w modalu edycji klienta (dostępne dla `ADMIN` i `SALES_DEPT`).
+        - Dodano dropdown w formularzu zamówień: pasek "Klient zamówienia" z polem "Szukaj" i listą klientów.
+        - Dodano filtrowanie po dowolnym fragmencie tekstu (nazwa, miasto, email, telefon) + auto-wybór przy jednym wyniku.
+        - Dodano wyświetlanie nazwy handlowca w dropdownie klientów formularza zamówień (format: `Klient (handlowiec: Imię Nazwisko)`).
     *   **Logika ról:**
         - `SALES_REP` – widzi tylko swoich klientów, nie może zmieniać przypisania.
         - `SALES_DEPT` – widzi wszystkich klientów, może przypisywać klientów do siebie lub do handlowców, może tworzyć zamówienia dla dowolnego klienta.

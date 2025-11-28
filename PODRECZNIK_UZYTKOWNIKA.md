@@ -170,7 +170,94 @@ Na dole (dla handlowca) może być lista **„Moje zamówienia”** – podgląd
 
 ## 4. Handlowiec (SALES_REP)
 
-*(do uzupełnienia – szczegółowy opis pracy handlowca krok po kroku, po wdrożeniu wszystkich widoków)*
+### 4.1. Zakres odpowiedzialności
+
+Rola `SALES_REP` (handlowiec terenowy / opiekun klienta) odpowiada za:
+
+- wyszukiwanie produktów i kompletowanie koszyka zamówienia,
+- pracę z własnymi klientami w widoku **„Moi klienci”**,
+- wysyłanie zamówień do systemu (status startowy: `Oczekujące` / `PENDING`),
+- podgląd własnych zamówień (lista w formularzu lub w panelu admina – w zależności od konfiguracji).
+
+Handlowiec pracuje zawsze na **swoim koncie** – system rozpoznaje go po zalogowaniu i zapisuje ID użytkownika w każdym zamówieniu.
+
+### 4.2. Widok „Moi klienci”
+
+Adres: `/clients` (przycisk **Moi klienci** w nagłówku formularza zamówień).
+
+W tym widoku handlowiec:
+
+- widzi **tylko swoich klientów** (przypisanych do niego w systemie),
+- może dodawać nowych klientów,
+- może edytować dane istniejących klientów,
+- może usuwać swoich klientów (jeśli pozwala na to polityka firmy).
+
+Elementy ekranu:
+
+- **Lista klientów** – tabela z kolumnami: nazwa klienta, kontakt, adres, przypisany handlowiec, uwagi, data dodania.
+- **Wyszukiwarka** – pole „Szukaj po nazwie, emailu, telefonie lub mieście…”.
+- **Przycisk „Dodaj klienta”** – otwiera formularz dodawania/edycji klienta.
+
+Formularz dodawania klienta zawiera m.in. pola:
+
+- Nazwa klienta (wymagane),
+- Email, telefon,
+- Adres, miasto, kod pocztowy, kraj,
+- Uwagi.
+
+Dla roli `SALES_REP` pole **„Przypisz do handlowca”** jest ukryte – nowy klient jest automatycznie przypisywany do zalogowanego handlowca. Pole to jest dostępne tylko dla ról `ADMIN` i `SALES_DEPT`.
+
+### 4.3. Tworzenie nowego zamówienia (PM i KI)
+
+Handlowiec tworzy zamówienie z poziomu głównego formularza (`/zamowienia`). Podstawowy przepływ:
+
+1. **Wybór trybu pracy**
+   - **Projekty miejscowości (PM)** – praca na projektach przypisanych do miejscowości (np. `Gdańsk`).
+   - **Klienci indywidualni (KI)** – praca na projektach/folderach klientów indywidualnych (np. folder KI handlowca z obiektami typu `Arka Medical SPA`).
+
+   > **Wyszukiwanie produktów – dokładne dopasowanie**
+   > - W polu **„Fraza”** znajduje się delikatny checkbox **„Dokładne dopasowanie”** (taki sam jak przy polu „Produkt”).
+   > - Po zaznaczeniu, system traktuje wpisane słowa jak sztywne kryteria: każde słowo musi wystąpić w identyfikatorze lub indeksie, ale kolejność nie ma znaczenia (np. `mag hdf` oraz `hdf mag` znajdą `MAGNES HDF`).
+   > - Tryb działa również na prefiksach – `mag` dopasuje `MAGNES`, `hdf` dopasuje `HDF` – ale dodatkowe słowa (np. `mag hdf graf`) nie znajdą pozycji z krótszą nazwą.
+   > - Gdy checkbox jest wyłączony, obowiązuje klasyczne wyszukiwanie pełnotekstowe (dowolne fragmenty).
+
+2. **Wybór klienta zamówienia**
+   - W pasku „Klient zamówienia” handlowiec wyszukuje klienta po nazwie, mieście, emailu lub telefonie.
+   - Widzi wyłącznie **swoich** klientów (zgodnie z przypisaniem w module „Moi klienci”).
+
+3. **Dodawanie produktów do koszyka**
+   - Produkty wybierane są z listy / galerii (zależnie od trybu).
+   - Dla każdej pozycji handlowiec określa:
+     - projekty (np. numery projektów w miejscowości),
+     - ilości (łącznie lub rozpisane na projekty),
+     - ewentualne uwagi produkcyjne.
+
+4. **Lokalizacja pozycji w zamówieniu**
+
+System zapisuje informację o pochodzeniu każdej pozycji w bazie danych, tak aby było to widoczne na wydrukach i w historii:
+
+- Dla trybu **PM (projekty miejscowości)**:
+  - źródło pozycji: `MIEJSCOWOSCI`,
+  - w kolumnie „Lokalizacja” (i w bazie w polu `locationName`) zapisywana jest nazwa miejscowości, np. `Gdańsk`.
+
+- Dla trybu **KI (klienci indywidualni)**:
+  - źródło pozycji: `KATALOG_INDYWIDUALNY`,
+  - w kolumnie „Lokalizacja” zapisywana jest nazwa obiektu / folderu KI, np. `Arka Medical SPA`.
+
+W jedno zamówienie można łączyć **pozycje PM i KI** – każda pozycja niesie własną lokalizację. Handlowiec (np. `MŁU`) jest powiązany z całym zamówieniem i widoczny w nagłówku wydruku, dlatego nie jest powtarzany w każdej pozycji.
+
+> **Wskazówka wizualna:** w widoku szczegółów zamówienia (panel `/orders`, panel admina) oraz na PDF pojawia się kolorowy badge `PM` lub `KI` przed lokalizacją, ale **tylko wtedy, gdy zamówienie zawiera mieszane źródła**. Jeśli wszystkie pozycje pochodzą z jednego źródła, badge jest pomijany, żeby nie zaśmiecać wydruku.
+
+5. **Wysłanie zamówienia**
+   - Po skompletowaniu koszyka handlowiec używa przycisku **„Wyślij zamówienie”**.
+   - System wysyła dane do backendu (`POST /api/orders`), tworząc wpis `Order` oraz odpowiadające mu `OrderItem`.
+   - Numer zamówienia jest generowany automatycznie w formacie `YYYY/N/SHORTCODE`, gdzie `SHORTCODE` to skrót handlowca (np. `MŁU`).
+
+6. **Podgląd własnych zamówień**
+   - Handlowiec widzi swoje zamówienia:
+     - w dolnej części formularza (lista „Moje zamówienia” – jeśli jest włączona),
+     - lub w panelu admina (widok zamówień filtrowany po zalogowanym użytkowniku).
+   - W szczegółach zamówienia widać m.in. listę pozycji, wartości, lokalizacje (PM/KI) oraz status zamówienia.
 
 ## 5. Dział sprzedaży (SALES_DEPT)
 

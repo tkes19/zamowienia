@@ -47,13 +47,14 @@ function createPdf(orderData, fileName = 'zamowienie') {
             
             // Table header
             doc.font('Helvetica-Bold')
-               .fontSize(10)
+               .fontSize(9)
                .text('Lp.', 50, y)
-               .text('Identyfikator', 80, y, { width: 200, align: 'left' })
-               .text('Indeks', 300, y)
-               .text('Ilość', 400, y, { width: 50, align: 'right' })
-               .text('Cena jdn.', 450, y, { width: 70, align: 'right' })
-               .text('Wartość', 520, y, { width: 70, align: 'right' });
+               .text('Identyfikator', 70, y, { width: 130, align: 'left' })
+               .text('Indeks', 200, y, { width: 60 })
+               .text('Lokalizacja', 260, y, { width: 90 })
+               .text('Ilość', 355, y, { width: 40, align: 'right' })
+               .text('Cena jdn.', 400, y, { width: 60, align: 'right' })
+               .text('Wartość', 465, y, { width: 60, align: 'right' });
             
             // Draw header line
             y += 20;
@@ -75,17 +76,21 @@ function createPdf(orderData, fileName = 'zamowienie') {
                     y = 50;
                 }
                 
-                doc.fontSize(10)
+                // Lokalizacja: dla PM = miejscowość, dla KI = obiekt
+                const locationDisplay = item.locationName || '-';
+                
+                doc.fontSize(9)
                    .text(position.toString(), 50, y)
-                   .text(item.name || '-', 80, y, { 
-                       width: 200, 
+                   .text(item.name || '-', 70, y, { 
+                       width: 130, 
                        lineGap: 5,
                        ellipsis: true
                    })
-                   .text(item.pc_id || '-', 300, y, { width: 80 })
-                   .text(item.quantity.toString(), 400, y, { width: 50, align: 'right' })
-                   .text(`${(item.price || 0).toFixed(2)} zł`, 450, y, { width: 70, align: 'right' })
-                   .text(`${lineValue.toFixed(2)} zł`, 520, y, { width: 70, align: 'right' });
+                   .text(item.pc_id || '-', 200, y, { width: 60 })
+                   .text(locationDisplay, 260, y, { width: 90, ellipsis: true })
+                   .text(item.quantity.toString(), 355, y, { width: 40, align: 'right' })
+                   .text(`${(item.price || 0).toFixed(2)} zł`, 400, y, { width: 60, align: 'right' })
+                   .text(`${lineValue.toFixed(2)} zł`, 465, y, { width: 60, align: 'right' });
                 
                 y += 20;
             });

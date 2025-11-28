@@ -49,6 +49,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const STATUS_SELECT_BASE = 'order-status-select px-3 py-1 rounded-full text-xs font-semibold border border-transparent focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all cursor-pointer';
 
+    // Mapowanie źródeł na skróty i kolory
+    const SOURCE_LABELS = {
+        MIEJSCOWOSCI: 'PM',
+        KATALOG_INDYWIDUALNY: 'KI',
+        KLIENCI_INDYWIDUALNI: 'KI',
+        IMIENNE: 'Im',
+        HASLA: 'H',
+        OKOLICZNOSCIOWE: 'Ok'
+    };
+
+    const SOURCE_COLORS = {
+        MIEJSCOWOSCI: 'bg-blue-100 text-blue-700',
+        KATALOG_INDYWIDUALNY: 'bg-green-100 text-green-700',
+        KLIENCI_INDYWIDUALNI: 'bg-green-100 text-green-700',
+        IMIENNE: 'bg-purple-100 text-purple-700',
+        HASLA: 'bg-orange-100 text-orange-700',
+        OKOLICZNOSCIOWE: 'bg-red-100 text-red-700'
+    };
+
+    // Sprawdza czy pozycje mają mieszane źródła
+    function hasMixedSources(items) {
+        if (!items || items.length <= 1) return false;
+        const sources = new Set(items.map(item => item.source).filter(Boolean));
+        return sources.size > 1;
+    }
+
+    // Generuje badge źródła (PM/KI) jeśli potrzebny
+    function getSourceBadge(source, showBadge) {
+        if (!showBadge || !source) return '';
+        const label = SOURCE_LABELS[source] || source;
+        const colorClass = SOURCE_COLORS[source] || 'bg-gray-100 text-gray-700';
+        return `<span class="inline-block px-1.5 py-0.5 rounded text-xs font-medium ${colorClass} mr-1">${label}</span>`;
+    }
+
     // Sortowanie
     let currentSort = { column: 'createdAt', direction: 'desc' };
 
@@ -629,10 +663,15 @@ document.addEventListener('DOMContentLoaded', () => {
             detailsRow.id = `details-${order.id}`;
             detailsRow.className = 'bg-indigo-50 border-t-2 border-indigo-200 details-row';
 
-            const itemsHtml = (fullOrder.OrderItem || []).map(item => {
+            const orderItems = fullOrder.OrderItem || [];
+            const showSourceBadge = hasMixedSources(orderItems);
+            
+            const itemsHtml = orderItems.map(item => {
                 const identifier = item.Product?.identifier || '-';
                 const index = item.Product?.index || '-';
                 const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
+                const sourceBadge = getSourceBadge(item.source, showSourceBadge);
+                const locationDisplay = item.locationName || '-';
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
                     <td class="p-3 text-sm font-medium text-gray-800">${productLabel}</td>
@@ -640,7 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-3 text-sm text-center text-gray-700">${item.quantity}</td>
                     <td class="p-3 text-sm text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-3 text-sm text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td class="p-3 text-sm text-gray-700">${item.locationName || '-'}</td>
+                    <td class="p-3 text-sm text-gray-700">${sourceBadge}${locationDisplay}</td>
                 </tr>
                 `;
             }).join('');
@@ -864,10 +903,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const order = result.data;
 
             // Generuj HTML do wydruku
-            const itemsHtml = (order.OrderItem || []).map(item => {
+            const printOrderItems = order.OrderItem || [];
+            const printShowSourceBadge = hasMixedSources(printOrderItems);
+            
+            const itemsHtml = printOrderItems.map(item => {
                 const identifier = item.Product?.identifier || '-';
                 const index = item.Product?.index || '-';
                 const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
+                const sourcePrefix = printShowSourceBadge && item.source ? `[${SOURCE_LABELS[item.source] || item.source}] ` : '';
+                const locationDisplay = item.locationName || '-';
                 return `
                 <tr>
                     <td>${productLabel}</td>
@@ -875,7 +919,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td style="text-align: center;">${item.quantity}</td>
                     <td style="text-align: right;">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td style="text-align: right;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td>${item.locationName || '-'}</td>
+                    <td>${sourcePrefix}${locationDisplay}</td>
                 </tr>
                 `;
             }).join('');
