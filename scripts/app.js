@@ -34,6 +34,10 @@ let currentCustomer = null;
 let pickerCustomers = [];
 let pickerFilteredCustomers = [];
 
+// Szablony zamówień
+let orderTemplates = [];
+let selectedTemplate = null;
+
 // Inicjalizacja elementów DOM
 const resultsBody = document.getElementById('results-body');
 const clientsLink = document.getElementById('clients-link');
@@ -62,6 +66,22 @@ const galleryLockCheckbox = document.getElementById('gallery-lock-product');
 const orderCustomerNameEl = document.getElementById('order-customer-name');
 const orderCustomerSearchInput = document.getElementById('order-customer-search');
 const orderCustomerSelectEl = document.getElementById('order-customer-select');
+
+// Elementy UI szablonów
+const saveTemplateBtn = document.getElementById('save-template-btn');
+const loadTemplateBtn = document.getElementById('load-template-btn');
+const templateModal = document.getElementById('template-modal');
+const templateModalClose = document.getElementById('template-modal-close');
+const templatesList = document.getElementById('templates-list');
+const templateSearchInput = document.getElementById('template-search');
+const templateVisibilityFilter = document.getElementById('template-visibility-filter');
+const saveTemplateModal = document.getElementById('save-template-modal');
+const saveTemplateModalClose = document.getElementById('save-template-modal-close');
+const saveTemplateForm = document.getElementById('save-template-form');
+const templateNameInput = document.getElementById('template-name');
+const templateDescriptionInput = document.getElementById('template-description');
+const templateVisibilityInput = document.getElementById('template-visibility');
+const templateTagsInput = document.getElementById('template-tags');
 
 const EMBEDDED_FONTS_STATE = {
   'NotoSans-Regular.ttf': (EMBEDDED_FONTS && EMBEDDED_FONTS['NotoSans-Regular.ttf']) || null,
@@ -2249,6 +2269,9 @@ function initialize() {
   // Inicjalizacja galerii zoom
   initGalleryZoom();
   
+  // Inicjalizacja modułu szablonów
+  initTemplatesModule();
+  
   // Inicjalizacja danych galerii
   console.log('[DEBUG] initialize() - currentFormMode:', currentFormMode);
   if (currentFormMode === 'projekty-miejscowosci') {
@@ -2832,6 +2855,435 @@ if (orderDetailsBack && orderDetailsSection && ordersSection) {
     ordersSection.style.display = '';
   });
 }
+
+// ============================================
+// MODUŁ SZABLONÓW ZAMÓWIEŃ
+// ============================================
+
+async function loadOrderTemplates() {
+  try {
+    const response = await fetch('/api/order-templates', {
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      throw new Error('Nie udało się pobrać szablonów');
+    }
+
+    const result = await response.json();
+    orderTemplates = result.data || [];
+    renderTemplatesList();
+  } catch (error) {
+    console.error('Błąd ładowania szablonów:', error);
+  }
+}
+
+function renderTemplatesList() {
+  if (!templatesList) return;
+
+  const searchTerm = templateSearchInput?.value?.toLowerCase() || '';
+  const visibilityFilter = templateVisibilityFilter?.value || '';
+
+  let filtered = orderTemplates.filter(t => {
+    const matchesSearch = !searchTerm || t.name.toLowerCase().includes(searchTerm);
+    const matchesVisibility = !visibilityFilter || t.visibility === visibilityFilter;
+    return matchesSearch && matchesVisibility;
+  });
+
+  // Sortuj: ulubione na górze, potem po dacie aktualizacji
+  filtered.sort((a, b) => {
+    if (a.isFavorite && !b.isFavorite) return -1;
+    if (!a.isFavorite && b.isFavorite) return 1;
+    return new Date(b.updated_at) - new Date(a.updated_at);
+  });
+
+  if (filtered.length === 0) {
+    templatesList.innerHTML = '<p class="templates-empty">Brak szablonów</p>';
+    return;
+  }
+
+  const html = filtered.map(template => {
+    const visibilityBadge = template.visibility === 'TEAM' 
+      ? '<span class="template-badge template-badge--team">Zespołowy</span>'
+      : '<span class="template-badge template-badge--private">Prywatny</span>';
+    
+    const ownerBadge = template.isOwner 
+      ? '<span class="template-badge template-badge--owner">Mój</span>'
+      : `<span class="template-badge template-badge--shared">${template.ownerName}</span>`;
+
+    const favoriteIcon = template.isFavorite 
+      ? '<i class="fas fa-star template-favorite-icon template-favorite-icon--active"></i>'
+      : '<i class="far fa-star template-favorite-icon"></i>';
+
+    const usageInfo = template.usage_count > 0 
+      ? `Użyto ${template.usage_count}x`
+      : 'Nieużywany';
+
+    const tags = Array.isArray(template.tags) && template.tags.length > 0
+      ? template.tags.map(tag => `<span class="template-tag">${tag}</span>`).join('')
+      : '';
+
+    return `
+      <div class="template-item" data-template-id="${template.id}">
+        <div class="template-header">
+          <div class="template-header-main">
+            <h4 class="template-name">${template.name}</h4>
+            <div class="template-meta">
+              ${visibilityBadge}
+              ${ownerBadge}
+              <span class="template-usage">${usageInfo}</span>
+            </div>
+          </div>
+          <div class="template-header-actions">
+            <button class="btn btn--sm btn--primary template-use-btn" data-template-id="${template.id}">
+              <i class="fas fa-download"></i> Wczytaj
+            </button>
+            <button class="btn btn--sm btn--secondary template-duplicate-btn" data-template-id="${template.id}">
+              <i class="fas fa-copy"></i> Duplikuj
+            </button>
+            ${template.isOwner ? `
+              <button class="btn btn--sm btn--secondary template-edit-btn" data-template-id="${template.id}">
+                <i class="fas fa-edit"></i> Edytuj
+              </button>
+              <button class="btn btn--sm btn--danger template-delete-btn" data-template-id="${template.id}">
+                <i class="fas fa-trash"></i> Usuń
+              </button>
+            ` : ''}
+            <button class="template-favorite-btn" data-template-id="${template.id}" data-is-favorite="${template.isFavorite}">
+              ${favoriteIcon}
+            </button>
+          </div>
+        </div>
+        ${template.description ? `<p class="template-description">${template.description}</p>` : ''}
+        ${tags ? `<div class="template-tags">${tags}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  templatesList.innerHTML = html;
+
+  // Dodaj event listenery
+  templatesList.querySelectorAll('.template-use-btn').forEach(btn => {
+    btn.addEventListener('click', () => useTemplate(btn.dataset.templateId));
+  });
+
+  templatesList.querySelectorAll('.template-duplicate-btn').forEach(btn => {
+    btn.addEventListener('click', () => duplicateTemplate(btn.dataset.templateId));
+  });
+
+  templatesList.querySelectorAll('.template-delete-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteTemplate(btn.dataset.templateId));
+  });
+
+  templatesList.querySelectorAll('.template-favorite-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleTemplateFavorite(btn.dataset.templateId, btn.dataset.isFavorite === 'false'));
+  });
+
+  templatesList.querySelectorAll('.template-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => editTemplate(btn.dataset.templateId));
+  });
+}
+
+async function saveTemplate() {
+  if (!saveTemplateForm) return;
+
+  const name = templateNameInput?.value?.trim();
+  const description = templateDescriptionInput?.value?.trim();
+  const visibility = templateVisibilityInput?.value || 'PRIVATE';
+  const tagsStr = templateTagsInput?.value?.trim() || '';
+  const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+  if (!name) {
+    setStatus('Nazwa szablonu jest wymagana.', 'error', 'cart');
+    return;
+  }
+
+  if (cart.size === 0) {
+    setStatus('Koszyk jest pusty. Dodaj produkty przed zapisaniem szablonu.', 'error', 'cart');
+    return;
+  }
+
+  // Zbierz pozycje z koszyka
+  const items = [];
+  for (const [key, item] of cart.entries()) {
+    if (!item.product || !item.product.pc_id) continue;
+
+    const qty = Number(item.quantity);
+    if (!qty || qty <= 0) continue;
+
+    items.push({
+      productCode: item.product.pc_id,
+      quantity: qty,
+      unitPrice: Number(item.product.price ?? 0),
+      selectedProjects: item.projects ?? '',
+      projectQuantities: Array.isArray(item.perProjectQuantities) && item.perProjectQuantities.length > 0
+        ? JSON.stringify(item.perProjectQuantities)
+        : null,
+      totalQuantity: qty,
+      locationName: item.locationName || null,
+      source: item.locationName ? 'MIEJSCOWOSCI' : 'KATALOG_INDYWIDUALNY'
+    });
+  }
+
+  if (items.length === 0) {
+    setStatus('Brak pozycji do zapisania w szablonie.', 'error', 'cart');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/order-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name, description, visibility, tags, items })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setStatus(result.message || 'Nie udało się zapisać szablonu.', 'error', 'cart');
+      return;
+    }
+
+    closeSaveTemplateModal();
+    loadOrderTemplates();
+    setStatus(`Szablon "${name}" został zapisany.`, 'success', 'cart');
+  } catch (error) {
+    console.error('Błąd zapisywania szablonu:', error);
+    setStatus('Błąd podczas zapisywania szablonu.', 'error', 'cart');
+  }
+}
+
+async function useTemplate(templateId) {
+  try {
+    const response = await fetch(`/api/order-templates/${templateId}/use`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setStatus(result.message || 'Nie udało się wczytać szablonu.', 'error', 'cart');
+      return;
+    }
+
+    // Wyczyść koszyk
+    cart.clear();
+
+    // Wczytaj pozycje z szablonu do koszyka
+    const items = result.data.items || [];
+    for (const item of items) {
+      const product = {
+        pc_id: item.productCode,
+        name: item.productName,
+        price: item.productPrice
+      };
+
+      const cartKey = `${item.productCode}_${item.locationName || 'katalog'}`;
+      cart.set(cartKey, {
+        product,
+        quantity: item.quantity,
+        projects: item.selectedProjects || '',
+        perProjectQuantities: item.projectQuantities ? JSON.parse(item.projectQuantities) : [],
+        locationName: item.locationName
+      });
+    }
+
+    renderCart();
+    closeTemplateModal();
+    setStatus(`Szablon "${result.data.templateName}" został wczytany do koszyka.`, 'success', 'cart');
+  } catch (error) {
+    console.error('Błąd wczytywania szablonu:', error);
+    setStatus('Błąd podczas wczytywania szablonu.', 'error', 'cart');
+  }
+}
+
+async function duplicateTemplate(templateId) {
+  const name = prompt('Podaj nazwę dla kopii szablonu:');
+  if (!name || !name.trim()) return;
+
+  try {
+    const response = await fetch(`/api/order-templates/${templateId}/duplicate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name: name.trim() })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setStatus(result.message || 'Nie udało się zduplikować szablonu.', 'error');
+      return;
+    }
+
+    loadOrderTemplates();
+    setStatus(`Szablon został zduplikowany jako "${result.data.name}".`, 'success');
+  } catch (error) {
+    console.error('Błąd duplikowania szablonu:', error);
+    setStatus('Błąd podczas duplikowania szablonu.', 'error');
+  }
+}
+
+async function deleteTemplate(templateId) {
+  if (!confirm('Czy na pewno chcesz usunąć ten szablon?')) return;
+
+  try {
+    const response = await fetch(`/api/order-templates/${templateId}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setStatus(result.message || 'Nie udało się usunąć szablonu.', 'error');
+      return;
+    }
+
+    loadOrderTemplates();
+    setStatus('Szablon został usunięty.', 'success');
+  } catch (error) {
+    console.error('Błąd usuwania szablonu:', error);
+    setStatus('Błąd podczas usuwania szablonu.', 'error');
+  }
+}
+
+async function toggleTemplateFavorite(templateId, isFavorite) {
+  try {
+    const response = await fetch(`/api/order-templates/${templateId}/favorite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ isFavorite })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setStatus(result.message || 'Nie udało się zaktualizować ulubionych.', 'error');
+      return;
+    }
+
+    loadOrderTemplates();
+    setStatus(isFavorite ? 'Dodano szablon do ulubionych.' : 'Usunięto szablon z ulubionych.', 'success');
+  } catch (error) {
+    console.error('Błąd aktualizacji ulubionych:', error);
+    setStatus('Błąd podczas aktualizacji ulubionych.', 'error');
+  }
+}
+
+async function editTemplate(templateId) {
+  const template = orderTemplates.find(t => t.id === templateId);
+  if (!template) return;
+
+  const name = prompt('Nowa nazwa szablonu:', template.name);
+  if (!name || name.trim() === template.name) return;
+
+  try {
+    const response = await fetch(`/api/order-templates/${templateId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ name: name.trim() })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      alert(result.message || 'Nie udało się zaktualizować szablonu');
+      return;
+    }
+
+    alert('Szablon został zaktualizowany');
+    loadOrderTemplates();
+  } catch (error) {
+    console.error('Błąd aktualizacji szablonu:', error);
+    alert('Błąd podczas aktualizacji szablonu');
+  }
+}
+
+function openTemplateModal() {
+  if (!templateModal) return;
+  templateModal.style.display = 'flex';
+  loadOrderTemplates();
+}
+
+function closeTemplateModal() {
+  if (!templateModal) return;
+  templateModal.style.display = 'none';
+}
+
+function openSaveTemplateModal() {
+  if (!saveTemplateModal) return;
+  saveTemplateModal.style.display = 'flex';
+  
+  // Wyczyść formularz
+  if (templateNameInput) templateNameInput.value = '';
+  if (templateDescriptionInput) templateDescriptionInput.value = '';
+  if (templateVisibilityInput) templateVisibilityInput.value = 'PRIVATE';
+  if (templateTagsInput) templateTagsInput.value = '';
+}
+
+function closeSaveTemplateModal() {
+  if (!saveTemplateModal) return;
+  saveTemplateModal.style.display = 'none';
+}
+
+function initTemplatesModule() {
+  // Przyciski otwierające modale
+  if (loadTemplateBtn) {
+    loadTemplateBtn.addEventListener('click', openTemplateModal);
+  }
+
+  if (saveTemplateBtn) {
+    saveTemplateBtn.addEventListener('click', openSaveTemplateModal);
+  }
+
+  // Przyciski zamykające modale
+  if (templateModalClose) {
+    templateModalClose.addEventListener('click', closeTemplateModal);
+  }
+
+  if (saveTemplateModalClose) {
+    saveTemplateModalClose.addEventListener('click', closeSaveTemplateModal);
+  }
+
+  // Zamykanie modali po kliknięciu poza nimi
+  if (templateModal) {
+    templateModal.addEventListener('click', (e) => {
+      if (e.target === templateModal) closeTemplateModal();
+    });
+  }
+
+  if (saveTemplateModal) {
+    saveTemplateModal.addEventListener('click', (e) => {
+      if (e.target === saveTemplateModal) closeSaveTemplateModal();
+    });
+  }
+
+  // Formularz zapisywania szablonu
+  if (saveTemplateForm) {
+    saveTemplateForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveTemplate();
+    });
+  }
+
+  // Filtrowanie szablonów
+  if (templateSearchInput) {
+    templateSearchInput.addEventListener('input', renderTemplatesList);
+  }
+
+  if (templateVisibilityFilter) {
+    templateVisibilityFilter.addEventListener('change', renderTemplatesList);
+  }
+}
+
+// ============================================
+// KONIEC MODUŁU SZABLONÓW
+// ============================================
 
 // Dropdown logowania w nagłówku
 const headerLoginToggle = document.getElementById('header-login-toggle');

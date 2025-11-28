@@ -653,3 +653,44 @@ Definicje skrótów typów klientów: `PM`, `KI`, `PI`, `PH`, `OK` – pozostaj�
 ---
 
 **Aktualny Priorytet:** FAZA 1 (Backend Produktów) + przygotowanie projektu pod zapis zamówień (FAZA 3/4).
+
+---
+
+## 6.4. Szablony Zamówień (v2.4)
+
+**Status:** ✅ Ukończone (frontend + backend, 28.11.2025)
+
+### Zaimplementowane funkcjonalności
+1. **API i model danych**
+   - Tabele `order_templates` i `order_template_items` w Supabase.
+   - Endpointy: `GET /api/order-templates`, `POST`, `PATCH`, `DELETE`, `POST /:id/duplicate`, `POST /:id/use`.
+   - Licznik użyć (`usage_count`, `last_used_at`) aktualizowany w `POST /:id/use`.
+
+2. **Integracja z koszykiem**
+   - Zapis bieżącego koszyka jako szablon (nazwa, opis, widoczność, tagi).
+   - Wczytywanie szablonu czyści koszyk i wstawia pozycje z poprawnym `identifier` + `index`.
+   - Duplikowanie i usuwanie dostępne z listy szablonów.
+
+3. **UX / UI**
+   - Kompaktowy layout kart z przyciskami akcji w nagłówku.
+   - Wskaźniki widoczności (`PRYWATNY`/`MÓJ`), liczba użyć, tagi.
+   - Toasty (`setStatus`) zamiast `alert()`/`confirm()` oraz poprawione komunikaty błędów.
+
+### Backlog modułu szablonów
+
+**Krótkoterminowe**
+- [ ] Wyszukiwanie po nazwie/opisie oraz filtrowanie po tagach i widoczności.
+- [ ] Sortowanie (ostatnio użyte, alfabetycznie, ulubione na górze).
+- [ ] Podgląd zawartości szablonu (tooltip lub mini-lista) przed wczytaniem.
+
+**Średnioterminowe**
+- [ ] Udostępnianie szablonów między użytkownikami/działami (widoczność `TEAM`).
+- [ ] Eksport/import szablonów i auto-tagowanie na podstawie zawartości.
+- [ ] Historia zmian (wersjonowanie metadanych, `updatedBy`).
+
+**Długoterminowe**
+- [ ] Szablony grupowe (zestawy kilku szablonów dla sezonów/kampanii).
+- [ ] Automatyczne rekomendacje szablonów na podstawie historii klienta.
+- [ ] Integracja z draftami zamówień i możliwością schedulowania wysyłki.
+
+**Uwagi techniczne:** wszystkie endpointy korzystają z istniejącego RBAC; przyciski w UI są responsywne, a `setStatus` używa targetu `cart`, aby nie blokować pracy w formularzu.

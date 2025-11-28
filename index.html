@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Formularz zamówień</title>
     <link rel="stylesheet" href="./assets/styles.css" />
+    <link rel="stylesheet" href="./assets/templates.css" />
     <link rel="stylesheet" href="./assets/vendor/fontawesome/all.min.css" />
   </head>
   <body class="hide-prices hide-guest">
@@ -277,7 +278,15 @@
       <section class="panel guest-hidden">
         <div class="panel__header">
           <h2>Koszyk zamówienia</h2>
-          <button id="clear-cart" class="btn btn--link" type="button">Wyczyść koszyk</button>
+          <div class="panel__actions">
+            <button id="save-template-btn" class="btn btn--secondary" type="button">
+              <i class="fas fa-save"></i> Zapisz szablon
+            </button>
+            <button id="load-template-btn" class="btn btn--secondary" type="button">
+              <i class="fas fa-folder-open"></i> Wczytaj szablon
+            </button>
+            <button id="clear-cart" class="btn btn--link" type="button">Wyczyść koszyk</button>
+          </div>
         </div>
         <div class="table-wrapper">
           <table class="table">
@@ -396,6 +405,95 @@
 
     <script src="scripts/vendor/jspdf/jspdf.umd.min.js"></script>
     <script src="scripts/vendor/jspdf/jspdf.plugin.autotable.min.js"></script>
-    <script src="scripts/app.js" type="module"></script>
+    <!-- Modal: Lista szablonów -->
+    <div id="template-modal" class="modal" style="display: none;">
+      <div class="modal__content modal__content--wide">
+        <div class="modal__header">
+          <h2>Szablony zamówień</h2>
+          <button id="template-modal-close" class="modal__close" type="button">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal__body">
+          <div class="templates-filters">
+            <input 
+              id="template-search" 
+              class="field__input" 
+              type="text" 
+              placeholder="Szukaj szablonów..."
+            />
+            <select id="template-visibility-filter" class="field__input">
+              <option value="">Wszystkie</option>
+              <option value="PRIVATE">Prywatne</option>
+              <option value="TEAM">Zespołowe</option>
+            </select>
+          </div>
+          <div id="templates-list" class="templates-list">
+            <p class="templates-empty">Brak szablonów</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Zapisz szablon -->
+    <div id="save-template-modal" class="modal" style="display: none;">
+      <div class="modal__content">
+        <div class="modal__header">
+          <h2>Zapisz szablon zamówienia</h2>
+          <button id="save-template-modal-close" class="modal__close" type="button">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal__body">
+          <form id="save-template-form">
+            <div class="field">
+              <label class="field__label" for="template-name">Nazwa szablonu *</label>
+              <input 
+                id="template-name" 
+                class="field__input" 
+                type="text" 
+                required 
+                placeholder="np. Szkoły - wiosna 2025"
+              />
+            </div>
+            <div class="field">
+              <label class="field__label" for="template-description">Opis (opcjonalnie)</label>
+              <textarea 
+                id="template-description" 
+                class="field__input" 
+                rows="3" 
+                placeholder="Dodatkowe informacje o szablonie..."
+              ></textarea>
+            </div>
+            <div class="field">
+              <label class="field__label" for="template-visibility">Widoczność</label>
+              <select id="template-visibility" class="field__input">
+                <option value="PRIVATE">Prywatny (tylko ja)</option>
+                <option value="TEAM">Zespołowy (wszyscy)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field__label" for="template-tags">Tagi (opcjonalnie)</label>
+              <input 
+                id="template-tags" 
+                class="field__input" 
+                type="text" 
+                placeholder="np. szkoły, wiosna, promocja (oddzielone przecinkami)"
+              />
+            </div>
+            <div class="modal__actions">
+              <button type="submit" class="btn btn--primary">
+                <i class="fas fa-save"></i> Zapisz szablon
+              </button>
+              <button type="button" class="btn btn--secondary" onclick="document.getElementById('save-template-modal').style.display='none'">
+                Anuluj
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./scripts/app.js"></script>
   </body>
 </html>

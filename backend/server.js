@@ -2248,6 +2248,550 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
 });
 
 // ============================================
+// MODUŁ SZABLONÓW ZAMÓWIEŃ
+// ============================================
+
+// GET /api/order-templates - Lista szablonów widocznych dla użytkownika
+app.get('/api/order-templates', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { tag, visibility, search } = req.query;
+
+    try {
+        // Buduj zapytanie: własne szablony + szablony zespołowe
+        let query = supabase
+            .from('order_templates')
+            .select(`
+                id,
+                owner_id,
+                name,
+                description,
+                visibility,
+                tags,
+                usage_count,
+                last_used_at,
+                created_at,
+                updated_at,
+                User:owner_id (name)
+            `)
+            .order('updated_at', { ascending: false });
+
+        // Filtruj: własne LUB zespołowe
+        query = query.or(`owner_id.eq.${userId},visibility.eq.TEAM`);
+
+        if (tag) {
+            query = query.contains('tags', [tag]);
+        }
+
+        if (visibility) {
+            query = query.eq('visibility', visibility);
+        }
+
+        if (search) {
+            query = query.ilike('name', `%${search}%`);
+        }
+
+        const { data: templates, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania szablonów:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać szablonów', details: error.message });
+        }
+
+        // Sprawdź ulubione użytkownika
+        const { data: favorites } = await supabase
+            .from('order_template_favorites')
+            .select('template_id')
+            .eq('user_id', userId);
+
+        const favoriteIds = new Set((favorites || []).map(f => f.template_id));
+
+        const enriched = (templates || []).map(t => ({
+            ...t,
+            ownerName: t.User?.name || 'Nieznany',
+            isFavorite: favoriteIds.has(t.id),
+            isOwner: t.owner_id === userId
+        }));
+
+        return res.json({ status: 'success', data: enriched });
+    } catch (error) {
+        console.error('Wyjątek w GET /api/order-templates:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+    }
+});
+
+// POST /api/order-templates - Zapis bieżącego koszyka jako szablon
+app.post('/api/order-templates', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const { name, description, visibility, tags, items } = req.body;
+
+    // Walidacja
+    if (!name || !name.trim()) {
+        return res.status(400).json({ status: 'error', message: 'Nazwa szablonu jest wymagana' });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'Szablon musi zawierać przynajmniej jedną pozycję' });
+    }
+
+    const templateVisibility = visibility === 'TEAM' ? 'TEAM' : 'PRIVATE';
+
+    try {
+        // Utwórz szablon
+        const { data: template, error: templateError } = await supabase
+            .from('order_templates')
+            .insert({
+                owner_id: userId,
+                name: name.trim(),
+                description: description?.trim() || null,
+                visibility: templateVisibility,
+                tags: Array.isArray(tags) ? tags : [],
+                usage_count: 0,
+                last_used_at: null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            })
+            .select('id')
+            .single();
+
+        if (templateError || !template) {
+            console.error('Błąd tworzenia szablonu:', templateError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć szablonu', details: templateError?.message });
+        }
+
+        const templateId = template.id;
+
+        // Mapuj productCode -> Product.id
+        const uniqueCodes = Array.from(new Set(items.map(i => i.productCode).filter(Boolean)));
+        const { data: products, error: productsError } = await supabase
+            .from('Product')
+            .select('id, index')
+            .in('index', uniqueCodes);
+
+        if (productsError) {
+            await supabase.from('order_templates').delete().eq('id', templateId);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać produktów', details: productsError.message });
+        }
+
+        const productIdByCode = new Map();
+        (products || []).forEach(p => {
+            if (p.index) productIdByCode.set(p.index, p.id);
+        });
+
+        // Waliduj produkty
+        for (const item of items) {
+            if (!item.productCode || !productIdByCode.get(item.productCode)) {
+                await supabase.from('order_templates').delete().eq('id', templateId);
+                return res.status(400).json({ status: 'error', message: `Nie znaleziono produktu o kodzie ${item.productCode}` });
+            }
+        }
+
+        // Wstaw pozycje szablonu
+        const templateItems = items.map((item, idx) => ({
+            template_id: templateId,
+            product_id: productIdByCode.get(item.productCode),
+            quantity: item.quantity,
+            unit_price: parseFloat(item.unitPrice || 0),
+            selected_projects: item.selectedProjects || null,
+            project_quantities: item.projectQuantities || null,
+            total_quantity: item.totalQuantity || item.quantity,
+            source: item.source || 'MIEJSCOWOSCI',
+            location_name: item.locationName || null,
+            project_name: item.projectName || null,
+            customization: item.customization || null,
+            production_notes: item.productionNotes || null,
+            sort_order: idx,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        }));
+
+        const { error: itemsError } = await supabase
+            .from('order_template_items')
+            .insert(templateItems);
+
+        if (itemsError) {
+            console.error('Błąd tworzenia pozycji szablonu:', itemsError);
+            await supabase.from('order_templates').delete().eq('id', templateId);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się dodać pozycji do szablonu', details: itemsError.message });
+        }
+
+        console.log(`✅ Szablon "${name}" utworzony (ID: ${templateId})`);
+
+        return res.status(201).json({
+            status: 'success',
+            message: 'Szablon został utworzony',
+            data: { templateId, name }
+        });
+    } catch (error) {
+        console.error('Wyjątek w POST /api/order-templates:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd podczas tworzenia szablonu', details: error.message });
+    }
+});
+
+// PATCH /api/order-templates/:id - Aktualizacja metadanych szablonu
+app.patch('/api/order-templates/:id', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const templateId = req.params.id;
+    const { name, description, visibility, tags } = req.body;
+
+    try {
+        // Sprawdź czy szablon istnieje i czy użytkownik ma prawo go edytować
+        const { data: template, error: fetchError } = await supabase
+            .from('order_templates')
+            .select('id, owner_id, visibility')
+            .eq('id', templateId)
+            .single();
+
+        if (fetchError || !template) {
+            return res.status(404).json({ status: 'error', message: 'Szablon nie znaleziony' });
+        }
+
+        // Tylko właściciel lub admin może edytować
+        if (template.owner_id !== userId && userRole !== 'ADMIN') {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do edycji tego szablonu' });
+        }
+
+        const updates = {
+            updated_at: new Date().toISOString()
+        };
+
+        if (name !== undefined) updates.name = name.trim();
+        if (description !== undefined) updates.description = description?.trim() || null;
+        if (visibility !== undefined) updates.visibility = visibility === 'TEAM' ? 'TEAM' : 'PRIVATE';
+        if (Array.isArray(tags)) updates.tags = tags;
+
+        const { error: updateError } = await supabase
+            .from('order_templates')
+            .update(updates)
+            .eq('id', templateId);
+
+        if (updateError) {
+            console.error('Błąd aktualizacji szablonu:', updateError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować szablonu', details: updateError.message });
+        }
+
+        console.log(`✅ Szablon ${templateId} zaktualizowany`);
+
+        return res.json({ status: 'success', message: 'Szablon został zaktualizowany' });
+    } catch (error) {
+        console.error('Wyjątek w PATCH /api/order-templates/:id:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+    }
+});
+
+// DELETE /api/order-templates/:id - Usunięcie szablonu
+app.delete('/api/order-templates/:id', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const templateId = req.params.id;
+
+    try {
+        const { data: template, error: fetchError } = await supabase
+            .from('order_templates')
+            .select('id, owner_id, name')
+            .eq('id', templateId)
+            .single();
+
+        if (fetchError || !template) {
+            return res.status(404).json({ status: 'error', message: 'Szablon nie znaleziony' });
+        }
+
+        // Tylko właściciel lub admin może usunąć
+        if (template.owner_id !== userId && userRole !== 'ADMIN') {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do usunięcia tego szablonu' });
+        }
+
+        const { error: deleteError } = await supabase
+            .from('order_templates')
+            .delete()
+            .eq('id', templateId);
+
+        if (deleteError) {
+            console.error('Błąd usuwania szablonu:', deleteError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć szablonu', details: deleteError.message });
+        }
+
+        console.log(`✅ Szablon "${template.name}" usunięty przez ${userId}`);
+
+        return res.json({ status: 'success', message: 'Szablon został usunięty' });
+    } catch (error) {
+        console.error('Wyjątek w DELETE /api/order-templates/:id:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+    }
+});
+
+// POST /api/order-templates/:id/duplicate - Duplikacja szablonu
+app.post('/api/order-templates/:id/duplicate', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const templateId = req.params.id;
+    const { name } = req.body;
+
+    try {
+        // Pobierz oryginalny szablon
+        const { data: original, error: fetchError } = await supabase
+            .from('order_templates')
+            .select('*')
+            .eq('id', templateId)
+            .single();
+
+        if (fetchError || !original) {
+            return res.status(404).json({ status: 'error', message: 'Szablon nie znaleziony' });
+        }
+
+        // Sprawdź dostęp (własny lub zespołowy)
+        if (original.owner_id !== userId && original.visibility !== 'TEAM') {
+            return res.status(403).json({ status: 'error', message: 'Brak dostępu do tego szablonu' });
+        }
+
+        // Pobierz pozycje
+        const { data: items, error: itemsError } = await supabase
+            .from('order_template_items')
+            .select('*')
+            .eq('template_id', templateId)
+            .order('sort_order');
+
+        if (itemsError) {
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać pozycji szablonu', details: itemsError.message });
+        }
+
+        // Utwórz nowy szablon
+        const newName = name?.trim() || `${original.name} (kopia)`;
+        const { data: newTemplate, error: createError } = await supabase
+            .from('order_templates')
+            .insert({
+                owner_id: userId,
+                name: newName,
+                description: original.description,
+                visibility: 'PRIVATE', // Kopia zawsze prywatna
+                tags: original.tags,
+                usage_count: 0,
+                last_used_at: null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            })
+            .select('id')
+            .single();
+
+        if (createError || !newTemplate) {
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć kopii szablonu', details: createError?.message });
+        }
+
+        // Skopiuj pozycje
+        const newItems = (items || []).map(item => ({
+            template_id: newTemplate.id,
+            product_id: item.product_id,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            selected_projects: item.selected_projects,
+            project_quantities: item.project_quantities,
+            total_quantity: item.total_quantity,
+            source: item.source,
+            location_name: item.location_name,
+            project_name: item.project_name,
+            customization: item.customization,
+            production_notes: item.production_notes,
+            sort_order: item.sort_order,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        }));
+
+        if (newItems.length > 0) {
+            const { error: insertError } = await supabase
+                .from('order_template_items')
+                .insert(newItems);
+
+            if (insertError) {
+                await supabase.from('order_templates').delete().eq('id', newTemplate.id);
+                return res.status(500).json({ status: 'error', message: 'Nie udało się skopiować pozycji', details: insertError.message });
+            }
+        }
+
+        console.log(`✅ Szablon "${original.name}" zduplikowany jako "${newName}" (ID: ${newTemplate.id})`);
+
+        return res.status(201).json({
+            status: 'success',
+            message: 'Szablon został zduplikowany',
+            data: { templateId: newTemplate.id, name: newName }
+        });
+    } catch (error) {
+        console.error('Wyjątek w POST /api/order-templates/:id/duplicate:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+    }
+});
+
+// POST /api/order-templates/:id/use - Wczytaj szablon do koszyka
+app.post('/api/order-templates/:id/use', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const templateId = req.params.id;
+
+    try {
+        // Pobierz szablon
+        const { data: template, error: fetchError } = await supabase
+            .from('order_templates')
+            .select('*')
+            .eq('id', templateId)
+            .single();
+
+        if (fetchError || !template) {
+            return res.status(404).json({ status: 'error', message: 'Szablon nie znaleziony' });
+        }
+
+        // Sprawdź dostęp
+        if (template.owner_id !== userId && template.visibility !== 'TEAM') {
+            return res.status(403).json({ status: 'error', message: 'Brak dostępu do tego szablonu' });
+        }
+
+        // Pobierz pozycje z produktami
+        const { data: items, error: itemsError } = await supabase
+            .from('order_template_items')
+            .select(`
+                *,
+                Product:product_id (
+                    id,
+                    identifier,
+                    index,
+                    description,
+                    price,
+                    category
+                )
+            `)
+            .eq('template_id', templateId)
+            .order('sort_order');
+
+        if (itemsError) {
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać pozycji szablonu', details: itemsError.message });
+        }
+
+        // Aktualizuj statystyki użycia
+        await supabase
+            .from('order_templates')
+            .update({
+                usage_count: (template.usage_count || 0) + 1,
+                last_used_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', templateId);
+
+        // Przygotuj dane dla frontu – zachowujemy ten sam kontrakt co /api/v1/products:
+        // name = identifier (identyfikator), pc_id = index.
+        const cartItems = (items || []).map(item => ({
+            productId: item.product_id,
+            productCode: item.Product?.index || item.Product?.identifier,
+            productName: item.Product?.identifier,
+            productPrice: item.Product?.price,
+            quantity: item.quantity,
+            unitPrice: item.unit_price,
+            selectedProjects: item.selected_projects,
+            projectQuantities: item.project_quantities,
+            totalQuantity: item.total_quantity,
+            source: item.source,
+            locationName: item.location_name,
+            projectName: item.project_name,
+            customization: item.customization,
+            productionNotes: item.production_notes
+        }));
+
+        console.log(`✅ Szablon "${template.name}" wczytany przez ${userId}`);
+
+        return res.json({
+            status: 'success',
+            message: 'Szablon został wczytany',
+            data: {
+                templateName: template.name,
+                items: cartItems
+            }
+        });
+    } catch (error) {
+        console.error('Wyjątek w POST /api/order-templates/:id/use:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+    }
+});
+
+// POST /api/order-templates/:id/favorite - Dodaj/usuń z ulubionych
+app.post('/api/order-templates/:id/favorite', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const userId = req.user.id;
+    const templateId = req.params.id;
+    const { isFavorite } = req.body;
+
+    try {
+        // Sprawdź czy szablon istnieje i jest dostępny
+        const { data: template, error: fetchError } = await supabase
+            .from('order_templates')
+            .select('id, owner_id, visibility')
+            .eq('id', templateId)
+            .single();
+
+        if (fetchError || !template) {
+            return res.status(404).json({ status: 'error', message: 'Szablon nie znaleziony' });
+        }
+
+        if (template.owner_id !== userId && template.visibility !== 'TEAM') {
+            return res.status(403).json({ status: 'error', message: 'Brak dostępu do tego szablonu' });
+        }
+
+        if (isFavorite) {
+            // Dodaj do ulubionych
+            const { error: insertError } = await supabase
+                .from('order_template_favorites')
+                .insert({
+                    template_id: templateId,
+                    user_id: userId,
+                    created_at: new Date().toISOString()
+                });
+
+            if (insertError && insertError.code !== '23505') { // Ignoruj duplikaty
+                return res.status(500).json({ status: 'error', message: 'Nie udało się dodać do ulubionych', details: insertError.message });
+            }
+        } else {
+            // Usuń z ulubionych
+            const { error: deleteError } = await supabase
+                .from('order_template_favorites')
+                .delete()
+                .eq('template_id', templateId)
+                .eq('user_id', userId);
+
+            if (deleteError) {
+                return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć z ulubionych', details: deleteError.message });
+            }
+        }
+
+        return res.json({ status: 'success', message: isFavorite ? 'Dodano do ulubionych' : 'Usunięto z ulubionych' });
+    } catch (error) {
+        console.error('Wyjątek w POST /api/order-templates/:id/favorite:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+    }
+});
+
+// ============================================
 // GET /api/user - Dane bieżącego użytkownika
 // ============================================
 app.get('/api/user', async (req, res) => {
