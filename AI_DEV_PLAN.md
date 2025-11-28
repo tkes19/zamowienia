@@ -9,6 +9,22 @@ Celem jest odtworzenie zaawansowanej funkcjonalności systemu B2B (ERP/CRM) istn
 
 **Kluczowe założenie:** Rezygnacja z ORM (Prisma) na rzecz czystego klienta Supabase (`@supabase/supabase-js`) oraz przeniesienie ciężaru logiki do bazy danych (PostgreSQL).
 
+### Postęp prac – 28.11.2025
+
+1. **Synchronizacja roli użytkownika**
+   - Dodano endpoint `POST /api/auth/sync-role`, który odczytuje rolę zalogowanego użytkownika z Supabase i aktualizuje ciasteczka (`auth_id`, `auth_role`).
+   - Frontend (`admin/admin.js`) wywołuje synchronizację przed wczytaniem zamówień, dzięki czemu przyciski (usuń/edytuj) renderują się poprawnie tylko dla ADMIN.
+
+2. **Panel Admina – edycja zamówień**
+   - W miejsce przekierowania na `/orders/:id/edit` dodano modal edycji zamówienia otwierany z tabeli.
+   - Modal umożliwia zmianę statusu, notatek, a także pełną edycję pozycji (`identifier`, `index`, `selectedProjects`, `quantity`, `unitPrice`).
+   - Po zmianie ilości i ceny jednostkowej suma pozycji przelicza się natychmiast, a `PATCH /api/orders/:id` wysyła tylko zmodyfikowane rekordy.
+
+3. **Usprawnienia UI i stabilność**
+   - Dodano nową ikonografię przycisków (edytuj, drukuj, usuń) w tabeli zamówień.
+   - Naprawiono konflikt nazw zmiennej `index` w kodzie frontendu, który blokował ładowanie widoku zamówień.
+   - Do dokumentacji dodano debug logi pomagaące w diagnozie braku roli w ciasteczkach.
+
 ## 2. Stack Technologiczny
 *   **Backend:** Node.js, Express.js
 *   **Baza Danych:** Supabase (PostgreSQL)
@@ -127,6 +143,85 @@ Notatka: rola `MANAGEMENT` jest zaprojektowana jako **read-only** – bez możli
 3.  **Logika "Projektów" (Specyfika Branży)**:
     *   Obsługa pól `selectedProjects` (zakresy np. "1-5, 10") w `order_draft_items`.
     *   Walidacja poprawności zakresów po stronie serwera.
+
+4.  **Szablony zamówień (rozszerzenie Draftów)**:
+    *   **Cel:** przyspieszenie pracy handlowców dzięki zapisywaniu gotowych koszyków jako wzorców.
+    *   **Model danych:**
+        - Nowe tabele `order_templates` i `order_template_items` (strukturą zbliżone do `order_drafts`),
+        - Pola kluczowe: `name`, `description`, `visibility` (`PRIVATE` / `TEAM`), `tags[]`, `lastUsedAt`, `usageCount`.
+        - Powiązanie z użytkownikiem (`ownerId`) + opcjonalnie `sharedWithRole`/`departmentId` dla szablonów zespołowych.
+    *   **API (REST):**
+        1. `GET /api/order-templates` – lista szablonów widocznych dla użytkownika (własne + udostępnione),
+        2. `POST /api/order-templates` – zapis bieżącego koszyka jako szablonu (payload jak draft + metadane),
+        3. `PATCH /api/order-templates/:id` – zmiana nazwy/opisu/tags/visibility,
+        4. `POST /api/order-templates/:id/duplicate` – tworzy nowy szablon na bazie istniejącego,
+        5. `POST /api/order-templates/:id/use` – wczytuje szablon do koszyka (tworzy nowy draft i zwraca payload dla frontu),
+        6. `DELETE /api/order-templates/:id` – usuwa szablon (tylko właściciel lub admin).
+    *   **UX (formularz zamówień):**
+        - Pasek nad koszykiem z przyciskiem „Zapisz jako szablon” (nazwa + checkbox „Udostępnij zespołowi”),
+        - Modal/lista szablonów z filtrowaniem po tagach/nazwie + sortowanie (ostatnio użyte, ulubione),
+        - Ładowanie szablonu tworzy zwykły draft, który użytkownik może dowolnie edytować przed wysyłką,
+        - Możliwość oznaczenia szablonu jako „Ulubiony” i przypięcia go na górze listy.
+    *   **Funkcje inspirowane CRM/ERP:**
+        - **Tagi/kategorie** – szybkie filtrowanie scenariuszy („Sezon letni”, „Placówki oświatowe”),
+        - **Widoczność prywatna/wspólna** – handlowiec decyduje czy szablon jest tylko dla niego czy dla całego działu,
+        - **Duplikacja i wersjonowanie** – łatwe tworzenie wariantów + log zmian (`updatedBy`, `updatedAt`),
+        - **Ulubione/przypięte** – lokalne preferencje użytkownika (np. tabela `order_template_favorites`),
+        - **Statystyki użycia** – automatyczna aktualizacja `usageCount`, `lastUsedAt` podczas `POST /use`,
+        - **Komentarze/notatki** – sekcja instrukcji dla zespołu (np. „Używać tylko dla klientów A/B”).
+    *   **Migracja:** dodać skrypt SQL tworzący nowe tabele + widoki pomocnicze (np. `vw_user_templates`), przygotować seedy dla przykładowych szablonów.
+
+#### 3.4. Struktura SQL modułu szablonów
+
+```sql
+CREATE TABLE public.order_templates (
+    id               text PRIMARY KEY DEFAULT (gen_random_uuid())::text,
+    owner_id         text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+    name             varchar(255) NOT NULL,
+    description      text NULL,
+    visibility       varchar(20) NOT NULL DEFAULT 'PRIVATE',  -- PRIVATE | TEAM
+    shared_with_role varchar(50) NULL,
+    department_id    text NULL REFERENCES "Department"(id) ON DELETE SET NULL,
+    tags             text[] NULL,
+    usage_count      integer NOT NULL DEFAULT 0,
+    last_used_at     timestamptz NULL,
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    updated_at       timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT order_templates_visibility_check CHECK (visibility IN ('PRIVATE','TEAM'))
+);
+
+CREATE TABLE public.order_template_items (
+    id                 text PRIMARY KEY DEFAULT (gen_random_uuid())::text,
+    template_id        text NOT NULL REFERENCES order_templates(id) ON DELETE CASCADE,
+    product_id         text NOT NULL REFERENCES "Product"(id),
+    quantity           numeric(10,2) NOT NULL CHECK (quantity > 0),
+    unit_price         numeric(10,2) NOT NULL CHECK (unit_price >= 0),
+    selected_projects  text NULL,
+    project_quantities jsonb NULL,
+    total_quantity     numeric(10,2) NOT NULL DEFAULT 0 CHECK (total_quantity >= 0),
+    source             varchar(50) NOT NULL DEFAULT 'MIEJSCOWOSCI',
+    location_name      varchar(255) NULL,
+    project_name       varchar(255) NULL,
+    customization      text NULL,
+    production_notes   text NULL,
+    sort_order         integer NOT NULL DEFAULT 0,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE public.order_template_favorites (
+    template_id text NOT NULL REFERENCES order_templates(id) ON DELETE CASCADE,
+    user_id     text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (template_id, user_id)
+);
+```
+
+> Indeksy: `order_templates(owner_id)`, `order_templates(visibility)`, GIN na `tags`,
+> oraz `order_template_items(template_id, product_id)`.
+
+> Triggery: `update_order_templates_updated_at`, `update_order_template_items_updated_at`
+> wykorzystują istniejącą funkcję `update_updated_at_column()`.
 
 ### FAZA 4: Finalizacja Zamówienia i Magazyn
 *Cel: Przekształcenie koszyka w wiążące zamówienie + spójna logika magazynu w czasie.*

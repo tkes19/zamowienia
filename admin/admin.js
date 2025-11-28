@@ -1037,52 +1037,165 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================
-    // WIDOK ZAMÓWIENIA
+    // WIDOK ZAMÓWIENIA - PEŁNA IMPLEMENTACJA
     // ============================================
     const ordersTableBody = document.getElementById('orders-table-body');
+    const ordersTableHead = document.getElementById('orders-table-head');
     const ordersTableInfo = document.getElementById('orders-table-info');
     const ordersStatusFilter = document.getElementById('orders-status-filter');
     const ordersUserFilter = document.getElementById('orders-user-filter');
+    const ordersSearchInput = document.getElementById('orders-search-input');
     const refreshOrdersBtn = document.getElementById('refresh-orders-btn');
+    const exportOrdersCsvBtn = document.getElementById('export-orders-csv-btn');
+    const adminPrintPreviewModal = document.getElementById('admin-print-preview-modal');
+    const adminPrintPreviewContent = document.getElementById('admin-print-preview-content');
+    const adminPrintPreviewPrint = document.getElementById('admin-print-preview-print');
+    const adminPrintPreviewClose = document.getElementById('admin-print-preview-close');
+    const deleteOrderModal = document.getElementById('delete-order-modal');
+    const deleteOrderNumber = document.getElementById('delete-order-number');
+    const deleteOrderCancel = document.getElementById('delete-order-cancel');
+    const deleteOrderConfirm = document.getElementById('delete-order-confirm');
+    const editOrderModal = document.getElementById('edit-order-modal');
+    const editOrderNumber = document.getElementById('edit-order-number');
+    const editOrderClose = document.getElementById('edit-order-close');
+    const editOrderContent = document.getElementById('edit-order-content');
+    const adminToastContainer = document.getElementById('admin-toast-container');
 
-    let allOrders = [];
+    let allAdminOrders = [];
+    let currentUserRole = null;
+    const loadingOrders = new Set();
+    let currentSort = { column: 'createdAt', direction: 'desc' };
+    let deleteOrderId = null;
+
+    const STATUS_LABELS = {
+        PENDING: 'Oczekujące', APPROVED: 'Zatwierdzone', IN_PRODUCTION: 'W produkcji',
+        READY: 'Gotowe', SHIPPED: 'Wysłane', DELIVERED: 'Dostarczone', CANCELLED: 'Anulowane'
+    };
+
+    const STATUS_CLASSES = {
+        PENDING: 'bg-yellow-100 text-yellow-800', APPROVED: 'bg-blue-100 text-blue-800',
+        IN_PRODUCTION: 'bg-orange-100 text-orange-800', READY: 'bg-green-100 text-green-800',
+        SHIPPED: 'bg-purple-100 text-purple-800', DELIVERED: 'bg-gray-100 text-gray-800',
+        CANCELLED: 'bg-red-100 text-red-800'
+    };
+
+    const ROLE_STATUS_TRANSITIONS = {
+        SALES_REP: [{ from: 'PENDING', to: 'CANCELLED' }],
+        SALES_DEPT: [
+            { from: 'PENDING', to: 'APPROVED' }, { from: 'APPROVED', to: 'IN_PRODUCTION' },
+            { from: 'APPROVED', to: 'CANCELLED' }, { from: 'IN_PRODUCTION', to: 'CANCELLED' },
+            { from: 'READY', to: 'CANCELLED' }, { from: 'SHIPPED', to: 'DELIVERED' }
+        ],
+        PRODUCTION: [{ from: 'APPROVED', to: 'IN_PRODUCTION' }, { from: 'IN_PRODUCTION', to: 'READY' }],
+        WAREHOUSE: [{ from: 'READY', to: 'SHIPPED' }],
+        ADMIN: 'ALL'
+    };
+
+    // Debounce helper
+    function debounce(fn, delay) {
+        let timeoutId;
+        return function(...args) {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => fn.apply(this, args), delay);
+        };
+    }
+
+    // Toast notifications
+    function showAdminToast(message, type = 'info', duration = 3000) {
+        if (!adminToastContainer) return;
+        const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' };
+        const toast = document.createElement('div');
+        toast.className = `admin-toast ${type}`;
+        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+        adminToastContainer.appendChild(toast);
+        setTimeout(() => {
+            toast.style.animation = 'toastOut 0.3s ease-out forwards';
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    }
+
+    // Get current user role from cookie
+    function getCurrentUserRole() {
+        const match = document.cookie.match(/auth_role=([^;]+)/);
+        return match ? match[1] : null;
+    }
+
+    function getAllowedStatusTransitions(currentStatus, role) {
+        if (!role) return [];
+        const transitions = ROLE_STATUS_TRANSITIONS[role];
+        if (transitions === 'ALL') {
+            return Object.keys(STATUS_LABELS).filter(s => s !== currentStatus);
+        }
+        if (Array.isArray(transitions)) {
+            return transitions.filter(t => t.from === currentStatus).map(t => t.to);
+        }
+        return [];
+    }
+
+    // Synchronizuj rolę użytkownika
+    async function syncUserRole() {
+        try {
+            const response = await fetch('/api/auth/sync-role', {
+                method: 'POST',
+                credentials: 'include'
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                console.log('Role synced:', result.data.role);
+                return result.data.role;
+            }
+        } catch (error) {
+            console.error('Error syncing role:', error);
+        }
+        return getCurrentUserRole();
+    }
 
     // Załaduj zamówienia
     async function loadOrders() {
+        if (!ordersTableBody) return;
+        
+        // Najpierw synchronizuj rolę
+        currentUserRole = await syncUserRole();
+        console.log('DEBUG: User role after sync:', currentUserRole);
+
         try {
-            ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-500"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i> Ładowanie…</td></tr>';
+            ordersTableBody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-gray-500"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i> Ładowanie…</td></tr>';
 
             const params = new URLSearchParams();
-            if (ordersStatusFilter.value) params.append('status', ordersStatusFilter.value);
-            if (ordersUserFilter.value) params.append('userId', ordersUserFilter.value);
+            if (ordersStatusFilter?.value) params.append('status', ordersStatusFilter.value);
+            if (ordersUserFilter?.value) params.append('userId', ordersUserFilter.value);
 
             const url = `/api/admin/orders?${params.toString()}`;
             const response = await fetch(url, { credentials: 'include' });
 
             if (!response.ok) {
-                ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500">Błąd ładowania zamówień</td></tr>';
+                ordersTableBody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-red-500">Błąd ładowania zamówień</td></tr>';
                 return;
             }
 
             const result = await response.json();
-            allOrders = result.data || [];
+            allAdminOrders = result.data || [];
 
+            sortOrders();
             renderOrdersTable();
             loadOrdersUsers();
         } catch (error) {
             console.error('Błąd pobierania zamówień:', error);
-            ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500">Błąd połączenia</td></tr>';
+            ordersTableBody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-red-500">Błąd połączenia</td></tr>';
         }
     }
 
+    const debouncedLoadOrders = debounce(loadOrders, 300);
+
     // Załaduj listę handlowców do filtra
     async function loadOrdersUsers() {
+        if (!ordersUserFilter) return;
         try {
             const response = await fetch('/api/users', { credentials: 'include' });
             if (!response.ok) return;
             const result = await response.json();
             const users = result.data || [];
-
             ordersUserFilter.innerHTML = '<option value="">Wszyscy handlowcy</option>' +
                 users.map(u => `<option value="${u.id}">${u.shortCode} - ${u.name}</option>`).join('');
         } catch (error) {
@@ -1090,68 +1203,619 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Sortowanie zamówień
+    function sortOrders() {
+        const { column, direction } = currentSort;
+        const multiplier = direction === 'asc' ? 1 : -1;
+
+        allAdminOrders.sort((a, b) => {
+            let valA, valB;
+            switch (column) {
+                case 'orderNumber':
+                    const extractNumber = (str) => { const match = str.match(/\/(\d+)\//); return match ? parseInt(match[1], 10) : 0; };
+                    valA = extractNumber(a.orderNumber || '');
+                    valB = extractNumber(b.orderNumber || '');
+                    return multiplier * (valA - valB);
+                case 'createdAt':
+                    valA = new Date(a.createdAt).getTime();
+                    valB = new Date(b.createdAt).getTime();
+                    return multiplier * (valA - valB);
+                case 'customer':
+                    valA = a.Customer?.name || '';
+                    valB = b.Customer?.name || '';
+                    return multiplier * valA.localeCompare(valB, 'pl');
+                case 'status':
+                    valA = a.status || '';
+                    valB = b.status || '';
+                    return multiplier * valA.localeCompare(valB, 'pl');
+                case 'total':
+                    valA = a.total || 0;
+                    valB = b.total || 0;
+                    return multiplier * (valA - valB);
+                default:
+                    return 0;
+            }
+        });
+    }
+
+    function handleSortClick(e) {
+        const header = e.target.closest('.sortable-header');
+        if (!header) return;
+        const column = header.dataset.sort;
+        if (!column) return;
+
+        if (currentSort.column === column) {
+            currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSort.column = column;
+            currentSort.direction = 'asc';
+        }
+
+        sortOrders();
+        renderOrdersTable();
+        updateSortIcons();
+    }
+
+    function updateSortIcons() {
+        if (!ordersTableHead) return;
+        ordersTableHead.querySelectorAll('.sortable-header').forEach(header => {
+            const icon = header.querySelector('.sort-icon');
+            if (!icon) return;
+            const column = header.dataset.sort;
+            icon.classList.remove('fa-sort', 'fa-sort-up', 'fa-sort-down', 'active');
+            if (column === currentSort.column) {
+                icon.classList.add(currentSort.direction === 'asc' ? 'fa-sort-up' : 'fa-sort-down', 'active');
+            } else {
+                icon.classList.add('fa-sort');
+            }
+        });
+    }
+
     // Renderuj tabelę zamówień
     function renderOrdersTable() {
-        if (allOrders.length === 0) {
-            ordersTableBody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-500">Brak zamówień</td></tr>';
-            ordersTableInfo.textContent = 'Pokazuje 0 z 0 zamówień';
+        if (!ordersTableBody) return;
+
+        // Filtrowanie po wyszukiwaniu
+        let filteredOrders = allAdminOrders;
+        const searchTerm = ordersSearchInput?.value?.toLowerCase() || '';
+        if (searchTerm) {
+            filteredOrders = allAdminOrders.filter(order =>
+                (order.orderNumber || '').toLowerCase().includes(searchTerm) ||
+                (order.Customer?.name || '').toLowerCase().includes(searchTerm)
+            );
+        }
+
+        if (filteredOrders.length === 0) {
+            ordersTableBody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-gray-500">Brak zamówień</td></tr>';
+            if (ordersTableInfo) ordersTableInfo.textContent = 'Pokazuje 0 z 0 zamówień';
             return;
         }
 
-        ordersTableBody.innerHTML = allOrders.map(order => {
+        ordersTableBody.innerHTML = filteredOrders.map(order => {
             const date = new Date(order.createdAt).toLocaleDateString('pl-PL', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit'
+                year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
             });
 
-            const statusColors = {
-                'PENDING': 'bg-yellow-100 text-yellow-800',
-                'APPROVED': 'bg-blue-100 text-blue-800',
-                'IN_PRODUCTION': 'bg-orange-100 text-orange-800',
-                'READY': 'bg-green-100 text-green-800',
-                'COMPLETED': 'bg-gray-100 text-gray-800',
-                'CANCELLED': 'bg-red-100 text-red-800'
-            };
+            const canChangeStatus = ['ADMIN', 'SALES_DEPT', 'WAREHOUSE', 'PRODUCTION', 'SALES_REP'].includes(currentUserRole);
+            const allowedTransitions = canChangeStatus ? getAllowedStatusTransitions(order.status, currentUserRole) : [];
+            const canSelectStatus = allowedTransitions.length > 0;
+            const statusClass = STATUS_CLASSES[order.status] || 'bg-gray-100 text-gray-800';
+            const statusLabel = STATUS_LABELS[order.status] || order.status;
 
-            const statusClass = statusColors[order.status] || 'bg-gray-100 text-gray-800';
+            const statusContent = canSelectStatus
+                ? `<select class="order-status-select px-3 py-1 rounded-full text-xs font-semibold border border-transparent focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all ${statusClass}" data-order-id="${order.id}" data-original-status="${order.status}" onclick="event.stopPropagation()">
+                        ${[order.status, ...allowedTransitions].filter((s, i, arr) => arr.indexOf(s) === i).map(s => `<option value="${s}" ${s === order.status ? 'selected' : ''}>${STATUS_LABELS[s] || s}</option>`).join('')}
+                   </select>`
+                : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabel}</span>`;
+
+            const canDelete = currentUserRole === 'ADMIN';
+            const deleteBtn = canDelete
+                ? `<button class="text-red-600 hover:text-red-800 p-1" data-action="delete" data-order-id="${order.id}" data-order-number="${order.orderNumber}" title="Usuń zamówienie"><i class="fas fa-trash"></i></button>`
+                : '';
+
+            const canEdit = currentUserRole === 'ADMIN';
+            const editBtn = canEdit
+                ? `<button class="text-green-600 hover:text-green-800 p-1" data-action="edit" data-order-id="${order.id}" title="Edytuj zamówienie"><i class="fas fa-edit"></i></button>`
+                : '';
 
             return `
-                <tr class="hover:bg-gray-50">
-                    <td class="p-4 font-semibold">${order.orderNumber}</td>
+                <tr class="hover:bg-gray-50 cursor-pointer order-row" data-order-id="${order.id}">
+                    <td class="p-4 w-8"><i class="fas fa-chevron-right chevron-icon text-gray-400" data-order-id="${order.id}"></i></td>
+                    <td class="p-4 font-semibold text-blue-600">${order.orderNumber}</td>
                     <td class="p-4">${date}</td>
                     <td class="p-4">${order.Customer?.name || '-'}</td>
                     <td class="p-4">${order.User?.shortCode || '-'}</td>
-                    <td class="p-4"><span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${order.status}</span></td>
+                    <td class="p-4">${statusContent}</td>
                     <td class="p-4 text-right font-semibold">${(order.total || 0).toFixed(2)} zł</td>
                     <td class="p-4 text-right">
-                        <button onclick="alert('Szczegóły: ${order.orderNumber}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                            Szczegóły
-                        </button>
+                        ${editBtn}
+                        <button class="text-purple-600 hover:text-purple-800 p-1" onclick="window.adminPrintOrder('${order.id}')" title="Drukuj"><i class="fas fa-print"></i></button>
+                        ${deleteBtn}
                     </td>
                 </tr>
             `;
         }).join('');
 
-        ordersTableInfo.textContent = `Pokazuje ${allOrders.length} z ${allOrders.length} zamówień`;
+        if (ordersTableInfo) ordersTableInfo.textContent = `Pokazuje ${filteredOrders.length} z ${allAdminOrders.length} zamówień`;
+
+        // Attach status change listeners
+        ordersTableBody.querySelectorAll('.order-status-select').forEach(select => {
+            select.addEventListener('change', handleInlineStatusChange);
+        });
     }
 
-    // Event listenery dla zamówień
-    if (refreshOrdersBtn) refreshOrdersBtn.addEventListener('click', loadOrders);
-    if (ordersStatusFilter) ordersStatusFilter.addEventListener('change', loadOrders);
-    if (ordersUserFilter) ordersUserFilter.addEventListener('change', loadOrders);
+    // Handle order row click for inline details
+    async function handleOrderRowClick(e) {
+        const row = e.target.closest('.order-row');
+        if (!row) return;
 
-    // Załaduj zamówienia przy otwarciu widoku
-    const viewContainers = document.querySelectorAll('[data-view]');
-    viewContainers.forEach(link => {
-        link.addEventListener('click', (e) => {
-            if (link.dataset.view === 'orders') {
-                loadOrders();
+        // Ignore clicks on buttons, selects
+        if (e.target.closest('button') || e.target.closest('select')) return;
+
+        const orderId = row.dataset.orderId;
+        const existingDetails = document.getElementById(`details-${orderId}`);
+
+        if (existingDetails) {
+            existingDetails.remove();
+            rotateChevron(orderId, false);
+            return;
+        }
+
+        if (loadingOrders.has(orderId)) return;
+        loadingOrders.add(orderId);
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}`, { credentials: 'include' });
+            if (!response.ok) throw new Error('Nie udało się pobrać szczegółów');
+
+            const result = await response.json();
+            const fullOrder = result.data;
+
+            const detailsRow = document.createElement('tr');
+            detailsRow.id = `details-${orderId}`;
+            detailsRow.className = 'bg-indigo-50 border-t-2 border-indigo-200 details-row';
+
+            const itemsHtml = (fullOrder.OrderItem || []).map(item => {
+                const identifier = item.Product?.identifier || '-';
+                const index = item.Product?.index || '-';
+                const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
+                return `
+                <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
+                    <td class="p-3 text-sm font-medium text-gray-800">${productLabel}</td>
+                    <td class="p-3 text-sm text-gray-700">${item.selectedProjects || '-'}</td>
+                    <td class="p-3 text-sm text-center text-gray-700">${item.quantity}</td>
+                    <td class="p-3 text-sm text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
+                    <td class="p-3 text-sm text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
+                    <td class="p-3 text-sm text-gray-700">${item.locationName || '-'}</td>
+                </tr>`;
+            }).join('');
+
+            const canEditNotes = ['ADMIN', 'SALES_DEPT'].includes(currentUserRole);
+            const createdDate = new Date(fullOrder.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const updatedDate = fullOrder.updatedAt ? new Date(fullOrder.updatedAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+
+            const timelineHtml = `
+                <div class="flex items-center gap-4 text-xs text-gray-500 bg-gray-50 rounded-lg p-2">
+                    <div class="flex items-center gap-1"><i class="fas fa-plus-circle text-green-500"></i><span>Utworzono: <strong class="text-gray-700">${createdDate}</strong></span>${fullOrder.User ? `<span class="text-gray-400">przez ${fullOrder.User.name || fullOrder.User.shortCode}</span>` : ''}</div>
+                    ${updatedDate && updatedDate !== createdDate ? `<div class="flex items-center gap-1"><i class="fas fa-edit text-blue-500"></i><span>Aktualizacja: <strong class="text-gray-700">${updatedDate}</strong></span></div>` : ''}
+                    <div class="flex items-center gap-1"><i class="fas fa-tag text-gray-500"></i><span>Status: <strong class="text-gray-700">${STATUS_LABELS[fullOrder.status] || fullOrder.status}</strong></span></div>
+                </div>`;
+
+            detailsRow.innerHTML = `
+                <td colspan="8" class="p-0">
+                    <div class="p-4 space-y-3">
+                        ${timelineHtml}
+                        <div class="border border-indigo-200 rounded-lg overflow-hidden bg-white">
+                            <table class="w-full text-xs">
+                                <thead class="bg-indigo-100 border-b border-indigo-200">
+                                    <tr>
+                                        <th class="p-2 text-left font-semibold text-gray-800">Produkt</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800">Projekty</th>
+                                        <th class="p-2 text-center font-semibold text-gray-800">Ilość</th>
+                                        <th class="p-2 text-right font-semibold text-gray-800">Cena j.</th>
+                                        <th class="p-2 text-right font-semibold text-gray-800">Wartość</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800">Lokalizacja</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${itemsHtml || '<tr><td colspan="6" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                        <div class="flex gap-3 items-end">
+                            <div class="flex-1">
+                                ${canEditNotes ? `<textarea id="order-notes-${orderId}" class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" rows="2" placeholder="Notatki...">${fullOrder.notes || ''}</textarea>` : `<div class="p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 max-h-16 overflow-y-auto">${fullOrder.notes || 'Brak notatek'}</div>`}
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="window.adminToggleOrderHistory('${fullOrder.id}')" class="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
+                                    <i id="admin-history-icon-${fullOrder.id}" class="fas fa-history"></i> Historia
+                                </button>
+                                ${canEditNotes ? `<button onclick="window.adminSaveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap"><i class="fas fa-save"></i> Zapisz</button>` : ''}
+                                <button onclick="window.adminPrintOrder('${fullOrder.id}')" class="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 transition-colors font-medium whitespace-nowrap"><i class="fas fa-print"></i> Drukuj</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Kontener historii (domyślnie ukryty) -->
+                        <div id="admin-history-container-${orderId}" class="hidden mt-3 transition-all duration-300 ease-in-out"></div>
+                    </div>
+                </td>`;
+
+            row.insertAdjacentElement('afterend', detailsRow);
+            rotateChevron(orderId, true);
+        } catch (error) {
+            console.error('Błąd pobierania szczegółów:', error);
+            showAdminToast('Nie udało się pobrać szczegółów zamówienia', 'error');
+        } finally {
+            loadingOrders.delete(orderId);
+        }
+    }
+
+    function rotateChevron(orderId, open) {
+        const chevron = document.querySelector(`.chevron-icon[data-order-id="${orderId}"]`);
+        if (chevron) {
+            if (open) chevron.classList.add('rotated');
+            else chevron.classList.remove('rotated');
+        }
+    }
+
+    // Handle inline status change
+    async function handleInlineStatusChange(e) {
+        const select = e.target;
+        const orderId = select.dataset.orderId;
+        const originalStatus = select.dataset.originalStatus;
+        const newStatus = select.value;
+
+        if (newStatus === originalStatus) return;
+        select.disabled = true;
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ status: newStatus })
+            });
+
+            const result = await response.json();
+            if (result.status === 'success') {
+                const order = allAdminOrders.find(o => o.id === orderId);
+                if (order) order.status = newStatus;
+                select.dataset.originalStatus = newStatus;
+                // Update select styling
+                Object.values(STATUS_CLASSES).forEach(cls => cls.split(' ').forEach(c => select.classList.remove(c)));
+                (STATUS_CLASSES[newStatus] || 'bg-gray-100 text-gray-800').split(' ').forEach(c => select.classList.add(c));
+                showAdminToast('Status zamówienia został zaktualizowany', 'success');
+            } else {
+                showAdminToast(result.message || 'Nie udało się zmienić statusu', 'error');
+                select.value = originalStatus;
             }
+        } catch (error) {
+            console.error('Błąd zmiany statusu:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+            select.value = originalStatus;
+        } finally {
+            select.disabled = false;
+        }
+    }
+
+    // Save order notes
+    window.adminSaveOrderNotes = async function(orderId) {
+        const textarea = document.getElementById(`order-notes-${orderId}`);
+        if (!textarea) return;
+
+        const notes = textarea.value;
+        try {
+            const response = await fetch(`/api/orders/${orderId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ notes })
+            });
+
+            const result = await response.json();
+            if (result.status === 'success') {
+                showAdminToast('Notatki zostały zapisane', 'success');
+            } else {
+                showAdminToast(result.message || 'Nie udało się zapisać notatek', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd zapisu notatek:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    };
+
+    // Print order
+    window.adminPrintOrder = async function(orderId) {
+        try {
+            const response = await fetch(`/api/orders/${orderId}`, { credentials: 'include' });
+            if (!response.ok) throw new Error('Nie udało się pobrać szczegółów zamówienia');
+
+            const result = await response.json();
+            const order = result.data;
+
+            const itemsHtml = (order.OrderItem || []).map(item => {
+                const identifier = item.Product?.identifier || '-';
+                const index = item.Product?.index || '-';
+                const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
+                return `<tr><td>${productLabel}</td><td>${item.selectedProjects || '-'}</td><td style="text-align: center;">${item.quantity}</td><td style="text-align: right;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align: right;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td>${item.locationName || '-'}</td></tr>`;
+            }).join('');
+
+            const createdDate = new Date(order.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+            const printHtml = `
+                <div class="print-document">
+                    <div class="print-header">
+                        <div><div class="print-company">ZAMÓWIENIA</div><div class="print-title">Zamówienie ${order.orderNumber}</div></div>
+                        <div class="print-meta"><div>Data: ${createdDate}</div><div>Status: ${STATUS_LABELS[order.status] || order.status}</div></div>
+                    </div>
+                    <div class="print-section">
+                        <div class="print-grid">
+                            <div class="print-field"><div class="print-field-label">Klient</div><div class="print-field-value">${order.Customer?.name || '-'}</div></div>
+                            <div class="print-field"><div class="print-field-label">Handlowiec</div><div class="print-field-value">${order.User?.name || order.User?.shortCode || '-'}</div></div>
+                        </div>
+                    </div>
+                    <div class="print-section">
+                        <div class="print-section-title">Pozycje</div>
+                        <table class="print-table"><thead><tr><th>Produkt</th><th>Projekty</th><th style="text-align: center;">Ilość</th><th style="text-align: right;">Cena j.</th><th style="text-align: right;">Wartość</th><th>Lokalizacja</th></tr></thead><tbody>${itemsHtml || '<tr><td colspan="6" style="text-align: center; color: #999;">Brak pozycji</td></tr>'}</tbody></table>
+                    </div>
+                    <div class="print-total">Razem: ${(order.total || 0).toFixed(2)} zł</div>
+                    ${order.notes ? `<div class="print-section" style="margin-top: 8px;"><div class="print-section-title">Notatki</div><div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${order.notes}</div></div>` : ''}
+                    <div class="print-footer"><div>Wydruk z systemu zarządzania zamówieniami | ${new Date().toLocaleString('pl-PL')}</div></div>
+                </div>`;
+
+            if (adminPrintPreviewContent) adminPrintPreviewContent.innerHTML = printHtml;
+            if (adminPrintPreviewModal) adminPrintPreviewModal.classList.remove('hidden');
+        } catch (error) {
+            console.error('Błąd przygotowania wydruku:', error);
+            showAdminToast('Nie udało się przygotować wydruku', 'error');
+        }
+    };
+
+    // Export CSV
+    function exportOrdersCSV() {
+        if (allAdminOrders.length === 0) {
+            showAdminToast('Brak zamówień do eksportu', 'warning');
+            return;
+        }
+
+        const headers = ['Numer zamówienia', 'Data', 'Klient', 'Handlowiec', 'Status', 'Wartość'];
+        const rows = allAdminOrders.map(order => {
+            const date = new Date(order.createdAt).toLocaleDateString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+            return [order.orderNumber || '', date, order.Customer?.name || '', order.User?.name || order.User?.shortCode || '', STATUS_LABELS[order.status] || order.status, (order.total || 0).toFixed(2)];
         });
-    });
+
+        const escapeCSV = (val) => { const str = String(val); if (str.includes(',') || str.includes('"') || str.includes('\n')) return `"${str.replace(/"/g, '""')}"`; return str; };
+        const csvContent = [headers.map(escapeCSV).join(','), ...rows.map(row => row.map(escapeCSV).join(','))].join('\n');
+
+        const BOM = '\uFEFF';
+        const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `zamowienia_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showAdminToast(`Wyeksportowano ${allAdminOrders.length} zamówień`, 'success');
+    }
+
+    // Delete order
+    function showDeleteModal(orderId, orderNumber) {
+        deleteOrderId = orderId;
+        if (deleteOrderNumber) deleteOrderNumber.textContent = orderNumber;
+        if (deleteOrderModal) deleteOrderModal.classList.remove('hidden');
+    }
+
+    // Edit order modal
+    async function showEditOrderModal(orderId) {
+        if (!editOrderModal || !editOrderContent) return;
+
+        try {
+            // Show modal with loading
+            if (editOrderNumber) editOrderNumber.textContent = '';
+            editOrderModal.classList.remove('hidden');
+
+            const response = await fetch(`/api/orders/${orderId}`, { credentials: 'include' });
+            if (!response.ok) throw new Error('Nie udało się pobrać szczegółów zamówienia');
+
+            const result = await response.json();
+            const order = result.data;
+
+            if (editOrderNumber) editOrderNumber.textContent = order.orderNumber;
+
+            const itemsHtml = (order.OrderItem || []).map((item, itemIndex) => {
+                const identifier = item.Product?.identifier || '-';
+                const productIndex = item.Product?.index || '-';
+                const productLabel = (productIndex && productIndex !== '-' && productIndex !== identifier) ? `${identifier} (${productIndex})` : identifier;
+                return `
+                <tr class="border-b">
+                    <td class="p-2">${itemIndex + 1}</td>
+                    <td class="p-2">${productLabel}</td>
+                    <td class="p-2">${item.selectedProjects || '-'}</td>
+                    <td class="p-2 text-center">${item.quantity}</td>
+                    <td class="p-2 text-right">${(item.unitPrice || 0).toFixed(2)} zł</td>
+                    <td class="p-2 text-right">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
+                </tr>`;
+            }).join('');
+
+            editOrderContent.innerHTML = `
+                <div class="space-y-6">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Numer zamówienia</label>
+                            <input type="text" value="${order.orderNumber}" disabled class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                            <select id="edit-order-status" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                ${Object.keys(STATUS_LABELS).map(status => 
+                                    `<option value="${status}" ${status === order.status ? 'selected' : ''}>${STATUS_LABELS[status]}</option>`
+                                ).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Klient</label>
+                        <input type="text" value="${order.Customer?.name || '-'}" disabled class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Notatki</label>
+                        <textarea id="edit-order-notes" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" rows="3">${order.notes || ''}</textarea>
+                    </div>
+
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-700 mb-3">Pozycje zamówienia</h4>
+                        <div class="border border-gray-200 rounded-lg overflow-hidden">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="p-2 text-left">Lp.</th>
+                                        <th class="p-2 text-left">Produkt</th>
+                                        <th class="p-2 text-left">Projekty</th>
+                                        <th class="p-2 text-center">Ilość</th>
+                                        <th class="p-2 text-right">Cena j.</th>
+                                        <th class="p-2 text-right">Wartość</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${itemsHtml}</tbody>
+                            </table>
+                        </div>
+                        <div class="text-right mt-2">
+                            <strong>Suma: ${(order.total || 0).toFixed(2)} zł</strong>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end gap-3 pt-4 border-t">
+                        <button id="edit-order-cancel" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 font-medium transition-colors">
+                            Anuluj
+                        </button>
+                        <button id="edit-order-save" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors">
+                            <i class="fas fa-save"></i> Zapisz zmiany
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            // Add event listeners
+            document.getElementById('edit-order-cancel').addEventListener('click', () => {
+                editOrderModal.classList.add('hidden');
+            });
+
+            document.getElementById('edit-order-save').addEventListener('click', () => {
+                saveOrderChanges(order.id);
+            });
+
+        } catch (error) {
+            console.error('Błąd ładowania zamówienia:', error);
+            showAdminToast('Nie udało się załadować zamówienia', 'error');
+            editOrderModal.classList.add('hidden');
+        }
+    }
+
+    async function saveOrderChanges(orderId) {
+        try {
+            const status = document.getElementById('edit-order-status').value;
+            const notes = document.getElementById('edit-order-notes').value;
+
+            const response = await fetch(`/api/orders/${orderId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ status, notes })
+            });
+
+            const result = await response.json();
+            if (result.status === 'success') {
+                showAdminToast('Zmiany zostały zapisane', 'success');
+                editOrderModal.classList.add('hidden');
+                loadOrders(); // Reload orders to show updated status
+            } else {
+                showAdminToast(result.message || 'Nie udało się zapisać zmian', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd zapisu zmian:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    }
+
+    async function confirmDeleteOrder() {
+        if (!deleteOrderId) return;
+
+        try {
+            const response = await fetch(`/api/orders/${deleteOrderId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+
+            const result = await response.json();
+            if (result.status === 'success') {
+                showAdminToast('Zamówienie zostało usunięte', 'success');
+                loadOrders();
+            } else {
+                showAdminToast(result.message || 'Nie udało się usunąć zamówienia', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd usuwania zamówienia:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        } finally {
+            if (deleteOrderModal) deleteOrderModal.classList.add('hidden');
+            deleteOrderId = null;
+        }
+    }
+
+    // Handle table actions
+    function handleOrdersTableClick(e) {
+        const actionBtn = e.target.closest('[data-action]');
+        if (actionBtn) {
+            const action = actionBtn.dataset.action;
+            const orderId = actionBtn.dataset.orderId;
+            const orderNumber = actionBtn.dataset.orderNumber;
+
+            if (action === 'delete') {
+                e.stopPropagation();
+                showDeleteModal(orderId, orderNumber);
+                return;
+            }
+            if (action === 'edit') {
+                e.stopPropagation();
+                showEditOrderModal(orderId);
+                return;
+            }
+        }
+
+        // Handle row click for inline details
+        handleOrderRowClick(e);
+    }
+
+    // Event listeners
+    if (refreshOrdersBtn) refreshOrdersBtn.addEventListener('click', loadOrders);
+    if (ordersStatusFilter) ordersStatusFilter.addEventListener('change', debouncedLoadOrders);
+    if (ordersUserFilter) ordersUserFilter.addEventListener('change', debouncedLoadOrders);
+    if (ordersSearchInput) ordersSearchInput.addEventListener('input', debounce(() => renderOrdersTable(), 300));
+    if (exportOrdersCsvBtn) exportOrdersCsvBtn.addEventListener('click', exportOrdersCSV);
+    if (ordersTableBody) ordersTableBody.addEventListener('click', handleOrdersTableClick);
+    if (ordersTableHead) ordersTableHead.addEventListener('click', handleSortClick);
+
+    // Print preview
+    if (adminPrintPreviewClose) adminPrintPreviewClose.addEventListener('click', () => adminPrintPreviewModal?.classList.add('hidden'));
+    if (adminPrintPreviewPrint) {
+        adminPrintPreviewPrint.addEventListener('click', () => {
+            const printContent = adminPrintPreviewContent?.innerHTML || '';
+            const printWindow = window.open('', '', 'height=600,width=800');
+            printWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Wydruk zamówienia</title><style>* { margin: 0; padding: 0; } body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; line-height: 1.3; } .print-document { background: white; padding: 15px; max-width: 210mm; margin: 0 auto; } .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; border-bottom: 1px solid #1f2937; padding-bottom: 8px; } .print-company { font-size: 16px; font-weight: bold; color: #1f2937; } .print-title { font-size: 14px; font-weight: bold; color: #1f2937; margin-top: 2px; } .print-meta { font-size: 10px; color: #6b7280; text-align: right; } .print-section { margin-bottom: 10px; } .print-section-title { font-size: 11px; font-weight: bold; color: #1f2937; margin-bottom: 6px; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; } .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; } .print-field { font-size: 10px; } .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 2px; } .print-field-value { color: #1f2937; font-weight: 500; } .print-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px; } .print-table thead { background: #f3f4f6; border-bottom: 1px solid #d1d5db; } .print-table th { padding: 4px 6px; text-align: left; font-weight: 600; color: #1f2937; } .print-table td { padding: 4px 6px; border-bottom: 1px solid #e5e7eb; color: #374151; } .print-table tbody tr:last-child td { border-bottom: none; } .print-total { text-align: right; font-size: 11px; font-weight: bold; color: #1f2937; margin-top: 8px; padding-top: 6px; border-top: 1px solid #d1d5db; } .print-footer { margin-top: 15px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-size: 9px; color: #6b7280; text-align: center; }</style></head><body>${printContent}</body></html>`);
+            printWindow.document.close();
+            printWindow.print();
+        });
+    }
+
+    // Delete modal
+    if (deleteOrderCancel) deleteOrderCancel.addEventListener('click', () => { deleteOrderModal?.classList.add('hidden'); deleteOrderId = null; });
+    if (deleteOrderConfirm) deleteOrderConfirm.addEventListener('click', confirmDeleteOrder);
+
+    // Edit modal
+    if (editOrderClose) editOrderClose.addEventListener('click', () => { editOrderModal?.classList.add('hidden'); });
 
     // ============================================
     // OBSŁUGA PRZEŁĄCZANIA WIDOKÓW
@@ -1187,4 +1851,92 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+
+    // ============================================
+    // OBSŁUGA HISTORII ZAMÓWIEŃ
+    // ============================================
+    const adminLoadingHistory = new Set();
+    
+    window.adminToggleOrderHistory = async function(orderId) {
+        if (adminLoadingHistory.has(orderId)) {
+            console.log(`[adminToggleOrderHistory] Historia dla ${orderId} już się ładuje`);
+            return;
+        }
+        
+        const container = document.getElementById(`admin-history-container-${orderId}`);
+        const btnIcon = document.getElementById(`admin-history-icon-${orderId}`);
+        
+        if (!container) return;
+
+        if (!container.classList.contains('hidden')) {
+            container.classList.add('hidden');
+            if (btnIcon) btnIcon.className = 'fas fa-history';
+            return;
+        }
+
+        adminLoadingHistory.add(orderId);
+        container.classList.remove('hidden');
+        
+        if (btnIcon) btnIcon.className = 'fas fa-spinner fa-spin';
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/history`, {
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                throw new Error('Nie udało się pobrać historii');
+            }
+
+            const result = await response.json();
+            const history = result.data || [];
+
+            if (history.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-gray-50 rounded-lg p-4 text-center">
+                        <i class="fas fa-info-circle text-gray-400 mr-2"></i>
+                        <span class="text-gray-600 text-sm">Brak historii zmian statusu</span>
+                    </div>
+                `;
+            } else {
+                const historyHtml = history.map(entry => {
+                    const date = new Date(entry.changedAt).toLocaleString('pl-PL', {
+                        year: 'numeric', month: '2-digit', day: '2-digit',
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                    const userName = entry.User?.name || 'System';
+                    return `
+                        <div class="bg-white border border-gray-200 rounded-lg p-3 mb-2 shadow-sm">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <i class="fas fa-exchange-alt text-blue-500 text-sm"></i>
+                                    <span class="text-sm font-medium text-gray-900">
+                                        ${STATUS_LABELS[entry.oldStatus] || entry.oldStatus} → ${STATUS_LABELS[entry.newStatus] || entry.newStatus}
+                                    </span>
+                                </div>
+                                <span class="text-xs text-gray-500">${date}</span>
+                            </div>
+                            <div class="mt-1 text-xs text-gray-600">
+                                <i class="fas fa-user text-gray-400 mr-1"></i>
+                                ${userName} • ${entry.notes || 'Zmiana statusu'}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                container.innerHTML = historyHtml;
+            }
+        } catch (error) {
+            console.error('Błąd pobierania historii:', error);
+            container.innerHTML = `
+                <div class="bg-red-50 rounded-lg p-4 text-center">
+                    <i class="fas fa-exclamation-triangle text-red-400 mr-2"></i>
+                    <span class="text-red-600 text-sm">Nie udało się pobrać historii</span>
+                </div>
+            `;
+        } finally {
+            if (btnIcon) btnIcon.className = 'fas fa-history';
+            adminLoadingHistory.delete(orderId);
+        }
+    };
 });

@@ -379,6 +379,58 @@ create trigger update_order_drafts_updated_at BEFORE
 update on order_drafts for EACH row
 execute FUNCTION update_updated_at_column ();
 
+create table public."OrderStatusHistory" (
+  id text not null default (gen_random_uuid ())::text,
+  "orderId" text not null,
+  "oldStatus" text null,
+  "newStatus" text not null,
+  "changedBy" text not null,
+  "changedAt" timestamp with time zone null default now(),
+  notes text null,
+  constraint OrderStatusHistory_pkey primary key (id),
+  constraint OrderStatusHistory_orderId_fkey foreign KEY ("orderId") references "Order" (id) on delete CASCADE,
+  constraint OrderStatusHistory_changedBy_fkey foreign KEY ("changedBy") references "User" (id) on delete set null
+) TABLESPACE pg_default;
+
+create index IF not exists "idx_OrderStatusHistory_orderId" on public."OrderStatusHistory" using btree ("orderId") TABLESPACE pg_default;
+
+create index IF not exists "idx_OrderStatusHistory_changedAt" on public."OrderStatusHistory" using btree ("changedAt") TABLESPACE pg_default;
+
+-- Wyzwalacz do automatycznego logowania zmian statusu
+CREATE OR REPLACE FUNCTION log_order_status_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Sprawdzamy, czy status faktycznie się zmienił
+    IF OLD.status IS DISTINCT FROM NEW.status THEN
+        INSERT INTO public."OrderStatusHistory" (
+            "orderId",
+            "oldStatus",
+            "newStatus",
+            "changedBy",
+            "changedAt",
+            "notes"
+        ) VALUES (
+            NEW.id,
+            OLD.status,
+            NEW.status,
+            COALESCE(NEW."userId", 'system'),
+            COALESCE(NEW."updatedAt", NOW()),
+            'Zmiana statusu zamówienia'
+        );
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Tworzenie wyzwalacza
+DROP TRIGGER IF EXISTS trigger_order_status_change ON public."Order";
+CREATE TRIGGER trigger_order_status_change
+    AFTER UPDATE OF status
+    ON public."Order"
+    FOR EACH ROW
+    EXECUTE FUNCTION log_order_status_change();
+
 create table public.product_backup (
   id text null,
   name text null,

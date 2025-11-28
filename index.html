@@ -73,6 +73,7 @@
             />
             <button type="submit" class="header__login-submit">Zaloguj</button>
             <a href="/login" class="header__login-link">Więcej opcji logowania</a>
+            <p id="header-login-error" class="header__login-error" hidden></p>
           </form>
 
           <!-- Stan: zalogowany (pokazywany przez JS zamiast panelu logowania) -->
@@ -82,6 +83,10 @@
               <span id="header-user-role" class="header__user-role">&nbsp;</span>
             </div>
             <div class="header__user-actions">
+              <a href="/orders" id="orders-link" class="btn btn--secondary" style="display: none;">
+                <i class="fas fa-shopping-cart"></i>
+                Zamówienia
+              </a>
               <a href="/clients" id="clients-link" class="btn btn--secondary" style="display: none;">
                 <i class="fas fa-users"></i>
                 Moi Klienci

@@ -81,6 +81,7 @@ function arrayBufferToBase64(buffer) {
     const chunk = bytes.subarray(offset, offset + chunkSize);
     binary += String.fromCharCode.apply(null, chunk);
   }
+
   if (typeof globalThis !== 'undefined' && typeof globalThis.btoa === 'function') {
     return globalThis.btoa(binary);
   }
@@ -90,6 +91,66 @@ function arrayBufferToBase64(buffer) {
   }
 
   return null;
+}
+
+function setHeaderLoginError(message) {
+  const errorEl = document.getElementById('header-login-error');
+  if (!errorEl) return;
+  if (!message) {
+    errorEl.hidden = true;
+    errorEl.textContent = '';
+    return;
+  }
+  errorEl.hidden = false;
+  errorEl.textContent = message;
+}
+
+let headerLoginInFlight = false;
+
+async function handleHeaderLoginSubmit(event) {
+  event.preventDefault();
+  if (headerLoginInFlight) return;
+
+  const form = event.currentTarget;
+  const submitBtn = form.querySelector('.header__login-submit');
+  const emailInput = form.querySelector('input[name="email"]');
+  const passwordInput = form.querySelector('input[name="password"]');
+
+  const email = emailInput?.value?.trim();
+  const password = passwordInput?.value || '';
+
+  if (!email || !password) {
+    setHeaderLoginError('Podaj email i hasło');
+    return;
+  }
+
+  headerLoginInFlight = true;
+  setHeaderLoginError(null);
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email, password })
+    });
+
+    const json = await response.json().catch(() => ({}));
+
+    if (!response.ok || json.status !== 'success') {
+      setHeaderLoginError(json.message || 'Nie udało się zalogować');
+      return;
+    }
+
+    window.location.reload();
+  } catch (error) {
+    console.error('Błąd logowania:', error);
+    setHeaderLoginError('Błąd połączenia z serwerem');
+  } finally {
+    headerLoginInFlight = false;
+    if (submitBtn) submitBtn.disabled = false;
+  }
 }
 
 async function fetchGalleryJSON(url) {
@@ -2316,6 +2377,16 @@ async function checkAuthAndInitialize() {
   const headerUserName = document.getElementById('header-user-name');
   const headerUserRole = document.getElementById('header-user-role');
 
+  if (headerLoginForm && !headerLoginForm.dataset.bound) {
+    headerLoginForm.addEventListener('submit', handleHeaderLoginSubmit);
+    headerLoginForm.dataset.bound = 'true';
+  }
+
+  if (headerLoginForm && !headerLoginForm.dataset.bound) {
+    headerLoginForm.addEventListener('submit', handleHeaderLoginSubmit);
+    headerLoginForm.dataset.bound = 'true';
+  }
+
   try {
     const response = await fetch('/api/auth/me', {
       credentials: 'include'
@@ -2374,6 +2445,17 @@ async function checkAuthAndInitialize() {
 
 // Pokazywanie nawigacji dla zalogowanych użytkowników
 function showUserNavigation(role) {
+  const ordersLink = document.getElementById('orders-link');
+  
+  if (ordersLink) {
+    if (['SALES_REP', 'SALES_DEPT', 'ADMIN', 'WAREHOUSE', 'PRODUCTION'].includes(role)) {
+      ordersLink.href = '/orders';
+      ordersLink.style.display = 'flex';
+    } else {
+      ordersLink.style.display = 'none';
+    }
+  }
+  
   if (clientsLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(role)) {
     clientsLink.style.display = 'flex';
   }

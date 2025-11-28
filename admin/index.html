@@ -170,6 +170,9 @@
                         <p class="text-gray-600 mt-1">Przegląd i zarządzanie zamówieniami</p>
                     </div>
                     <div class="flex gap-3">
+                        <button id="export-orders-csv-btn" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-file-csv"></i> Eksport CSV
+                        </button>
                         <button id="refresh-orders-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
                             <i class="fas fa-sync-alt"></i> Odśwież
                         </button>
@@ -185,12 +188,13 @@
                     <div class="flex gap-2">
                         <select id="orders-status-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszystkie statusy</option>
-                            <option value="PENDING">PENDING (czeka)</option>
-                            <option value="APPROVED">APPROVED (zatwierdzone)</option>
-                            <option value="IN_PRODUCTION">IN_PRODUCTION (w produkcji)</option>
-                            <option value="READY">READY (gotowe)</option>
-                            <option value="COMPLETED">COMPLETED (zakończone)</option>
-                            <option value="CANCELLED">CANCELLED (anulowane)</option>
+                            <option value="PENDING">Oczekujące</option>
+                            <option value="APPROVED">Zatwierdzone</option>
+                            <option value="IN_PRODUCTION">W produkcji</option>
+                            <option value="READY">Gotowe</option>
+                            <option value="SHIPPED">Wysłane</option>
+                            <option value="DELIVERED">Dostarczone</option>
+                            <option value="CANCELLED">Anulowane</option>
                         </select>
                         <select id="orders-user-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszyscy handlowcy</option>
@@ -202,20 +206,31 @@
                 <div class="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse">
-                            <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
+                            <thead id="orders-table-head" class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
                                 <tr>
-                                    <th class="p-4">Numer zamówienia</th>
-                                    <th class="p-4">Data</th>
-                                    <th class="p-4">Klient</th>
+                                    <th class="p-4 w-8"></th>
+                                    <th class="p-4 sortable-header cursor-pointer hover:bg-gray-100" data-sort="orderNumber">
+                                        Numer zamówienia <i class="fas fa-sort sort-icon ml-1 opacity-50"></i>
+                                    </th>
+                                    <th class="p-4 sortable-header cursor-pointer hover:bg-gray-100" data-sort="createdAt">
+                                        Data <i class="fas fa-sort-down sort-icon ml-1 active"></i>
+                                    </th>
+                                    <th class="p-4 sortable-header cursor-pointer hover:bg-gray-100" data-sort="customer">
+                                        Klient <i class="fas fa-sort sort-icon ml-1 opacity-50"></i>
+                                    </th>
                                     <th class="p-4">Handlowiec</th>
-                                    <th class="p-4">Status</th>
-                                    <th class="p-4 text-right">Suma</th>
+                                    <th class="p-4 sortable-header cursor-pointer hover:bg-gray-100" data-sort="status">
+                                        Status <i class="fas fa-sort sort-icon ml-1 opacity-50"></i>
+                                    </th>
+                                    <th class="p-4 text-right sortable-header cursor-pointer hover:bg-gray-100" data-sort="total">
+                                        Suma <i class="fas fa-sort sort-icon ml-1 opacity-50"></i>
+                                    </th>
                                     <th class="p-4 text-right">Akcje</th>
                                 </tr>
                             </thead>
                             <tbody id="orders-table-body" class="divide-y divide-gray-100 text-sm">
                                 <tr>
-                                    <td colspan="7" class="p-8 text-center text-gray-500">
+                                    <td colspan="8" class="p-8 text-center text-gray-500">
                                         <div class="flex flex-col items-center gap-2">
                                             <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
                                             <span>Ładowanie zamówień...</span>
@@ -231,6 +246,58 @@
                 </div>
             </div>
             <!-- Koniec widoku: Zamówienia -->
+
+            <!-- Print Preview Modal -->
+            <div id="admin-print-preview-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl border border-gray-200 max-h-[95vh] overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
+                        <h3 class="text-lg font-semibold text-gray-800">Podgląd wydruku</h3>
+                        <div class="flex gap-2">
+                            <button id="admin-print-preview-print" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 font-medium transition-colors">
+                                <i class="fas fa-print"></i> Drukuj
+                            </button>
+                            <button id="admin-print-preview-close" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 font-medium transition-colors">
+                                Zamknij
+                            </button>
+                        </div>
+                    </div>
+                    <div id="admin-print-preview-content" class="flex-1 overflow-y-auto bg-gray-100 p-8"></div>
+                </div>
+            </div>
+
+            <!-- Delete Confirm Modal -->
+            <div id="delete-order-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Potwierdź usunięcie</h3>
+                    <p class="text-gray-600 mb-6">Czy na pewno chcesz usunąć zamówienie <strong id="delete-order-number"></strong>? Ta operacja jest nieodwracalna.</p>
+                    <div class="flex gap-3 justify-end">
+                        <button id="delete-order-cancel" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 font-medium transition-colors">
+                            Anuluj
+                        </button>
+                        <button id="delete-order-confirm" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium transition-colors">
+                            <i class="fas fa-trash"></i> Usuń
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Edit Order Modal -->
+            <div id="edit-order-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col">
+                    <div class="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
+                        <h3 class="text-lg font-semibold text-gray-800">Edytuj zamówienie <span id="edit-order-number"></span></h3>
+                        <button id="edit-order-close" class="text-gray-400 hover:text-gray-600">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div id="edit-order-content" class="flex-1 overflow-y-auto p-6">
+                        <div class="flex justify-center items-center h-32">
+                            <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                            <span class="ml-2 text-gray-500">Ładowanie...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Widok: Użytkownicy -->
             <div id="view-users" class="view-container hidden">
@@ -556,6 +623,73 @@
             </form>
         </div>
     </div>
+
+    <!-- Toast container -->
+    <div id="admin-toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
+
+    <style>
+        /* Animacje rozwijania/zwijania */
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-15px); max-height: 0; }
+            to { opacity: 1; transform: translateY(0); max-height: 1000px; }
+        }
+        @keyframes slideUp {
+            from { opacity: 1; transform: translateY(0); max-height: 1000px; }
+            to { opacity: 0; transform: translateY(-15px); max-height: 0; }
+        }
+        .details-row { animation: slideDown 0.3s ease-out forwards; }
+        .chevron-icon { transition: transform 0.2s ease; }
+        .chevron-icon.rotated { transform: rotate(90deg); }
+
+        /* Toast notifications */
+        .admin-toast {
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: toastIn 0.3s ease-out;
+            max-width: 350px;
+        }
+        .admin-toast.success { background: #10b981; }
+        .admin-toast.error { background: #ef4444; }
+        .admin-toast.info { background: #3b82f6; }
+        .admin-toast.warning { background: #f59e0b; }
+        @keyframes toastIn { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes toastOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
+
+        /* Sortowanie kolumn */
+        .sortable-header { cursor: pointer; user-select: none; transition: background-color 0.2s; }
+        .sortable-header:hover { background-color: #f3f4f6; }
+        .sort-icon { margin-left: 4px; opacity: 0.5; }
+        .sort-icon.active { opacity: 1; }
+
+        /* Print Preview */
+        .print-document { background: white; padding: 15px; max-width: 210mm; margin: 0 auto; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.3; }
+        .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; border-bottom: 1px solid #1f2937; padding-bottom: 8px; }
+        .print-company { font-size: 16px; font-weight: bold; color: #1f2937; }
+        .print-title { font-size: 14px; font-weight: bold; color: #1f2937; margin-top: 2px; }
+        .print-meta { font-size: 10px; color: #6b7280; text-align: right; }
+        .print-section { margin-bottom: 10px; }
+        .print-section-title { font-size: 11px; font-weight: bold; color: #1f2937; margin-bottom: 6px; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; }
+        .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+        .print-field { font-size: 10px; }
+        .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 2px; }
+        .print-field-value { color: #1f2937; font-weight: 500; }
+        .print-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px; }
+        .print-table thead { background: #f3f4f6; border-bottom: 1px solid #d1d5db; }
+        .print-table th { padding: 4px 6px; text-align: left; font-weight: 600; color: #1f2937; }
+        .print-table td { padding: 4px 6px; border-bottom: 1px solid #e5e7eb; color: #374151; }
+        .print-table tbody tr:last-child td { border-bottom: none; }
+        .print-total { text-align: right; font-size: 11px; font-weight: bold; color: #1f2937; margin-top: 8px; padding-top: 6px; border-top: 1px solid #d1d5db; }
+        .print-footer { margin-top: 15px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-size: 9px; color: #6b7280; text-align: center; }
+
+        /* Status select */
+        .order-status-select { appearance: none; cursor: pointer; }
+    </style>
 
     <script src="admin.js"></script>
 </body>
