@@ -6,11 +6,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const salesRepFilterContainer = document.getElementById('clients-salesrep-filter-container');
     const refreshClientsBtn = document.getElementById('refresh-clients-btn');
     const newClientBtn = document.getElementById('new-client-btn');
-    const clientModal = document.getElementById('client-modal');
+    const clientFormContainer = document.getElementById('client-form-container');
     const clientModalTitle = document.getElementById('client-modal-title');
-    const clientModalClose = document.getElementById('client-modal-close');
     const clientForm = document.getElementById('client-form');
     const clientFormCancel = document.getElementById('client-form-cancel');
+    const clientFormClose = document.getElementById('client-form-close');
     const clientFormError = document.getElementById('client-form-error');
     const clientsTableInfo = document.getElementById('clients-table-info');
     const logoutBtn = document.getElementById('logout-btn');
@@ -109,8 +109,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Event listenery
     refreshClientsBtn.addEventListener('click', fetchClients);
     newClientBtn.addEventListener('click', () => openClientForm());
-    clientModalClose.addEventListener('click', closeClientForm);
     clientFormCancel.addEventListener('click', closeClientForm);
+    clientFormClose.addEventListener('click', closeClientForm);
     clientForm.addEventListener('submit', handleClientFormSubmit);
 
     clientsSearchInput.addEventListener('input', (e) => {
@@ -368,21 +368,26 @@ document.addEventListener('DOMContentLoaded', () => {
             clientForm.querySelector('button[type="submit"] span').textContent = 'Zapisz klienta';
         }
 
-        // Ukryj/pokaż pole przypisania w zależności od roli
+        // Ukryj/pokaż pole przypisania w zależności od roli (tylko div z selectem, nie cały grid!)
         if (salesRepSelect) {
-            salesRepSelect.parentElement.parentElement.style.display = isAdminOrSalesDept ? 'block' : 'none';
+            salesRepSelect.closest('.md\\:col-span-2').style.display = isAdminOrSalesDept ? 'block' : 'none';
         }
 
-        clientModal.classList.remove('hidden');
+        // Pokaż formularz
+        clientFormContainer.classList.remove('hidden');
+        // Przewiń do formularza
+        clientFormContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // Zamykanie formularza klienta
     function closeClientForm() {
-        clientModal.classList.add('hidden');
+        clientFormContainer.classList.add('hidden');
         clientForm.reset();
         currentEditingClientId = null;
         clientFormError.classList.add('hidden');
         clientFormError.textContent = '';
+        clientModalTitle.textContent = 'Dodaj nowego klienta';
+        clientForm.querySelector('button[type="submit"] span').textContent = 'Zapisz klienta';
     }
 
     // Obsługa zapisu klienta
@@ -441,7 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (result.status === 'success') {
                 closeClientForm();
-                fetchClients();
+                await fetchClients();
             } else {
                 clientFormError.textContent = result.message || 'Błąd podczas zapisu klienta';
                 clientFormError.classList.remove('hidden');

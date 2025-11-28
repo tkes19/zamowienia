@@ -93,6 +93,37 @@ Poniższa tabela opisuje, kto co może robić w systemie – szczególnie pod k�
 
 Notatka: rola `MANAGEMENT` jest zaprojektowana jako **read-only** – bez możliwości przypadkowej edycji danych. Właściciel może podejrzeć wszystko, ale nie „psuje” operacyjnych konfiguracji (`ADMIN`).
 
+### 4.1.1. Dostęp do folderów KI (projekty klientów indywidualnych)
+
+**Założenia:**
+
+- Każdy katalog/folder KI (np. przypisany do klienta końcowego, miasta, obiektu) jest zasobem współdzielonym poprzez tabelę `UserFolderAccess` @supabase/schema.sql#214-229.
+- Domyślnie handlowiec (`SALES_REP`) widzi tylko foldery, do których ma aktywny wpis (`userId`, `folderName`, `isActive=true`).
+- `SALES_DEPT` oraz `ADMIN` widzą wszystkie foldery i mogą filtrować po handlowcu.
+- Magazyn (`WAREHOUSE`) i produkcja (`PRODUCTION`) nie korzystają bezpośrednio z KI – pracują na zamówieniach wynikowych; ewentualny podgląd KI odbywa się przez szczegóły zamówienia, nie przez galerię.
+
+**Moduł admina „Przydziały folderów”:**
+
+1. Widok listy handlowców z kolumną „Foldery KI” (źródło: `UserFolderAccess`).
+2. Akcje: dodaj folder, zarchiwizuj (`isActive=false`), edytuj notatkę (`notes`), zapisuj kto przydzielił (`assignedBy`).
+3. Backend: REST `/api/admin/user-folder-access` (GET/POST/PATCH/DELETE) operujące na istniejącej tabeli.
+4. UI w admin panelu: modal wyboru folderu (lista dostępnych katalogów QNAP lub ręczny wpis), możliwość hurtowego przypisania.
+
+**Nowi klienci / logowanie gościnne:**
+
+- Dla klienta zewnętrznego zakładamy konto (rola `CLIENT` lub `NEW_USER`) i tworzymy wpis `UserFolderAccess` z folderem dedykowanym (np. `KI_CLIENT_123`).
+- Niezalogowany użytkownik może uzyskać ograniczony dostęp przez token/link podpisany przez admina, który wskazuje folder i weryfikuje wpis w `UserFolderAccess`. Po zalogowaniu otrzymuje zwykły kontekst.
+- W UI trybu KI należy respektować listę folderów z `/api/user-folder-access` zarówno dla zalogowanych handlowców, jak i klientów.
+
+**TODO (Faza KI):**
+
+1. [ ] Endpoint `GET /api/user-folder-access` zwracający aktywne foldery dla bieżącego użytkownika (role `SALES_DEPT`/`ADMIN` mogą dodać filtr `userId`).
+2. [ ] Zabezpieczenie endpointów galerii (`/api/gallery/...`) przez `requireRole` + filtr folderów z `UserFolderAccess`.
+3. [ ] Aktualizacja `scripts/app.js`, aby w trybie KI ładować tylko przypisane foldery (lub wszystkie dla ról uprzywilejowanych) oraz obsłużyć tryb „link z tokenem”.
+4. [ ] Panel admina do zarządzania przydziałami folderów (UI + logowanie zmian).
+
+Takie podejście skaluje się na handlowców, adminów oraz klientów, zapewniając kontrolę nad tym, kto widzi dany zestaw projektów.
+
 ---
 
 ## 4. Roadmapa Rozwoju (Krok po Kroku)
@@ -172,6 +203,12 @@ Notatka: rola `MANAGEMENT` jest zaprojektowana jako **read-only** – bez możli
     *   **Migracja:** dodać skrypt SQL tworzący nowe tabele + widoki pomocnicze (np. `vw_user_templates`), przygotować seedy dla przykładowych szablonów.
 
 #### 3.4. Struktura SQL modułu szablonów
+
+**Status – 28.11.2025:**
+
+- ✅ Backend: kompletne API (`GET/POST/PATCH/DELETE /api/order-templates`, duplikacja, użycie, ulubione) z walidacją uprawnień.
+- ✅ Baza danych: tabele `order_templates`, `order_template_items`, `order_template_favorites` + indeksy i triggery (`supabase/schema.sql`).
+- ✅ Frontend (`scripts/app.js`): moduł `initTemplatesModule()` z UI do zapisu, wyszukiwania, filtrowania, duplikacji, ulubionych i wczytywania szablonów bezpośrednio do koszyka.
 
 ```sql
 CREATE TABLE public.order_templates (

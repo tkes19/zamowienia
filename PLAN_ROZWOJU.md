@@ -54,15 +54,21 @@
        - Możliwość złożenia zamówienia na przyszły sezon (np. maj 2026), jeśli `stockOrdered` + planowane dostawy pokryją zapotrzebowanie.
      - [ ] Opisać w dokumentacji (AI_DEV_PLAN) logikę sprawdzania, czy na daną datę ilość będzie dostępna (uwzględniając dostawy i inne rezerwacje).
 
-8. [ ] **Dodać PWA**
+8. [ ] **KI – kontrola dostępu do folderów / projektów**
+   - [ ] Panel admina „Przydziały folderów” oparty o `UserFolderAccess` (lista handlowców, akcje dodaj/wyłącz/edytuj).
+   - [ ] Endpoint `GET /api/user-folder-access` + zabezpieczenie `/api/gallery/*` filtrem folderów.
+   - [ ] Front KI pobiera tylko przydzielone foldery (handlowiec) lub wszystkie (SALES_DEPT/ADMIN).
+   - [ ] Obsługa klientów zewnętrznych: konto `CLIENT`/`NEW_USER`, przypisany folder, opcjonalny link/token gościnny.
+
+9. [ ] **Dodać PWA**
    - [ ] Manifest, ikony, ustawienia pod „Dodaj do ekranu głównego”.
    - [ ] Podstawowy service worker (cache statycznych plików, ewentualnie prosty offline).
 
-9. [ ] **Wybrać i wdrożyć hosting dla docelowej aplikacji**
+10. [ ] **Wybrać i wdrożyć hosting dla docelowej aplikacji**
    - [ ] Railway / Fly.io / VPS – jedna instancja backendu Node + frontend.
    - [ ] Konfiguracja zmiennych środowiskowych (`PORT`, `SMTP_*`, dane do bazy).
 
-9. [ ] **Zachować pliki z katalogu `SOURCE` jako szablony**
+11. [ ] **Zachować pliki z katalogu `SOURCE` jako szablony**
    - [ ] `SOURCE/list_cities.php` i `SOURCE/list_products.php` pozostawić jako przykłady do przyszłych integracji (QNAP / inne katalogi).
 
 ---

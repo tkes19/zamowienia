@@ -158,8 +158,8 @@ app.get('/clients', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), (req, res
   res.sendFile(path.join(__dirname, '../clients.html'));
 });
 
-// Widok zamówień – wymaga zalogowania jako SALES_DEPT, ADMIN, WAREHOUSE, PRODUCTION
-app.get('/orders', requireRole(['SALES_DEPT', 'ADMIN', 'WAREHOUSE', 'PRODUCTION']), (req, res) => {
+// Widok zamówień – wymaga zalogowania jako SALES_REP, SALES_DEPT, ADMIN, WAREHOUSE lub PRODUCTION
+app.get('/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN', 'WAREHOUSE', 'PRODUCTION']), (req, res) => {
   res.sendFile(path.join(__dirname, '../orders.html'));
 });
 
@@ -2073,15 +2073,30 @@ async function generateOrderNumber(userId) {
     // Pobierz shortCode użytkownika
     const { data: user, error: userError } = await supabase
         .from('User')
-        .select('shortCode')
+        .select('shortCode, name')
         .eq('id', userId)
         .single();
 
-    if (userError || !user || !user.shortCode) {
-        throw new Error('Nie znaleziono użytkownika lub brak shortCode');
+    if (userError || !user) {
+        throw new Error('Nie znaleziono użytkownika');
     }
 
-    const shortCode = user.shortCode;
+    let shortCode = user.shortCode;
+
+    // Jeśli brak shortCode, wygeneruj go automatycznie
+    if (!shortCode && user.name) {
+        shortCode = await generateShortCode(user.name);
+        // Zapisz wygenerowany shortCode do bazy
+        await supabase
+            .from('User')
+            .update({ shortCode })
+            .eq('id', userId);
+        console.log(`[generateOrderNumber] Wygenerowano shortCode "${shortCode}" dla użytkownika ${userId}`);
+    }
+
+    if (!shortCode) {
+        throw new Error('Nie można wygenerować shortCode - brak nazwy użytkownika');
+    }
     const year = new Date().getFullYear();
 
     // Policz zamówienia w danym roku

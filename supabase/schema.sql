@@ -379,6 +379,72 @@ create trigger update_order_drafts_updated_at BEFORE
 update on order_drafts for EACH row
 execute FUNCTION update_updated_at_column ();
 
+create table public.order_templates (
+  id text not null default (gen_random_uuid ())::text,
+  owner_id text not null references "User" (id) on delete CASCADE,
+  name varchar(255) not null,
+  description text null,
+  visibility varchar(20) not null default 'PRIVATE',
+  shared_with_role varchar(50) null,
+  department_id text null references "Department" (id) on delete set null,
+  tags text[] null,
+  usage_count integer not null default 0,
+  last_used_at timestamptz null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint order_templates_pkey primary key (id),
+  constraint order_templates_visibility_check check (visibility in ('PRIVATE','TEAM'))
+) TABLESPACE pg_default;
+
+create index if not exists idx_order_templates_owner_id on public.order_templates using btree (owner_id) TABLESPACE pg_default;
+create index if not exists idx_order_templates_visibility on public.order_templates using btree (visibility) TABLESPACE pg_default;
+create index if not exists idx_order_templates_tags on public.order_templates using GIN (tags) TABLESPACE pg_default;
+
+create trigger update_order_templates_updated_at BEFORE
+update on order_templates for EACH row
+execute FUNCTION update_updated_at_column ();
+
+create table public.order_template_items (
+  id text not null default (gen_random_uuid ())::text,
+  template_id text not null,
+  product_id text not null,
+  quantity numeric(10, 2) not null,
+  unit_price numeric(10, 2) not null,
+  selected_projects text null,
+  project_quantities jsonb null,
+  total_quantity numeric(10, 2) not null default 0,
+  source character varying(50) not null default 'MIEJSCOWOSCI'::character varying,
+  location_name character varying(255) null,
+  project_name character varying(255) null,
+  customization text null,
+  production_notes text null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint order_template_items_pkey primary key (id),
+  constraint order_template_items_template_id_fkey foreign key (template_id) references order_templates (id) on delete CASCADE,
+  constraint order_template_items_product_id_fkey foreign key (product_id) references "Product" (id),
+  constraint order_template_items_quantity_check check ((quantity > (0)::numeric)),
+  constraint order_template_items_total_quantity_check check ((total_quantity >= (0)::numeric)),
+  constraint order_template_items_unit_price_check check ((unit_price >= (0)::numeric))
+) TABLESPACE pg_default;
+
+create index if not exists idx_order_template_items_template on public.order_template_items using btree (template_id) TABLESPACE pg_default;
+create index if not exists idx_order_template_items_product on public.order_template_items using btree (product_id) TABLESPACE pg_default;
+
+create trigger update_order_template_items_updated_at BEFORE
+update on order_template_items for EACH row
+execute FUNCTION update_updated_at_column ();
+
+create table public.order_template_favorites (
+  template_id text not null,
+  user_id text not null,
+  created_at timestamptz not null default now(),
+  constraint order_template_favorites_pkey primary key (template_id, user_id),
+  constraint order_template_favorites_template_id_fkey foreign key (template_id) references order_templates (id) on delete CASCADE,
+  constraint order_template_favorites_user_id_fkey foreign key (user_id) references "User" (id) on delete CASCADE
+) TABLESPACE pg_default;
+
 create table public."OrderStatusHistory" (
   id text not null default (gen_random_uuid ())::text,
   "orderId" text not null,
