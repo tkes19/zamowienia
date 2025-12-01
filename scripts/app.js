@@ -190,12 +190,15 @@ function formatGalleryProductLabel(slug = '') {
 async function getCurrentUserRole() {
   try {
     const response = await fetch('/api/auth/me', { credentials: 'include' });
-    if (!response.ok) return null;
+    if (response.status === 401) {
+      return 'GUEST';
+    }
+    if (!response.ok) return 'GUEST';
     const result = await response.json();
-    return result.role || null;
+    return result.role || 'GUEST';
   } catch (error) {
     console.error('Błąd pobierania roli użytkownika:', error);
-    return null;
+    return 'GUEST';
   }
 }
 
@@ -220,6 +223,7 @@ async function loadGalleryCities() {
     
     // Sprawdź rolę użytkownika, aby zdecydować o filtrowaniu
     const currentUserRole = await getCurrentUserRole();
+    const isGuest = currentUserRole === 'GUEST' || !currentUserRole;
     console.log('[DEBUG] Current user role:', currentUserRole);
     
     let userAssignedCities = [];
@@ -242,12 +246,17 @@ async function loadGalleryCities() {
       const assignedCities = new Set(data.assignedCities);
       visibleCities = visibleCities.filter(city => assignedCities.has(city));
       console.log('[DEBUG] Cities filtered by user access (SALES_REP/CLIENT):', visibleCities.length);
+    } else if (isGuest) {
+      // Gość widzi wszystkie miasta w trybie tylko do odczytu
+      document.body.classList.add('read-only-mode');
+      setGalleryPlaceholder('Zaloguj się, aby składać zamówienia. Możesz przeglądać listę w trybie podglądu.');
+      userAssignedCities = [];
     } else {
       // Brak przypisań - pokaż pustą listę
       visibleCities = [];
     }
-    
-    if (!visibleCities.length && !['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(currentUserRole)) {
+
+    if (!visibleCities.length && !['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(currentUserRole) && !isGuest) {
       // Jeśli użytkownik nie ma przypisań, pokaż opcję "Wszystkie miejscowości" do przeglądania
       if (data.assignedCities && data.assignedCities.length === 0) {
         // Pobierz wszystkie miasta (bez folderów technicznych) do opcji "Wszystkie miejscowości"
