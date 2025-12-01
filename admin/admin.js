@@ -1,4 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Sprawdź uprawnienia użytkownika i dostosuj UI
+    checkUserPermissionsAndAdaptUI();
+    
     const tableBody = document.getElementById('products-table-body');
     const searchInput = document.getElementById('search-input');
     const categoryFilter = document.getElementById('category-filter');
@@ -22,6 +25,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const statsOut = document.getElementById('stats-out');
     const statsValue = document.getElementById('stats-value');
     const tableInfo = document.getElementById('table-info');
+
+    // Folder Access module elements
+    const folderAccessModal = document.getElementById('folder-access-modal');
+    const folderAccessModalTitle = document.getElementById('folder-access-modal-title');
+    const folderAccessModalClose = document.getElementById('folder-access-modal-close');
+    const folderAccessForm = document.getElementById('folder-access-form');
+    const folderAccessSubmitBtn = document.querySelector('button[form="folder-access-form"][type="submit"]');
+    const folderAccessTableBody = document.getElementById('folder-access-table-body');
+    const folderAccessSearch = document.getElementById('folder-access-search');
+    const folderAccessUserFilter = document.getElementById('folder-access-user-filter');
+    const folderAccessStatusFilter = document.getElementById('folder-access-status-filter');
+    const folderAccessUserSelect = document.getElementById('folder-access-user-select');
+    const folderAccessActiveField = document.getElementById('folder-access-active-field');
+    const folderSuggestions = document.getElementById('folder-suggestions');
+    const newFolderAccessBtn = document.getElementById('new-folder-access-btn');
+    const refreshFolderAccessBtn = document.getElementById('refresh-folder-access-btn');
+    const folderAccessCancelBtn = document.getElementById('folder-access-cancel-btn');
 
     let allProducts = [];
     let filteredProducts = [];
@@ -1409,7 +1429,7 @@ document.addEventListener('DOMContentLoaded', () => {
             detailsRow.id = `details-${orderId}`;
             detailsRow.className = 'bg-indigo-50 border-t-2 border-indigo-200 details-row';
 
-            const orderItems = fullOrder.OrderItem || [];
+            const orderItems = fullOrder.items || fullOrder.OrderItem || [];
             const showSourceBadge = hasMixedSources(orderItems);
             
             const itemsHtml = orderItems.map(item => {
@@ -1418,14 +1438,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
                 const sourceBadge = getSourceBadge(item.source, showSourceBadge);
                 const locationDisplay = item.locationName || '-';
+                const notesDisplay = item.productionNotes || '';
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
-                    <td class="p-3 text-sm font-medium text-gray-800">${productLabel}</td>
-                    <td class="p-3 text-sm text-gray-700">${item.selectedProjects || '-'}</td>
-                    <td class="p-3 text-sm text-center text-gray-700">${item.quantity}</td>
-                    <td class="p-3 text-sm text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
-                    <td class="p-3 text-sm text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td class="p-3 text-sm text-gray-700">${sourceBadge}${locationDisplay}</td>
+                    <td class="p-2 text-xs font-medium text-gray-800">${productLabel}</td>
+                    <td class="p-2 text-xs text-gray-700">${item.selectedProjects || '-'}</td>
+                    <td class="p-2 text-xs text-center text-gray-700">${item.quantity}</td>
+                    <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
+                    <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
+                    <td class="p-2 text-xs text-gray-700">${sourceBadge}${locationDisplay}</td>
+                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplay}</td>
                 </tr>`;
             }).join('');
 
@@ -1448,15 +1470,16 @@ document.addEventListener('DOMContentLoaded', () => {
                             <table class="w-full text-xs">
                                 <thead class="bg-indigo-100 border-b border-indigo-200">
                                     <tr>
-                                        <th class="p-2 text-left font-semibold text-gray-800">Produkt</th>
-                                        <th class="p-2 text-left font-semibold text-gray-800">Projekty</th>
-                                        <th class="p-2 text-center font-semibold text-gray-800">Ilość</th>
-                                        <th class="p-2 text-right font-semibold text-gray-800">Cena j.</th>
-                                        <th class="p-2 text-right font-semibold text-gray-800">Wartość</th>
-                                        <th class="p-2 text-left font-semibold text-gray-800">Lokalizacja</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs">Produkt</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs">Projekty</th>
+                                        <th class="p-2 text-center font-semibold text-gray-800 text-xs">Ilość</th>
+                                        <th class="p-2 text-right font-semibold text-gray-800 text-xs">Cena j.</th>
+                                        <th class="p-2 text-right font-semibold text-gray-800 text-xs">Wartość</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs">Lokalizacja</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs">Uwagi</th>
                                     </tr>
                                 </thead>
-                                <tbody>${itemsHtml || '<tr><td colspan="6" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}</tbody>
+                                <tbody>${itemsHtml || '<tr><td colspan="7" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}</tbody>
                             </table>
                         </div>
                         <div class="flex gap-3 items-end">
@@ -1570,7 +1593,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             const order = result.data;
 
-            const printOrderItems = order.OrderItem || [];
+            const printOrderItems = order.items || order.OrderItem || [];
             const printShowSourceBadge = hasMixedSources(printOrderItems);
             
             const itemsHtml = printOrderItems.map(item => {
@@ -1579,7 +1602,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
                 const sourcePrefix = printShowSourceBadge && item.source ? `[${SOURCE_LABELS[item.source] || item.source}] ` : '';
                 const locationDisplay = item.locationName || '-';
-                return `<tr><td>${productLabel}</td><td>${item.selectedProjects || '-'}</td><td style="text-align: center;">${item.quantity}</td><td style="text-align: right;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align: right;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td>${sourcePrefix}${locationDisplay}</td></tr>`;
+                const notesDisplay = item.productionNotes || '';
+                return `<tr><td style="font-size:8px;">${productLabel}</td><td style="font-size:8px;">${item.selectedProjects || '-'}</td><td style="text-align:center;font-size:8px;">${item.quantity}</td><td style="text-align:right;font-size:8px;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align:right;font-size:8px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td style="font-size:8px;">${sourcePrefix}${locationDisplay}</td><td style="font-size:7px;font-style:italic;color:#666;">${notesDisplay}</td></tr>`;
             }).join('');
 
             const createdDate = new Date(order.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -1598,7 +1622,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div class="print-section">
                         <div class="print-section-title">Pozycje</div>
-                        <table class="print-table"><thead><tr><th>Produkt</th><th>Projekty</th><th style="text-align: center;">Ilość</th><th style="text-align: right;">Cena j.</th><th style="text-align: right;">Wartość</th><th>Lokalizacja</th></tr></thead><tbody>${itemsHtml || '<tr><td colspan="6" style="text-align: center; color: #999;">Brak pozycji</td></tr>'}</tbody></table>
+                        <table class="print-table"><thead><tr><th style="font-size:8px;">Produkt</th><th style="font-size:8px;">Projekty</th><th style="text-align:center;font-size:8px;">Ilość</th><th style="text-align:right;font-size:8px;">Cena j.</th><th style="text-align:right;font-size:8px;">Wartość</th><th style="font-size:8px;">Lokalizacja</th><th style="font-size:8px;">Uwagi</th></tr></thead><tbody>${itemsHtml || '<tr><td colspan="7" style="text-align: center; color: #999;">Brak pozycji</td></tr>'}</tbody></table>
                     </div>
                     <div class="print-total">Razem: ${(order.total || 0).toFixed(2)} zł</div>
                     ${order.notes ? `<div class="print-section" style="margin-top: 8px;"><div class="print-section-title">Notatki</div><div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${order.notes}</div></div>` : ''}
@@ -1667,7 +1691,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (editOrderNumber) editOrderNumber.textContent = order.orderNumber;
 
-            const itemsHtml = (order.OrderItem || []).map((item, itemIndex) => {
+            const itemsHtml = (order.items || order.OrderItem || []).map((item, itemIndex) => {
                 const identifier = item.Product?.identifier || '-';
                 const productIndex = item.Product?.index || '-';
                 const productLabel = (productIndex && productIndex !== '-' && productIndex !== identifier) ? `${identifier} (${productIndex})` : identifier;
@@ -1892,9 +1916,1106 @@ document.addEventListener('DOMContentLoaded', () => {
             // Załaduj dane dla wybranego widoku
             if (viewName === 'orders') {
                 loadOrders();
+            } else if (viewName === 'folder-access') {
+                loadFolderAccess();
+            } else if (viewName === 'city-access') {
+                loadCityAccess();
             }
         });
     });
+
+    // ============================================
+    // MODUŁ: PRZYPISANIA FOLDERÓW KI
+    // ============================================
+    
+    let allFolderAccess = [];
+    let allQnapFolders = [];
+    let folderAccessUsers = [];
+    
+    
+    // Event listenery dla folderów KI
+    if (newFolderAccessBtn) newFolderAccessBtn.addEventListener('click', () => openFolderAccessModal());
+    if (refreshFolderAccessBtn) refreshFolderAccessBtn.addEventListener('click', loadFolderAccess);
+    if (folderAccessModalClose) folderAccessModalClose.addEventListener('click', closeFolderAccessModal);
+    if (folderAccessCancelBtn) folderAccessCancelBtn.addEventListener('click', closeFolderAccessModal);
+    if (folderAccessForm) folderAccessForm.addEventListener('submit', handleFolderAccessSubmit);
+    if (folderAccessSearch) folderAccessSearch.addEventListener('input', filterFolderAccess);
+    if (folderAccessUserFilter) folderAccessUserFilter.addEventListener('change', filterFolderAccess);
+    if (folderAccessStatusFilter) folderAccessStatusFilter.addEventListener('change', filterFolderAccess);
+    if (folderAccessTableBody) folderAccessTableBody.addEventListener('click', handleFolderAccessTableClick);
+    
+    async function loadFolderAccess() {
+        if (!folderAccessTableBody) return;
+        
+        folderAccessTableBody.innerHTML = `
+            <tr>
+                <td colspan="7" class="p-8 text-center text-gray-500">
+                    <div class="flex flex-col items-center gap-2">
+                        <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                        <span>Ładowanie danych...</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+        
+        try {
+            // Pobierz przypisania
+            const accessResponse = await fetch('/api/admin/user-folder-access');
+            const accessResult = await accessResponse.json();
+            
+            if (accessResult.status === 'success') {
+                allFolderAccess = accessResult.data || [];
+            } else {
+                throw new Error(accessResult.message || 'Błąd pobierania przypisań');
+            }
+            
+            // Pobierz użytkowników (do filtra i selecta)
+            const usersResponse = await fetch('/api/admin/users');
+            const usersResult = await usersResponse.json();
+            
+            if (usersResult.status === 'success') {
+                folderAccessUsers = usersResult.data || [];
+                populateFolderAccessUserFilter();
+                populateFolderAccessUserSelect();
+            }
+            
+            // Pobierz foldery z QNAP (do autouzupełniania)
+            try {
+                const foldersResponse = await fetch('/api/gallery/salespeople');
+                const foldersResult = await foldersResponse.json();
+                if (foldersResult.salesPeople) {
+                    allQnapFolders = foldersResult.salesPeople;
+                    populateFolderSuggestions();
+                }
+            } catch (e) {
+                console.warn('Nie udało się pobrać folderów z QNAP:', e);
+            }
+            
+            filterFolderAccess();
+            updateFolderAccessStats();
+            
+        } catch (error) {
+            console.error('Błąd ładowania przypisań folderów:', error);
+            folderAccessTableBody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-8 text-center text-red-500">
+                        <div class="flex flex-col items-center gap-2">
+                            <i class="fas fa-exclamation-triangle text-2xl"></i>
+                            <span>Błąd: ${error.message}</span>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+    }
+    
+    function populateFolderAccessUserFilter() {
+        if (!folderAccessUserFilter) return;
+        
+        const currentValue = folderAccessUserFilter.value;
+        folderAccessUserFilter.innerHTML = '<option value="">Wszyscy użytkownicy</option>';
+        
+        // Tylko użytkownicy którzy mają przypisania
+        const usersWithAccess = [...new Set(allFolderAccess.map(a => a.userId))];
+        const relevantUsers = folderAccessUsers.filter(u => usersWithAccess.includes(u.id));
+        
+        relevantUsers.forEach(user => {
+            const option = document.createElement('option');
+            option.value = user.id;
+            option.textContent = user.name || user.email;
+            folderAccessUserFilter.appendChild(option);
+        });
+        
+        folderAccessUserFilter.value = currentValue;
+    }
+    
+    function populateFolderAccessUserSelect() {
+        if (!folderAccessUserSelect) return;
+        
+        folderAccessUserSelect.innerHTML = '<option value="">Wybierz użytkownika...</option>';
+        
+        // Grupuj użytkowników po roli
+        const roleOrder = ['SALES_REP', 'CLIENT', 'SALES_DEPT', 'NEW_USER', 'ADMIN'];
+        const roleLabels = {
+            'ADMIN': 'Administratorzy',
+            'SALES_REP': 'Handlowcy',
+            'SALES_DEPT': 'Dział Sprzedaży',
+            'NEW_USER': 'Nowi użytkownicy',
+            'CLIENT': 'Klienci zewnętrzni',
+            'WAREHOUSE': 'Magazyn',
+            'PRODUCTION': 'Produkcja',
+            'GRAPHICS': 'Graficy'
+        };
+        
+        roleOrder.forEach(role => {
+            const usersInRole = folderAccessUsers.filter(u => u.role === role && u.isActive);
+            if (usersInRole.length > 0) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = roleLabels[role] || role;
+                
+                usersInRole.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = user.name || user.email;
+                    optgroup.appendChild(option);
+                });
+                
+                folderAccessUserSelect.appendChild(optgroup);
+            }
+        });
+    }
+    
+    function populateFolderSuggestions() {
+        if (!folderSuggestions) return;
+        
+        folderSuggestions.innerHTML = '';
+        allQnapFolders.forEach(folder => {
+            const option = document.createElement('option');
+            option.value = folder;
+            folderSuggestions.appendChild(option);
+        });
+    }
+    
+    function filterFolderAccess() {
+        const searchTerm = folderAccessSearch?.value?.toLowerCase() || '';
+        const userFilter = folderAccessUserFilter?.value || '';
+        const statusFilter = folderAccessStatusFilter?.value || '';
+        
+        let filtered = allFolderAccess;
+        
+        if (searchTerm) {
+            filtered = filtered.filter(a => 
+                a.folderName?.toLowerCase().includes(searchTerm) ||
+                a.user?.name?.toLowerCase().includes(searchTerm) ||
+                a.user?.email?.toLowerCase().includes(searchTerm)
+            );
+        }
+        
+        if (userFilter) {
+            filtered = filtered.filter(a => a.userId === userFilter);
+        }
+        
+        if (statusFilter === 'active') {
+            filtered = filtered.filter(a => a.isActive);
+        } else if (statusFilter === 'inactive') {
+            filtered = filtered.filter(a => !a.isActive);
+        }
+        
+        renderFolderAccessTable(filtered);
+        
+        const tableInfo = document.getElementById('folder-access-table-info');
+        if (tableInfo) {
+            tableInfo.textContent = `Pokazuje ${filtered.length} z ${allFolderAccess.length} przypisań`;
+        }
+    }
+    
+    function renderFolderAccessTable(data) {
+        if (!folderAccessTableBody) return;
+        
+        if (data.length === 0) {
+            folderAccessTableBody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-8 text-center text-gray-500">
+                        <div class="flex flex-col items-center gap-2">
+                            <i class="fas fa-folder-open text-4xl text-gray-300"></i>
+                            <span>Brak przypisań folderów</span>
+                            <button onclick="document.getElementById('new-folder-access-btn').click()" class="text-blue-600 hover:underline text-sm">
+                                Dodaj pierwsze przypisanie
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        const roleLabels = {
+            'ADMIN': 'Admin',
+            'SALES_REP': 'Handlowiec',
+            'SALES_DEPT': 'Dz. Sprzedaży',
+            'NEW_USER': 'Nowy',
+            'CLIENT': 'Klient',
+            'WAREHOUSE': 'Magazyn',
+            'PRODUCTION': 'Produkcja'
+        };
+        
+        const roleBadgeColors = {
+            'ADMIN': 'bg-red-100 text-red-700',
+            'SALES_REP': 'bg-blue-100 text-blue-700',
+            'SALES_DEPT': 'bg-green-100 text-green-700',
+            'NEW_USER': 'bg-gray-100 text-gray-700',
+            'CLIENT': 'bg-purple-100 text-purple-700'
+        };
+        
+        folderAccessTableBody.innerHTML = data.map(access => {
+            const userName = access.user?.name || 'Nieznany';
+            const userEmail = access.user?.email || '';
+            const userRole = access.user?.role || '';
+            const assignedByName = access.assignedByUser?.name || access.assignedByUser?.email || '—';
+            const createdAt = access.createdAt ? new Date(access.createdAt).toLocaleDateString('pl-PL') : '—';
+            const notes = access.notes || '';
+            const notesShort = notes.length > 30 ? notes.substring(0, 30) + '...' : notes;
+            
+            const statusBadge = access.isActive 
+                ? '<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Aktywny</span>'
+                : '<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">Nieaktywny</span>';
+            
+            const roleBadge = `<span class="px-2 py-0.5 text-xs font-medium rounded ${roleBadgeColors[userRole] || 'bg-gray-100 text-gray-700'}">${roleLabels[userRole] || userRole}</span>`;
+            
+            return `
+                <tr class="hover:bg-gray-50 ${!access.isActive ? 'opacity-60' : ''}">
+                    <td class="p-4">
+                        <div class="font-medium text-gray-900">${userName}</div>
+                        <div class="text-xs text-gray-500">${userEmail}</div>
+                        <div class="mt-1">${roleBadge}</div>
+                    </td>
+                    <td class="p-4">
+                        <div class="font-mono text-sm bg-gray-100 px-2 py-1 rounded inline-block">${access.folderName}</div>
+                    </td>
+                    <td class="p-4 text-center">${statusBadge}</td>
+                    <td class="p-4 text-sm text-gray-600">${assignedByName}</td>
+                    <td class="p-4 text-sm text-gray-500">${createdAt}</td>
+                    <td class="p-4 text-sm text-gray-600" title="${notes}">${notesShort || '<span class="text-gray-400">—</span>'}</td>
+                    <td class="p-4 text-right">
+                        <div class="flex justify-end gap-2">
+                            <button class="folder-access-toggle-btn px-3 py-1 text-xs rounded border ${access.isActive ? 'border-amber-300 text-amber-700 hover:bg-amber-50' : 'border-green-300 text-green-700 hover:bg-green-50'}" data-id="${access.id}" data-active="${access.isActive}">
+                                ${access.isActive ? 'Dezaktywuj' : 'Aktywuj'}
+                            </button>
+                            <button class="folder-access-edit-btn px-2 py-1 text-gray-600 hover:text-blue-600" data-id="${access.id}" title="Edytuj">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="folder-access-delete-btn px-2 py-1 text-gray-600 hover:text-red-600" data-id="${access.id}" title="Usuń">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+    
+    function updateFolderAccessStats() {
+        const activeCount = allFolderAccess.filter(a => a.isActive).length;
+        const uniqueUsers = new Set(allFolderAccess.filter(a => a.isActive).map(a => a.userId)).size;
+        const uniqueFolders = new Set(allFolderAccess.filter(a => a.isActive).map(a => a.folderName)).size;
+        
+        const statsActive = document.getElementById('folder-stats-active');
+        const statsUsers = document.getElementById('folder-stats-users');
+        const statsFolders = document.getElementById('folder-stats-folders');
+        
+        if (statsActive) statsActive.textContent = activeCount;
+        if (statsUsers) statsUsers.textContent = uniqueUsers;
+        if (statsFolders) statsFolders.textContent = uniqueFolders;
+    }
+    
+    function openFolderAccessModal(accessData = null) {
+        if (!folderAccessModal || !folderAccessForm) return;
+        
+        folderAccessForm.reset();
+        folderAccessForm.querySelector('[name="id"]').value = '';
+        
+        if (accessData) {
+            folderAccessModalTitle.textContent = 'Edytuj przypisanie';
+            folderAccessForm.querySelector('[name="id"]').value = accessData.id;
+            folderAccessForm.querySelector('[name="userId"]').value = accessData.userId;
+            folderAccessForm.querySelector('[name="userId"]').disabled = true;
+            folderAccessForm.querySelector('[name="folderName"]').value = accessData.folderName;
+            folderAccessForm.querySelector('[name="notes"]').value = accessData.notes || '';
+            folderAccessForm.querySelector('[name="isActive"]').checked = accessData.isActive;
+            folderAccessActiveField?.classList.remove('hidden');
+        } else {
+            folderAccessModalTitle.textContent = 'Nowe przypisanie folderu';
+            folderAccessForm.querySelector('[name="userId"]').disabled = false;
+            folderAccessActiveField?.classList.add('hidden');
+        }
+        
+        folderAccessModal.classList.remove('hidden');
+    }
+    
+    function closeFolderAccessModal() {
+        if (folderAccessModal) {
+            folderAccessModal.classList.add('hidden');
+        }
+    }
+    
+    async function handleFolderAccessSubmit(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(folderAccessForm);
+        const id = formData.get('id');
+        const userId = formData.get('userId');
+        const folderName = formData.get('folderName')?.trim();
+        const notes = formData.get('notes')?.trim();
+        const isActive = folderAccessForm.querySelector('[name="isActive"]')?.checked ?? true;
+        
+        if (!userId || !folderName) {
+            alert('Wybierz użytkownika i podaj nazwę folderu');
+            return;
+        }
+        
+        const submitBtn = folderAccessSubmitBtn || folderAccessForm.querySelector('button[type="submit"]');
+        const originalText = submitBtn?.innerHTML;
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Zapisywanie...';
+        }
+        
+        try {
+            let response;
+            
+            if (id) {
+                // Aktualizacja
+                response = await fetch(`/api/admin/user-folder-access/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderName, notes, isActive })
+                });
+            } else {
+                // Nowe przypisanie
+                response = await fetch('/api/admin/user-folder-access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, folderName, notes })
+                });
+            }
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                closeFolderAccessModal();
+                loadFolderAccess();
+            } else {
+                alert('Błąd: ' + (result.message || 'Nie udało się zapisać'));
+            }
+        } catch (error) {
+            console.error('Błąd zapisu przypisania:', error);
+            alert('Wystąpił błąd podczas zapisywania');
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalText;
+            }
+        }
+    }
+    
+    async function handleFolderAccessTableClick(e) {
+        const toggleBtn = e.target.closest('.folder-access-toggle-btn');
+        const editBtn = e.target.closest('.folder-access-edit-btn');
+        const deleteBtn = e.target.closest('.folder-access-delete-btn');
+        
+        if (toggleBtn) {
+            const id = toggleBtn.dataset.id;
+            const currentActive = toggleBtn.dataset.active === 'true';
+            
+            try {
+                const response = await fetch(`/api/admin/user-folder-access/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ isActive: !currentActive })
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    loadFolderAccess();
+                } else {
+                    alert('Błąd: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Błąd zmiany statusu:', error);
+            }
+        }
+        
+        if (editBtn) {
+            const id = editBtn.dataset.id;
+            const accessData = allFolderAccess.find(a => a.id == id);
+            if (accessData) {
+                openFolderAccessModal(accessData);
+            }
+        }
+        
+        if (deleteBtn) {
+            const id = deleteBtn.dataset.id;
+            if (!confirm('Czy na pewno chcesz usunąć to przypisanie? Ta operacja jest nieodwracalna.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/admin/user-folder-access/${id}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    loadFolderAccess();
+                } else {
+                    alert('Błąd: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Błąd usuwania:', error);
+                alert('Wystąpił błąd podczas usuwania');
+            }
+        }
+    }
+
+    // ============================================
+    // MODUŁ: PRZYPISANIA MIEJSCOWOŚCI PM (KAFELKI)
+    // ============================================
+    
+    let allQnapCities = [];
+    let cityAccessUsers = [];
+    let selectedUserCityAccess = []; // przypisania wybranego użytkownika
+    let selectedUserId = null;
+    let cityTilesLoading = false;
+    
+    // DOM elements for city access tiles
+    const cityAccessUserSelect = document.getElementById('city-access-user-select');
+    const cityTilesContainer = document.getElementById('city-tiles-container');
+    const cityTilesSearch = document.getElementById('city-tiles-search');
+    const cityTilesSort = document.getElementById('city-tiles-sort');
+    const cityTilesShowAssignedOnly = document.getElementById('city-tiles-show-assigned-only');
+    const refreshCityAccessBtn = document.getElementById('refresh-city-access-btn');
+    
+    // Event listenery dla kafelków miejscowości
+    if (refreshCityAccessBtn) refreshCityAccessBtn.addEventListener('click', () => loadCityTilesData());
+    if (cityAccessUserSelect) cityAccessUserSelect.addEventListener('change', handleUserSelectChange);
+    if (cityTilesSearch) cityTilesSearch.addEventListener('input', debounce(renderCityTiles, 200));
+    if (cityTilesSort) cityTilesSort.addEventListener('change', renderCityTiles);
+    if (cityTilesShowAssignedOnly) cityTilesShowAssignedOnly.addEventListener('change', renderCityTiles);
+    
+    async function loadCityAccess() {
+        // Sprawdź rolę użytkownika
+        try {
+            const authResponse = await fetch('/api/auth/me');
+            const authResult = await authResponse.json();
+            
+            if (authResult.status === 'success' && authResult.role === 'GRAPHICS') {
+                // Dla GRAPHICS pokaż specjalny widok nieprzypisanych miejscowości
+                await loadUnassignedCitiesView();
+            } else {
+                // Dla ADMIN i SALES_DEPT pokaż standardowy widok
+                await loadCityTilesData();
+            }
+        } catch (error) {
+            console.error('Błąd sprawdzania roli:', error);
+            await loadCityTilesData();
+        }
+    }
+    
+    // Funkcja specjalnego widoku dla GRAPHICS - nieprzypisane miejscowości
+    async function loadUnassignedCitiesView() {
+        try {
+            // Ukryj standardowe kontrolki dla GRAPHICS
+            if (cityAccessUserSelect) cityAccessUserSelect.parentElement.style.display = 'none';
+            if (cityTilesSearch) cityTilesSearch.parentElement.style.display = 'none';
+            if (cityTilesSort) cityTilesSort.parentElement.style.display = 'none';
+            if (cityTilesShowAssignedOnly) cityTilesShowAssignedOnly.parentElement.style.display = 'none';
+            
+            // Pobierz użytkowników do selecta
+            const usersResponse = await fetch('/api/admin/users');
+            const usersResult = await usersResponse.json();
+            if (usersResult.status === 'success') {
+                cityAccessUsers = usersResult.data || [];
+            }
+            
+            // Pokaż informację o przeznaczeniu widoku
+            if (cityTilesContainer) {
+                cityTilesContainer.innerHTML = `
+                    <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <i class="fas fa-info-circle text-blue-600 text-xl"></i>
+                            <div>
+                                <h3 class="font-semibold text-blue-900">Widok Grafika - Nowe miejscowości</h3>
+                                <p class="text-sm text-blue-700 mt-1">
+                                    Poniżej znajdują się miejscowości, które nie są jeszcze przypisane do żadnego handlowca.
+                                    Wybierz handlowca i kliknij "Przypisz", aby przypisać miejscowość.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="unassigned-cities-list" class="space-y-4">
+                        <div class="flex justify-center items-center py-8">
+                            <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                            <span class="ml-2 text-gray-500">Ładowanie nieprzypisanych miejscowości...</span>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Pobierz nieprzypisane miejscowości
+            const response = await fetch('/api/admin/unassigned-cities');
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                renderUnassignedCitiesList(result.data);
+            } else {
+                throw new Error(result.message || 'Błąd pobierania danych');
+            }
+            
+        } catch (error) {
+            console.error('Błąd ładowania widoku nieprzypisanych miejscowości:', error);
+            if (cityTilesContainer) {
+                cityTilesContainer.innerHTML = `
+                    <div class="text-center py-8 text-red-500">
+                        <i class="fas fa-exclamation-circle text-2xl mb-2"></i>
+                        <p>Błąd ładowania danych: ${error.message}</p>
+                        <button onclick="loadCityAccess()" class="mt-2 text-blue-600 underline text-sm">Spróbuj ponownie</button>
+                    </div>
+                `;
+            }
+        }
+    }
+    
+    // Funkcja renderująca listę nieprzypisanych miejscowości dla GRAPHICS
+    function renderUnassignedCitiesList(data) {
+        const container = document.getElementById('unassigned-cities-list');
+        if (!container) return;
+        
+        if (data.unassignedCities.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 text-green-600">
+                    <i class="fas fa-check-circle text-4xl mb-2"></i>
+                    <p class="font-semibold">Wszystkie miejscowości są przypisane!</p>
+                    <p class="text-sm text-gray-500 mt-1">Nie ma nowych miejscowości wymagających przypisania.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Pobierz listę handlowców
+        const salespeople = cityAccessUsers.filter(user => 
+            ['SALES_REP', 'SALES_DEPT'].includes(user.role) && user.isActive
+        );
+        
+        container.innerHTML = `
+            <div class="mb-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="font-semibold text-gray-800">
+                        Nieprzypisane miejscowości (${data.unassignedCities.length})
+                    </h3>
+                    <div class="text-sm text-gray-500">
+                        Razem miejscowości: ${data.stats.total} | Przypisane: ${data.stats.assigned}
+                    </div>
+                </div>
+            </div>
+            <div class="grid gap-3">
+                ${data.unassignedCities.map(city => `
+                    <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div class="flex items-center justify-between flex-wrap gap-2">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                                    <i class="fas fa-map-marker-alt text-amber-600"></i>
+                                </div>
+                                <div>
+                                    <h4 class="font-medium text-gray-900">${city}</h4>
+                                    <p class="text-sm text-gray-500">Nieprzypisana miejscowość</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <select class="city-assignment-select px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" data-city="${city}">
+                                    <option value="">Wybierz handlowca</option>
+                                    ${salespeople.map(user => `
+                                        <option value="${user.id}">${user.name} (${user.email})</option>
+                                    `).join('')}
+                                </select>
+                                <button class="assign-city-btn px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors" data-city="${city}">
+                                    <i class="fas fa-plus mr-1"></i> Przypisz
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+        // Dodaj event listenery do przycisków przypisania
+        container.querySelectorAll('.assign-city-btn').forEach(btn => {
+            btn.addEventListener('click', handleAssignCityFromUnassigned);
+        });
+    }
+    
+    // Funkcja obsługująca przypisanie miejscowości z widoku GRAPHICS
+    async function handleAssignCityFromUnassigned(event) {
+        const btn = event.currentTarget;
+        const cityName = btn.dataset.city;
+        const select = btn.parentElement.querySelector('.city-assignment-select');
+        const userId = select.value;
+        
+        if (!userId) {
+            alert('Proszę wybrać handlowca');
+            return;
+        }
+        
+        const originalBtnText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Przypisywanie...';
+        
+        try {
+            const response = await fetch('/api/admin/user-city-access', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId, cityName })
+            });
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                // Sukces - odśwież widok
+                await loadUnassignedCitiesView();
+                
+                // Pokaż krótkie powiadomienie
+                const notification = document.createElement('div');
+                notification.className = 'fixed top-4 right-4 bg-green-50 border border-green-200 rounded-lg p-3 shadow-lg z-50';
+                notification.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-check-circle text-green-600"></i>
+                        <span class="text-sm text-green-800">Miejscowość ${cityName} została przypisana</span>
+                    </div>
+                `;
+                document.body.appendChild(notification);
+                setTimeout(() => notification.remove(), 3000);
+                
+            } else {
+                throw new Error(result.message || 'Błąd przypisania');
+            }
+        } catch (error) {
+            console.error('Błąd przypisania miejscowości:', error);
+            alert('Błąd: ' + error.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalBtnText;
+        }
+    }
+    
+    async function loadCityTilesData() {
+        try {
+            // Pobierz użytkowników
+            const usersResponse = await fetch('/api/admin/users');
+            const usersResult = await usersResponse.json();
+            
+            if (usersResult.status === 'success') {
+                cityAccessUsers = usersResult.data || [];
+                populateCityAccessUserSelect();
+            }
+            
+            // Pobierz miejscowości z QNAP i przefiltruj foldery zaczynające się od '00_'
+            const citiesResponse = await fetch('/api/gallery/cities?' + Date.now()); // Dodaj timestamp, aby uniknąć cache
+            const citiesResult = await citiesResponse.json();
+            if (citiesResult.cities) {
+                const allCities = citiesResult.cities;
+                allQnapCities = allCities
+                    .filter(city => !/^\d+\./.test(city))  // Pomijaj foldery zaczynające się od cyfr i kropki (np. "01.", "02.", "00.")
+                    .sort((a, b) => a.localeCompare(b, 'pl'));
+            }
+            
+            // Pobierz wszystkie przypisania w systemie, aby wiedzieć, które miejscowości są nieprzypisane globalnie
+            await loadAllCityAssignments();
+            
+            // Jeśli był wybrany użytkownik, odśwież jego dane
+            if (selectedUserId) {
+                await loadUserCityAccess(selectedUserId);
+            }
+            
+        } catch (error) {
+            console.error('Błąd ładowania danych:', error);
+        }
+    }
+    
+    // Globalna zmienna na wszystkie przypisania w systemie
+    let allSystemCityAssignments = [];
+    
+    async function loadAllCityAssignments() {
+        try {
+            const response = await fetch('/api/admin/user-city-access');
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                allSystemCityAssignments = result.data || [];
+            } else {
+                allSystemCityAssignments = [];
+            }
+        } catch (error) {
+            console.error('Błąd ładowania wszystkich przypisań:', error);
+            allSystemCityAssignments = [];
+        }
+    }
+    
+    function getGloballyUnassignedCities() {
+        // Stwórz zbiór wszystkich miejscowości, które mają aktywne przypisanie w systemie
+        const globallyAssignedCities = new Set();
+        allSystemCityAssignments.forEach(a => {
+            if (a.isActive) {
+                globallyAssignedCities.add(a.cityName);
+            }
+        });
+        
+        // Zwróć miejscowości, które nie mają żadnego przypisania w systemie
+        return allQnapCities.filter(city => !globallyAssignedCities.has(city));
+    }
+    
+    function populateCityAccessUserSelect() {
+        if (!cityAccessUserSelect) return;
+        
+        const currentValue = cityAccessUserSelect.value;
+        cityAccessUserSelect.innerHTML = '<option value="">-- Wybierz handlowca --</option>';
+        
+        // Grupuj użytkowników po roli
+        const roleOrder = ['SALES_REP', 'CLIENT', 'SALES_DEPT', 'NEW_USER'];
+        const roleLabels = {
+            'ADMIN': 'Administratorzy',
+            'SALES_REP': 'Handlowcy',
+            'SALES_DEPT': 'Dział Sprzedaży',
+            'NEW_USER': 'Nowi użytkownicy',
+            'CLIENT': 'Klienci zewnętrzni'
+        };
+        
+        roleOrder.forEach(role => {
+            const usersInRole = cityAccessUsers.filter(u => u.role === role && u.isActive);
+            if (usersInRole.length > 0) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = roleLabels[role] || role;
+                
+                usersInRole.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = `${user.name || user.email}`;
+                    optgroup.appendChild(option);
+                });
+                
+                cityAccessUserSelect.appendChild(optgroup);
+            }
+        });
+        
+        if (currentValue) {
+            cityAccessUserSelect.value = currentValue;
+        }
+    }
+    
+    async function handleUserSelectChange() {
+        selectedUserId = cityAccessUserSelect?.value || null;
+        
+        if (!selectedUserId) {
+            selectedUserCityAccess = [];
+            renderCityTilesPlaceholder();
+            updateCityTilesStats();
+            return;
+        }
+        
+        await loadUserCityAccess(selectedUserId);
+    }
+    
+    async function loadUserCityAccess(userId) {
+        if (cityTilesLoading) return;
+        cityTilesLoading = true;
+        
+        // Pokaż loading
+        if (cityTilesContainer) {
+            cityTilesContainer.innerHTML = `
+                <div class="flex flex-col items-center justify-center h-64 text-gray-400">
+                    <i class="fas fa-spinner fa-spin text-4xl mb-4 text-blue-500"></i>
+                    <p>Ładowanie miejscowości...</p>
+                </div>
+            `;
+        }
+        
+        try {
+            const response = await fetch(`/api/admin/user-city-access?userId=${userId}`);
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                selectedUserCityAccess = result.data || [];
+            } else {
+                selectedUserCityAccess = [];
+            }
+            
+            renderCityTiles();
+            updateCityTilesStats();
+            
+        } catch (error) {
+            console.error('Błąd ładowania przypisań:', error);
+            selectedUserCityAccess = [];
+            renderCityTiles();
+        } finally {
+            cityTilesLoading = false;
+        }
+    }
+    
+    function renderCityTilesPlaceholder() {
+        if (!cityTilesContainer) return;
+        cityTilesContainer.innerHTML = `
+            <div class="flex flex-col items-center justify-center h-64 text-gray-400">
+                <i class="fas fa-user-circle text-6xl mb-4"></i>
+                <p class="text-lg">Wybierz użytkownika, aby zobaczyć miejscowości</p>
+            </div>
+        `;
+    }
+    
+    function renderCityTiles() {
+        if (!cityTilesContainer || !selectedUserId) return;
+        
+        const searchTerm = cityTilesSearch?.value?.toLowerCase() || '';
+        const sortMode = cityTilesSort?.value || 'alpha';
+        const showAssignedOnly = cityTilesShowAssignedOnly?.checked || false;
+        
+        // Przygotuj mapę przypisań
+        const assignedCities = new Map();
+        selectedUserCityAccess.forEach(a => {
+            if (a.isActive) {
+                assignedCities.set(a.cityName, a);
+            }
+        });
+        
+        // Filtruj miejscowości
+        let cities = allQnapCities.filter(city => {
+            if (searchTerm && !city.toLowerCase().includes(searchTerm)) return false;
+            if (showAssignedOnly && !assignedCities.has(city)) return false;
+            return true;
+        });
+        
+                
+        // Sortuj
+        if (sortMode === 'assigned-first') {
+            cities.sort((a, b) => {
+                const aAssigned = assignedCities.has(a) ? 0 : 1;
+                const bAssigned = assignedCities.has(b) ? 0 : 1;
+                if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+                return a.localeCompare(b, 'pl');
+            });
+        } else if (sortMode === 'unassigned-first') {
+            cities.sort((a, b) => {
+                const aAssigned = assignedCities.has(a) ? 1 : 0;
+                const bAssigned = assignedCities.has(b) ? 1 : 0;
+                if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+                return a.localeCompare(b, 'pl');
+            });
+        } else {
+            cities.sort((a, b) => a.localeCompare(b, 'pl'));
+        }
+        
+        if (cities.length === 0) {
+            cityTilesContainer.innerHTML = `
+                <div class="flex flex-col items-center justify-center h-64 text-gray-400">
+                    <i class="fas fa-search text-4xl mb-4"></i>
+                    <p>Brak miejscowości spełniających kryteria</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Grupuj po pierwszej literze
+        const grouped = {};
+        cities.forEach(city => {
+            const letter = city.charAt(0).toUpperCase();
+            if (!grouped[letter]) grouped[letter] = [];
+            grouped[letter].push(city);
+        });
+        
+        // Renderuj kafelki
+        let html = '';
+        Object.keys(grouped).sort().forEach(letter => {
+            html += `
+                <div class="mb-6">
+                    <div class="text-sm font-bold text-gray-400 mb-2 sticky top-0 bg-white py-1">${letter}</div>
+                    <div class="flex flex-wrap gap-2">
+            `;
+            
+            grouped[letter].forEach(city => {
+                const isAssigned = assignedCities.has(city);
+                const accessData = assignedCities.get(city);
+                
+                // Sprawdź, czy miejscowość jest globalnie nieprzypisana
+                const globallyUnassignedCities = getGloballyUnassignedCities();
+                const isGloballyUnassigned = globallyUnassignedCities.includes(city);
+                
+                const baseClasses = 'city-tile px-4 py-2 rounded-lg font-medium text-sm cursor-pointer transition-all duration-200 transform select-none relative';
+                const assignedClasses = 'bg-green-500 text-white shadow-lg scale-105 hover:bg-green-600 hover:shadow-xl';
+                const availableClasses = 'bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 hover:scale-105 hover:shadow-md';
+                
+                const classes = isAssigned ? `${baseClasses} ${assignedClasses}` : `${baseClasses} ${availableClasses}`;
+                const icon = isAssigned ? '<i class="fas fa-check mr-1"></i>' : '';
+                const dataId = accessData ? `data-access-id="${accessData.id}"` : '';
+                
+                // Dodaj pomarańczową kropkę tylko dla miejscowości globalnie nieprzypisanych
+                const unassignedInfo = isGloballyUnassigned ? 
+                    '<span class="absolute -top-1 -right-1 w-2 h-2 bg-orange-400 rounded-full" title="Nieprzypisana do żadnego handlowca"></span>' : '';
+                
+                html += `
+                    <button class="${classes}" data-city="${city}" data-assigned="${isAssigned}" ${dataId}>
+                        ${icon}${city}
+                        ${unassignedInfo}
+                    </button>
+                `;
+            });
+            
+            html += `
+                    </div>
+                </div>
+            `;
+        });
+        
+        cityTilesContainer.innerHTML = html;
+        
+        // Dodaj event listenery do kafelków
+        cityTilesContainer.querySelectorAll('.city-tile').forEach(tile => {
+            tile.addEventListener('click', handleCityTileClick);
+        });
+        
+        updateCityTilesStats();
+    }
+    
+    async function handleCityTileClick(e) {
+        const tile = e.currentTarget;
+        const city = tile.dataset.city;
+        const isAssigned = tile.dataset.assigned === 'true';
+        const accessId = tile.dataset.accessId;
+        
+        if (!selectedUserId || !city) return;
+        
+        // Disable tile during operation
+        tile.disabled = true;
+        tile.style.opacity = '0.5';
+        
+        try {
+            if (isAssigned && accessId) {
+                // Usuń przypisanie
+                const response = await fetch(`/api/admin/user-city-access/${accessId}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    // Animacja usunięcia
+                    tile.classList.remove('bg-green-500', 'text-white', 'shadow-lg', 'scale-105');
+                    tile.classList.add('bg-gray-100', 'text-gray-700', 'border', 'border-gray-200');
+                    tile.dataset.assigned = 'false';
+                    tile.removeAttribute('data-access-id');
+                    tile.innerHTML = city;
+                    
+                    // Aktualizuj lokalną listę
+                    selectedUserCityAccess = selectedUserCityAccess.filter(a => a.id != accessId);
+                    updateCityTilesStats();
+                } else {
+                    alert('Błąd: ' + (result.message || 'Nie udało się usunąć'));
+                }
+            } else {
+                // Dodaj przypisanie
+                const response = await fetch('/api/admin/user-city-access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: selectedUserId, cityName: city })
+                });
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    // Animacja dodania
+                    tile.classList.remove('bg-gray-100', 'text-gray-700', 'border', 'border-gray-200');
+                    tile.classList.add('bg-green-500', 'text-white', 'shadow-lg', 'scale-105');
+                    tile.dataset.assigned = 'true';
+                    tile.dataset.accessId = result.data.id;
+                    tile.innerHTML = `<i class="fas fa-check mr-1"></i>${city}`;
+                    
+                    // Aktualizuj lokalną listę
+                    selectedUserCityAccess.push(result.data);
+                    updateCityTilesStats();
+                } else {
+                    alert('Błąd: ' + (result.message || 'Nie udało się przypisać'));
+                }
+            }
+        } catch (error) {
+            console.error('Błąd operacji:', error);
+            alert('Wystąpił błąd podczas operacji');
+        } finally {
+            tile.disabled = false;
+            tile.style.opacity = '1';
+        }
+    }
+    
+    function updateCityTilesStats() {
+        const assignedCities = new Set(selectedUserCityAccess
+            .filter(a => a.isActive)
+            .map(a => a.cityName));
+            
+        const unassignedCities = allQnapCities.filter(city => !assignedCities.has(city));
+        const globallyUnassignedCities = getGloballyUnassignedCities();
+        
+        const assignedCount = assignedCities.size;
+        const totalCount = allQnapCities.length;
+        const availableCount = unassignedCities.length;
+        const globallyUnassignedCount = globallyUnassignedCities.length;
+        
+        const statsAssigned = document.getElementById('city-stats-assigned');
+        const statsAvailable = document.getElementById('city-stats-available');
+        const statsTotal = document.getElementById('city-stats-total');
+        
+        if (statsAssigned) statsAssigned.textContent = assignedCount;
+        if (statsAvailable) statsAvailable.textContent = availableCount;
+        if (statsTotal) statsTotal.textContent = totalCount;
+        
+        // Dodaj obsługę kliknięcia na "Dostępnych" - pokazuje listę globalnie nieprzypisanych
+        const availableTrigger = document.getElementById('available-cities-trigger');
+        if (availableTrigger) {
+            availableTrigger.onclick = (e) => {
+                e.stopPropagation();
+                if (globallyUnassignedCities.length > 0) {
+                    showAllUnassignedCities(globallyUnassignedCities);
+                }
+            };
+            
+            // Aktualizuj title z liczbą globalnie nieprzypisanych
+            availableTrigger.title = `Kliknij, aby zobaczyć listę (${globallyUnassignedCount} miejscowości nieprzypisanych do żadnego handlowca)`;
+        }
+    }
+    
+    function showAllUnassignedCities(cities) {
+        // Utwórz modal z listą wszystkich dostępnych miejscowości
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                <div class="p-6 border-b border-gray-200">
+                    <h3 class="text-xl font-semibold text-gray-800">Miejscowości nieprzypisane do żadnego handlowca</h3>
+                    <p class="text-sm text-gray-500 mt-1">Liczba: ${cities.length}</p>
+                </div>
+                <div class="p-4 overflow-y-auto flex-grow">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                        ${cities.map(city => 
+                            `<div class="p-2 bg-gray-50 rounded border border-gray-100 text-sm">
+                                ${city}
+                            </div>`
+                        ).join('')}
+                    </div>
+                </div>
+                <div class="p-4 border-t border-gray-200 flex justify-end">
+                    <button id="close-cities-modal" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        Zamknij
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Obsługa zamknięcia modala
+        const closeBtn = modal.querySelector('#close-cities-modal');
+        if (closeBtn) {
+            closeBtn.onclick = () => modal.remove();
+        }
+        
+        // Zamknij po kliknięciu poza modalem
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        };
+        
+        // Zamknij po ESC
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                modal.remove();
+                document.removeEventListener('keydown', handleEscape);
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
+    }
 
     // ============================================
     // OBSŁUGA HISTORII ZAMÓWIEŃ
@@ -1984,3 +3105,118 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 });
+
+// Funkcja sprawdzająca uprawnienia użytkownika i dostosowująca UI
+async function checkUserPermissionsAndAdaptUI() {
+    try {
+        const response = await fetch('/api/auth/me');
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            const userRole = result.role;
+            
+            // Pokaż/ukryj elementy menu w zależności od roli
+            const cityAccessLink = document.querySelector('[data-view="city-access"]');
+            const folderAccessLink = document.querySelector('[data-view="folder-access"]');
+            const usersLink = document.querySelector('[data-view="users"]');
+            const productsLink = document.querySelector('[data-view="products"]');
+            const ordersLink = document.querySelector('[data-view="orders"]');
+            
+            // Miejscowości PM - dostęp dla ADMIN, SALES_DEPT, GRAPHICS
+            if (cityAccessLink) {
+                if (['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(userRole)) {
+                    cityAccessLink.style.display = 'flex';
+                } else {
+                    cityAccessLink.style.display = 'none';
+                }
+            }
+            
+            // Foldery KI - dostęp dla ADMIN, SALES_DEPT
+            if (folderAccessLink) {
+                if (['ADMIN', 'SALES_DEPT'].includes(userRole)) {
+                    folderAccessLink.style.display = 'flex';
+                } else {
+                    folderAccessLink.style.display = 'none';
+                }
+            }
+            
+            // Użytkownicy - tylko ADMIN
+            if (usersLink) {
+                if (userRole === 'ADMIN') {
+                    usersLink.style.display = 'flex';
+                } else {
+                    usersLink.style.display = 'none';
+                }
+            }
+            
+            // Produkty - tylko ADMIN i WAREHOUSE (SALES_DEPT ma tylko podgląd magazynu)
+            if (productsLink) {
+                if (['ADMIN', 'WAREHOUSE'].includes(userRole)) {
+                    productsLink.style.display = 'flex';
+                } else {
+                    productsLink.style.display = 'none';
+                }
+            }
+            
+            // Zamówienia - ADMIN, WAREHOUSE, PRODUCTION (SALES_DEPT używa głównego panelu zamówień)
+            if (ordersLink) {
+                if (['ADMIN', 'WAREHOUSE', 'PRODUCTION'].includes(userRole)) {
+                    ordersLink.style.display = 'flex';
+                } else {
+                    ordersLink.style.display = 'none';
+                }
+            }
+            
+            // Klienci - ADMIN, SALES_DEPT
+            const clientsLink = document.querySelector('[data-view="clients"]');
+            if (clientsLink) {
+                if (['ADMIN', 'SALES_DEPT'].includes(userRole)) {
+                    clientsLink.style.display = 'flex';
+                } else {
+                    clientsLink.style.display = 'none';
+                }
+            }
+            
+            // Dla GRAPHICS - ukryj sidebar i pokaż tylko widok nieprzypisanych miejscowości
+            if (userRole === 'GRAPHICS') {
+                const sidebar = document.querySelector('aside');
+                if (sidebar) {
+                    sidebar.style.display = 'none';
+                }
+                
+                const pageTitle = document.querySelector('h1');
+                if (pageTitle) {
+                    pageTitle.textContent = 'Nowe miejscowości do przypisania';
+                }
+                
+                setTimeout(() => {
+                    if (cityAccessLink) {
+                        cityAccessLink.click();
+                    }
+                }, 100);
+            }
+            
+            // Dla SALES_DEPT - ograniczony dostęp
+            if (userRole === 'SALES_DEPT') {
+                // Ukryj przyciski dodawania użytkowników
+                const newUserBtn = document.getElementById('new-user-btn');
+                if (newUserBtn) newUserBtn.style.display = 'none';
+                
+                // Zmień tytuł strony
+                const pageTitle = document.querySelector('h1');
+                if (pageTitle) {
+                    pageTitle.textContent = 'Panel Działu Sprzedaży';
+                }
+                
+                // Automatycznie przejdź do widoku Miejscowości PM
+                setTimeout(() => {
+                    if (cityAccessLink) {
+                        cityAccessLink.click();
+                    }
+                }, 100);
+            }
+        }
+    } catch (error) {
+        console.error('Błąd sprawdzania uprawnień:', error);
+    }
+}

@@ -289,73 +289,73 @@
             opacity: 1;
         }
 
-        /* Print Preview */
+        /* Print Preview - orientacja pozioma */
         .print-document {
             background: white;
-            padding: 40px;
+            padding: 15px;
             border-radius: 4px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 210mm;
+            max-width: 100%;
             margin: 0 auto;
-            line-height: 1.6;
+            line-height: 1.3;
         }
 
         .print-header {
             display: flex;
             justify-content: space-between;
             align-items: start;
-            margin-bottom: 30px;
-            border-bottom: 2px solid #1f2937;
-            padding-bottom: 20px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #1f2937;
+            padding-bottom: 8px;
         }
 
         .print-company {
-            font-size: 24px;
+            font-size: 16px;
             font-weight: bold;
             color: #1f2937;
         }
 
         .print-title {
-            font-size: 20px;
+            font-size: 14px;
             font-weight: bold;
             color: #1f2937;
         }
 
         .print-meta {
-            font-size: 12px;
+            font-size: 10px;
             color: #6b7280;
             text-align: right;
         }
 
         .print-section {
-            margin-bottom: 25px;
+            margin-bottom: 10px;
         }
 
         .print-section-title {
-            font-size: 14px;
+            font-size: 11px;
             font-weight: bold;
             color: #1f2937;
-            margin-bottom: 12px;
+            margin-bottom: 6px;
             border-bottom: 1px solid #e5e7eb;
-            padding-bottom: 8px;
+            padding-bottom: 4px;
         }
 
         .print-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 8px;
         }
 
         .print-field {
-            font-size: 12px;
+            font-size: 10px;
         }
 
         .print-field-label {
             color: #6b7280;
             font-weight: 600;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
         }
 
         .print-field-value {
@@ -366,26 +366,28 @@
         .print-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 20px;
-            font-size: 12px;
+            margin-bottom: 10px;
+            font-size: 9px;
         }
 
         .print-table thead {
             background: #f3f4f6;
-            border-bottom: 2px solid #d1d5db;
+            border-bottom: 1px solid #d1d5db;
         }
 
         .print-table th {
-            padding: 10px;
+            padding: 4px 5px;
             text-align: left;
             font-weight: 600;
             color: #1f2937;
+            font-size: 8px;
         }
 
         .print-table td {
-            padding: 10px;
+            padding: 4px 5px;
             border-bottom: 1px solid #e5e7eb;
             color: #374151;
+            font-size: 8px;
         }
 
         .print-table tbody tr:last-child td {
@@ -394,24 +396,25 @@
 
         .print-total {
             text-align: right;
-            font-size: 14px;
+            font-size: 11px;
             font-weight: bold;
             color: #1f2937;
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 2px solid #d1d5db;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #d1d5db;
         }
 
         .print-footer {
-            margin-top: 40px;
-            padding-top: 20px;
+            margin-top: 15px;
+            padding-top: 10px;
             border-top: 1px solid #e5e7eb;
-            font-size: 11px;
+            font-size: 9px;
             color: #6b7280;
             text-align: center;
         }
 
         @media print {
+            @page { size: A4 landscape; margin: 10mm; }
             body {
                 background: white;
             }

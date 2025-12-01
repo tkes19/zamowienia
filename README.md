@@ -1,6 +1,17 @@
-# Formularz zamówień – dokumentacja
+# System zamówień "Rezon"
 
-Krótka instrukcja uruchamiania i utrzymania aplikacji łączącej formularz zamówień z podglądem galerii.
+Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
+
+## Dokumentacja
+
+| Plik | Opis |
+|------|------|
+| `docs/SPEC.md` | Specyfikacja techniczna |
+| `docs/USER_MANUAL.md` | Podręcznik użytkownika |
+| `docs/roadmap.md` | Plan rozwoju |
+| `docs/SPEC_FOLDER_ACCESS.md` | Moduł folderów KI |
+
+---
 
 ## 1. Wymagania
 

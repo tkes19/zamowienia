@@ -38,9 +38,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const userData = await response.json();
             currentUserRole = userData.role;
 
-            // Pokaż link do panelu admina dla ADMIN
-            if (currentUserRole === 'ADMIN') {
-                adminLink.style.display = 'flex';
+            // Pokaż link do panelu admina/ustawień w zależności od roli
+            if (adminLink) {
+                if (currentUserRole === 'ADMIN') {
+                    adminLink.style.display = 'flex';
+                    adminLink.innerHTML = '<i class="fas fa-cog"></i><span>Panel admina</span>';
+                    adminLink.href = '/admin';
+                } else if (currentUserRole === 'SALES_DEPT') {
+                    adminLink.style.display = 'flex';
+                    adminLink.innerHTML = '<i class="fas fa-cog"></i><span>Ustawienia</span>';
+                    adminLink.href = '/admin';
+                }
+            }
+
+            // Pokaż sidebar dla SALES_DEPT
+            const sidebar = document.getElementById('clients-sidebar');
+            if (sidebar && currentUserRole === 'SALES_DEPT') {
+                sidebar.classList.remove('hidden');
             }
 
             // Pokaż filtr po handlowcu tylko dla ADMIN i SALES_DEPT

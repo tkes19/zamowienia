@@ -5,7 +5,7 @@ CREATE TYPE public."StartPageType" AS ENUM ('CATALOG', 'ORDERS');
 CREATE TYPE public."ProductCategory" AS ENUM ('MAGNESY', 'BRELOKI', 'OTWIERACZE', 'CERAMIKA_I_SZKLO', 'DLUGOPISY', 'CZAPKI_I_NAKRYCIA_GLOWY', 'BRANSOLETKI', 'TEKSTYLIA', 'OZDOBY_DOMOWE', 'AKCESORIA_PODROZNE', 'DLA_DZIECI', 'ZAPALNICZKI_I_POPIELNICZKI', 'UPOMINKI_BIZNESOWE', 'ZESTAWY');
 CREATE TYPE public."ProductSource" AS ENUM ('MIEJSCOWOSCI', 'KLIENCI_INDYWIDUALNI', 'IMIENNE', 'HASLA', 'OKOLICZNOSCIOWE');
 CREATE TYPE public."OrderStatus" AS ENUM ('DRAFT', 'PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED');
-CREATE TYPE public."UserRole" AS ENUM ('ADMIN', 'SALES_REP', 'WAREHOUSE', 'SALES_DEPT', 'PRODUCTION', 'GRAPHICS', 'NEW_USER');
+CREATE TYPE public."UserRole" AS ENUM ('ADMIN', 'SALES_REP', 'WAREHOUSE', 'SALES_DEPT', 'PRODUCTION', 'GRAPHICS', 'NEW_USER', 'CLIENT');
 
 -- Wklejaj tutaj definicje tabel (CREATE TABLE ...) skopiowane z panelu Supabase.
 -- Przykład struktury:
@@ -229,6 +229,28 @@ create table public."UserFolderAccess" (
 create index IF not exists "UserFolderAccess_userId_isActive_idx" on public."UserFolderAccess" using btree ("userId", "isActive") TABLESPACE pg_default;
 
 create index IF not exists "UserFolderAccess_folderName_idx" on public."UserFolderAccess" using btree ("folderName") TABLESPACE pg_default;
+
+-- Tabela audytu zmian w przypisaniach folderów KI
+create table public."UserFolderAccessLog" (
+  id serial not null,
+  "userFolderAccessId" integer null,
+  "targetUserId" text not null,
+  "actorId" text not null,
+  action text not null,
+  "folderName" text null,
+  "oldValue" jsonb null,
+  "newValue" jsonb null,
+  "createdAt" timestamp without time zone not null default CURRENT_TIMESTAMP,
+  constraint UserFolderAccessLog_pkey primary key (id),
+  constraint UserFolderAccessLog_actorId_fkey foreign KEY ("actorId") references "User" (id) on update CASCADE on delete set null,
+  constraint UserFolderAccessLog_targetUserId_fkey foreign KEY ("targetUserId") references "User" (id) on update CASCADE on delete set null
+) TABLESPACE pg_default;
+
+create index IF not exists "UserFolderAccessLog_targetUserId_idx" on public."UserFolderAccessLog" using btree ("targetUserId") TABLESPACE pg_default;
+create index IF not exists "UserFolderAccessLog_actorId_idx" on public."UserFolderAccessLog" using btree ("actorId") TABLESPACE pg_default;
+create index IF not exists "UserFolderAccessLog_createdAt_idx" on public."UserFolderAccessLog" using btree ("createdAt" DESC) TABLESPACE pg_default;
+
+-- Komentarz: action może przyjmować wartości: 'CREATE', 'UPDATE', 'DELETE', 'DEACTIVATE', 'REACTIVATE'
 
 
 create table public."VerificationToken" (

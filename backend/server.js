@@ -280,6 +280,7 @@ app.get('/api/orders/:id', async (req, res) => {
                     source,
                     locationName,
                     customization,
+                    productionNotes,
                     Product:productId(id, name, identifier, index, code)
                 )
             `)
@@ -966,20 +967,187 @@ async function proxyGalleryRequest(req, res, targetUrl, contextLabel) {
     }
 }
 
-// Lista miejscowości
+// Lista miejscowości - z filtrowaniem po przypisaniach użytkownika
 app.get('/api/gallery/cities', async (req, res) => {
-    await proxyGalleryRequest(req, res, `${GALLERY_BASE}/list_cities.php`, 'cities');
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const userRole = cookies.auth_role;
+
+    // Pobierz wszystkie miejscowości z QNAP
+    try {
+        const phpResponse = await fetch(`${GALLERY_BASE}/list_cities.php`);
+        if (!phpResponse.ok) {
+            return res.status(phpResponse.status).json({ error: 'Błąd pobierania miejscowości z QNAP' });
+        }
+        const phpData = await phpResponse.json();
+        let allCities = phpData.cities || [];
+
+        // ADMIN i SALES_DEPT widzą wszystkie miejscowości, ale też pobierz ich przypisania
+        if (userRole === 'ADMIN' || userRole === 'SALES_DEPT') {
+            let assignedCities = [];
+            
+            // Pobierz przypisania użytkownika (jeśli ma)
+            if (userId && supabase) {
+                const { data: assignments } = await supabase
+                    .from('UserCityAccess')
+                    .select('cityName')
+                    .eq('userId', userId)
+                    .eq('isActive', true);
+                
+                if (assignments && assignments.length > 0) {
+                    assignedCities = assignments.map(a => a.cityName);
+                }
+            }
+            
+            return res.json({ 
+                count: allCities.length, 
+                cities: allCities,
+                filtered: false,
+                assignedCities: assignedCities  // przypisane miejscowości użytkownika
+            });
+        }
+
+        // SALES_REP i CLIENT - filtruj po przypisaniach z UserCityAccess
+        if (userId && supabase && (userRole === 'SALES_REP' || userRole === 'CLIENT')) {
+            const { data: assignments } = await supabase
+                .from('UserCityAccess')
+                .select('cityName')
+                .eq('userId', userId)
+                .eq('isActive', true);
+
+            if (assignments && assignments.length > 0) {
+                const allowedCities = assignments.map(a => a.cityName);
+                // ZAWSZE zwracaj wszystkie miasta w 'cities', przypisane w 'assignedCities'
+                return res.json({ 
+                    count: allCities.length, 
+                    cities: allCities,  // WSZYSTKIE miasta
+                    filtered: true,
+                    totalAvailable: allCities.length,
+                    assignedCities: allowedCities,  // przypisane miasta
+                    readOnly: false
+                });
+            } else {
+                // Brak przypisań - pokaż wszystkie miejscowości w trybie tylko do odczytu
+                return res.json({ 
+                    count: allCities.length, 
+                    cities: allCities,
+                    filtered: true,
+                    totalAvailable: allCities.length,
+                    assignedCities: [],
+                    readOnly: true,
+                    message: 'Brak przypisanych miejscowości. Skontaktuj się z działem handlowym.'
+                });
+            }
+        }
+
+        // Niezalogowany lub inna rola - wszystkie miejscowości
+        return res.json({ 
+            count: allCities.length, 
+            cities: allCities,
+            filtered: false 
+        });
+
+    } catch (error) {
+        console.error('Błąd w /api/gallery/cities:', error);
+        return res.status(500).json({ error: 'Błąd serwera', details: error.message });
+    }
 });
 
-// Lista handlowców
+// Lista handlowców (folderów KI) - z filtrowaniem po przypisaniach użytkownika
 app.get('/api/gallery/salespeople', async (req, res) => {
-    await proxyGalleryRequest(req, res, `${GALLERY_BASE}/list_salespeople.php`, 'salespeople');
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const userRole = cookies.auth_role;
+
+    // Pobierz wszystkie foldery z QNAP
+    try {
+        const phpResponse = await fetch(`${GALLERY_BASE}/list_salespeople.php`);
+        if (!phpResponse.ok) {
+            return res.status(phpResponse.status).json({ error: 'Błąd pobierania folderów z QNAP' });
+        }
+        const phpData = await phpResponse.json();
+        let allFolders = phpData.salesPeople || [];
+
+        // ADMIN i SALES_DEPT widzą wszystkie foldery
+        if (userRole === 'ADMIN' || userRole === 'SALES_DEPT') {
+            return res.json({ 
+                count: allFolders.length, 
+                salesPeople: allFolders,
+                filtered: false 
+            });
+        }
+
+        // SALES_REP i CLIENT - filtruj po przypisaniach z UserFolderAccess
+        if (userId && supabase && (userRole === 'SALES_REP' || userRole === 'CLIENT')) {
+            const { data: assignments } = await supabase
+                .from('UserFolderAccess')
+                .select('folderName')
+                .eq('userId', userId)
+                .eq('isActive', true);
+
+            if (assignments && assignments.length > 0) {
+                const allowedFolders = assignments.map(a => a.folderName);
+                const filteredFolders = allFolders.filter(folder => allowedFolders.includes(folder));
+                return res.json({ 
+                    count: filteredFolders.length, 
+                    salesPeople: filteredFolders,
+                    filtered: true,
+                    totalAvailable: allFolders.length
+                });
+            } else {
+                // Brak przypisań - pusty wynik
+                return res.json({ 
+                    count: 0, 
+                    salesPeople: [],
+                    filtered: true,
+                    message: 'Brak przypisanych folderów KI'
+                });
+            }
+        }
+
+        // Niezalogowany lub inna rola - wszystkie foldery (lub można zwrócić błąd)
+        return res.json({ 
+            count: allFolders.length, 
+            salesPeople: allFolders,
+            filtered: false 
+        });
+
+    } catch (error) {
+        console.error('Błąd w /api/gallery/salespeople:', error);
+        return res.status(500).json({ error: 'Błąd serwera', details: error.message });
+    }
 });
 
-// Lista obiektów dla handlowca
+// Lista obiektów dla handlowca - z autoryzacją dostępu do folderu
 app.get('/api/gallery/objects/:salesperson', async (req, res) => {
     const { salesperson } = req.params;
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const userRole = cookies.auth_role;
+
     console.log('Pobieranie obiektów dla handlowca:', salesperson);
+
+    // ADMIN i SALES_DEPT mają dostęp do wszystkich folderów
+    if (userRole !== 'ADMIN' && userRole !== 'SALES_DEPT') {
+        // SALES_REP i CLIENT - sprawdź czy ma przypisanie do tego folderu
+        if (userId && supabase && (userRole === 'SALES_REP' || userRole === 'CLIENT')) {
+            const { data: assignment } = await supabase
+                .from('UserFolderAccess')
+                .select('id')
+                .eq('userId', userId)
+                .eq('folderName', salesperson)
+                .eq('isActive', true)
+                .single();
+
+            if (!assignment) {
+                return res.status(403).json({ 
+                    error: 'Brak dostępu do tego folderu',
+                    folder: salesperson 
+                });
+            }
+        }
+    }
+
     const targetUrl = `${GALLERY_BASE}/list_objects.php?salesperson=${encodeURIComponent(salesperson)}`;
     console.log('URL do QNAP:', targetUrl);
     await proxyGalleryRequest(req, res, targetUrl, `objects/${salesperson}`);
@@ -1541,8 +1709,8 @@ app.get('/api/admin/departments', requireRole(['ADMIN']), async (req, res) => {
     }
 });
 
-// Lista użytkowników z działami (ADMIN + SALES_DEPT)
-app.get('/api/admin/users', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
+// Lista użytkowników z działami (ADMIN + SALES_DEPT + GRAPHICS - do przypisywania miejscowości)
+app.get('/api/admin/users', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -1723,6 +1891,846 @@ app.delete('/api/admin/users/:id', requireRole(['ADMIN']), async (req, res) => {
     } catch (err) {
         console.error('Wyjątek w DELETE /api/admin/users/:id:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd podczas usuwania użytkownika', details: err.message });
+    }
+});
+
+// -----------------------------
+// API - Przypisania folderów KI (UserFolderAccess)
+// -----------------------------
+
+// Lista wszystkich przypisań (dla admina/SALES_DEPT)
+app.get('/api/admin/user-folder-access', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { userId } = req.query;
+
+    try {
+        let query = supabase
+            .from('UserFolderAccess')
+            .select(`
+                id,
+                userId,
+                folderName,
+                isActive,
+                assignedBy,
+                notes,
+                createdAt,
+                updatedAt,
+                user:User!UserFolderAccess_userId_fkey(id, name, email, role),
+                assignedByUser:User!UserFolderAccess_assignedBy_fkey(id, name, email)
+            `)
+            .order('createdAt', { ascending: false });
+
+        if (userId) {
+            query = query.eq('userId', userId);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania przypisań folderów:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać przypisań', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            data: data || [],
+            count: data?.length || 0
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/user-folder-access:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Foldery bieżącego użytkownika (dla wszystkich zalogowanych)
+app.get('/api/user-folder-access', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const cookies = parseCookies(req);
+    const currentUserId = cookies.auth_id;
+    const currentRole = cookies.auth_role;
+
+    if (!currentUserId || !currentRole) {
+        return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+    // ADMIN/SALES_DEPT mogą podglądać foldery innych użytkowników
+    const targetUserId = ['ADMIN', 'SALES_DEPT'].includes(currentRole) && req.query.userId
+        ? req.query.userId
+        : currentUserId;
+
+    try {
+        const { data, error } = await supabase
+            .from('UserFolderAccess')
+            .select('id, folderName, isActive, notes, createdAt')
+            .eq('userId', targetUserId)
+            .eq('isActive', true)
+            .order('folderName');
+
+        if (error) {
+            console.error('Błąd pobierania folderów użytkownika:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać folderów', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            data: data || [],
+            folders: (data || []).map(d => d.folderName)
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/user-folder-access:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Helper: logowanie audytu zmian w UserFolderAccess
+async function logFolderAccessChange(actorId, targetUserId, action, folderName, userFolderAccessId = null, oldValue = null, newValue = null) {
+    if (!supabase) return;
+    try {
+        await supabase.from('UserFolderAccessLog').insert({
+            userFolderAccessId,
+            targetUserId,
+            actorId,
+            action,
+            folderName,
+            oldValue: oldValue ? JSON.stringify(oldValue) : null,
+            newValue: newValue ? JSON.stringify(newValue) : null,
+            createdAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error('Błąd logowania audytu UserFolderAccess:', err);
+    }
+}
+
+// Tworzenie nowego przypisania
+app.post('/api/admin/user-folder-access', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id: assignedById } = req.user;
+    const { userId, folderName, notes } = req.body || {};
+
+    if (!userId || !folderName?.trim()) {
+        return res.status(400).json({ status: 'error', message: 'userId i folderName są wymagane' });
+    }
+
+    try {
+        // Sprawdź czy użytkownik istnieje
+        const { data: userExists, error: userError } = await supabase
+            .from('User')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+        if (userError || !userExists) {
+            return res.status(404).json({ status: 'error', message: 'Użytkownik nie istnieje' });
+        }
+
+        // Sprawdź czy przypisanie już istnieje
+        const { data: existing } = await supabase
+            .from('UserFolderAccess')
+            .select('id, isActive, folderName, notes')
+            .eq('userId', userId)
+            .eq('folderName', folderName.trim())
+            .single();
+
+        if (existing) {
+            // Jeśli istnieje ale nieaktywne, reaktywuj
+            if (!existing.isActive) {
+                const oldValue = { isActive: false, folderName: existing.folderName, notes: existing.notes };
+                
+                const { data: reactivated, error: reactivateError } = await supabase
+                    .from('UserFolderAccess')
+                    .update({ isActive: true, assignedBy: assignedById, updatedAt: new Date().toISOString() })
+                    .eq('id', existing.id)
+                    .select()
+                    .single();
+
+                if (reactivateError) {
+                    return res.status(500).json({ status: 'error', message: 'Nie udało się reaktywować przypisania', details: reactivateError.message });
+                }
+
+                // Audit log
+                await logFolderAccessChange(assignedById, userId, 'REACTIVATE', folderName.trim(), existing.id, oldValue, { isActive: true });
+
+                return res.json({ status: 'success', data: reactivated, message: 'Przypisanie reaktywowane' });
+            }
+            return res.status(409).json({ status: 'error', message: 'Przypisanie już istnieje' });
+        }
+
+        // Utwórz nowe przypisanie
+        const { data, error } = await supabase
+            .from('UserFolderAccess')
+            .insert({
+                userId,
+                folderName: folderName.trim(),
+                isActive: true,
+                assignedBy: assignedById,
+                notes: notes?.trim() || null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Błąd tworzenia przypisania:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć przypisania', details: error.message });
+        }
+
+        // Audit log
+        await logFolderAccessChange(assignedById, userId, 'CREATE', folderName.trim(), data.id, null, { isActive: true, folderName: folderName.trim(), notes: notes?.trim() || null });
+
+        return res.status(201).json({ status: 'success', data, message: 'Przypisanie utworzone' });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/admin/user-folder-access:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Aktualizacja przypisania
+app.patch('/api/admin/user-folder-access/:id', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { role, id: actorId } = req.user;
+    const { id } = req.params;
+    const { folderName, isActive, notes } = req.body || {};
+
+    try {
+        // Pobierz obecny stan przed aktualizacją
+        const { data: currentData } = await supabase
+            .from('UserFolderAccess')
+            .select('userId, folderName, isActive, notes')
+            .eq('id', id)
+            .single();
+
+        if (!currentData) {
+            return res.status(404).json({ status: 'error', message: 'Przypisanie nie znalezione' });
+        }
+
+        const oldValue = { folderName: currentData.folderName, isActive: currentData.isActive, notes: currentData.notes };
+        const updateData = { updatedAt: new Date().toISOString() };
+
+        // SALES_DEPT może tylko zmieniać isActive i notes
+        if (role === 'SALES_DEPT') {
+            if (isActive !== undefined) updateData.isActive = isActive;
+            if (notes !== undefined) updateData.notes = notes?.trim() || null;
+        } else {
+            // ADMIN może wszystko
+            if (folderName !== undefined) updateData.folderName = folderName.trim();
+            if (isActive !== undefined) updateData.isActive = isActive;
+            if (notes !== undefined) updateData.notes = notes?.trim() || null;
+        }
+
+        const { data, error } = await supabase
+            .from('UserFolderAccess')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Błąd aktualizacji przypisania:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować przypisania', details: error.message });
+        }
+
+        // Określ typ akcji dla audytu
+        let action = 'UPDATE';
+        if (isActive !== undefined && oldValue.isActive !== isActive) {
+            action = isActive ? 'REACTIVATE' : 'DEACTIVATE';
+        }
+
+        // Audit log
+        const newValue = { folderName: data.folderName, isActive: data.isActive, notes: data.notes };
+        await logFolderAccessChange(actorId, currentData.userId, action, data.folderName, parseInt(id), oldValue, newValue);
+
+        return res.json({ status: 'success', data, message: 'Przypisanie zaktualizowane' });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/admin/user-folder-access/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Usunięcie przypisania (ADMIN i SALES_DEPT)
+app.delete('/api/admin/user-folder-access/:id', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id: actorId } = req.user;
+    const { id } = req.params;
+
+    try {
+        // Pobierz dane przed usunięciem (do audytu)
+        const { data: toDelete } = await supabase
+            .from('UserFolderAccess')
+            .select('userId, folderName, isActive, notes')
+            .eq('id', id)
+            .single();
+
+        if (!toDelete) {
+            return res.status(404).json({ status: 'error', message: 'Przypisanie nie znalezione' });
+        }
+
+        const { error } = await supabase
+            .from('UserFolderAccess')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Błąd usuwania przypisania:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć przypisania', details: error.message });
+        }
+
+        // Audit log
+        await logFolderAccessChange(actorId, toDelete.userId, 'DELETE', toDelete.folderName, parseInt(id), 
+            { folderName: toDelete.folderName, isActive: toDelete.isActive, notes: toDelete.notes }, null);
+
+        return res.json({ status: 'success', message: 'Przypisanie usunięte' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/admin/user-folder-access/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// -----------------------------
+// API - Przypisania miejscowości (UserCityAccess)
+// -----------------------------
+
+// Helper: logowanie audytu zmian w UserCityAccess
+async function logCityAccessChange(actorId, targetUserId, action, cityName, userCityAccessId = null, oldValue = null, newValue = null) {
+    if (!supabase) return;
+    try {
+        await supabase.from('UserCityAccessLog').insert({
+            userCityAccessId,
+            targetUserId,
+            actorId,
+            action,
+            cityName,
+            oldValue: oldValue ? JSON.stringify(oldValue) : null,
+            newValue: newValue ? JSON.stringify(newValue) : null,
+            createdAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error('Błąd logowania audytu UserCityAccess:', err);
+    }
+}
+
+// Lista wszystkich przypisań miejscowości (dla admina/SALES_DEPT/GRAPHICS)
+app.get('/api/admin/user-city-access', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { userId } = req.query;
+
+    try {
+        let query = supabase
+            .from('UserCityAccess')
+            .select(`
+                id,
+                userId,
+                cityName,
+                isActive,
+                assignedBy,
+                notes,
+                createdAt,
+                updatedAt,
+                user:User!UserCityAccess_userId_fkey(id, name, email, role),
+                assignedByUser:User!UserCityAccess_assignedBy_fkey(id, name, email)
+            `)
+            .order('createdAt', { ascending: false });
+
+        if (userId) {
+            query = query.eq('userId', userId);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania przypisań miejscowości:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać przypisań', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            data: data || [],
+            count: data?.length || 0
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/user-city-access:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Miejscowości bieżącego użytkownika (dla wszystkich zalogowanych)
+app.get('/api/user-city-access', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const cookies = parseCookies(req);
+    const currentUserId = cookies.auth_id;
+    const currentRole = cookies.auth_role;
+
+    if (!currentUserId || !currentRole) {
+        return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+    // ADMIN/SALES_DEPT mogą podglądać miejscowości innych użytkowników
+    const targetUserId = ['ADMIN', 'SALES_DEPT'].includes(currentRole) && req.query.userId
+        ? req.query.userId
+        : currentUserId;
+
+    try {
+        const { data, error } = await supabase
+            .from('UserCityAccess')
+            .select('id, cityName, isActive, notes, createdAt')
+            .eq('userId', targetUserId)
+            .eq('isActive', true)
+            .order('cityName');
+
+        if (error) {
+            console.error('Błąd pobierania miejscowości użytkownika:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać miejscowości', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            data: data || [],
+            cities: (data || []).map(d => d.cityName)
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/user-city-access:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Tworzenie nowego przypisania miejscowości
+app.post('/api/admin/user-city-access', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id: assignedById } = req.user;
+    const { userId, cityName, notes } = req.body || {};
+
+    if (!userId || !cityName?.trim()) {
+        return res.status(400).json({ status: 'error', message: 'userId i cityName są wymagane' });
+    }
+
+    try {
+        // Sprawdź czy użytkownik istnieje
+        const { data: userExists, error: userError } = await supabase
+            .from('User')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+        if (userError || !userExists) {
+            return res.status(404).json({ status: 'error', message: 'Użytkownik nie istnieje' });
+        }
+
+        // Sprawdź czy przypisanie już istnieje
+        const { data: existing } = await supabase
+            .from('UserCityAccess')
+            .select('id, isActive, cityName, notes')
+            .eq('userId', userId)
+            .eq('cityName', cityName.trim())
+            .single();
+
+        if (existing) {
+            // Jeśli istnieje ale nieaktywne, reaktywuj
+            if (!existing.isActive) {
+                const oldValue = { isActive: false, cityName: existing.cityName, notes: existing.notes };
+                
+                const { data: reactivated, error: reactivateError } = await supabase
+                    .from('UserCityAccess')
+                    .update({ isActive: true, assignedBy: assignedById, updatedAt: new Date().toISOString() })
+                    .eq('id', existing.id)
+                    .select()
+                    .single();
+
+                if (reactivateError) {
+                    return res.status(500).json({ status: 'error', message: 'Nie udało się reaktywować przypisania', details: reactivateError.message });
+                }
+
+                // Audit log
+                await logCityAccessChange(assignedById, userId, 'REACTIVATE', cityName.trim(), existing.id, oldValue, { isActive: true });
+
+                return res.json({ status: 'success', data: reactivated, message: 'Przypisanie reaktywowane' });
+            }
+            return res.status(409).json({ status: 'error', message: 'Przypisanie już istnieje' });
+        }
+
+        // Utwórz nowe przypisanie
+        const { data, error } = await supabase
+            .from('UserCityAccess')
+            .insert({
+                userId,
+                cityName: cityName.trim(),
+                isActive: true,
+                assignedBy: assignedById,
+                notes: notes?.trim() || null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Błąd tworzenia przypisania miejscowości:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć przypisania', details: error.message });
+        }
+
+        // Audit log
+        await logCityAccessChange(assignedById, userId, 'CREATE', cityName.trim(), data.id, null, { isActive: true, cityName: cityName.trim(), notes: notes?.trim() || null });
+
+        return res.status(201).json({ status: 'success', data, message: 'Przypisanie utworzone' });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/admin/user-city-access:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Aktualizacja przypisania miejscowości
+app.patch('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { role, id: actorId } = req.user;
+    const { id } = req.params;
+    const { cityName, isActive, notes } = req.body || {};
+
+    try {
+        // Pobierz obecny stan przed aktualizacją
+        const { data: currentData } = await supabase
+            .from('UserCityAccess')
+            .select('userId, cityName, isActive, notes')
+            .eq('id', id)
+            .single();
+
+        if (!currentData) {
+            return res.status(404).json({ status: 'error', message: 'Przypisanie nie znalezione' });
+        }
+
+        const oldValue = { cityName: currentData.cityName, isActive: currentData.isActive, notes: currentData.notes };
+        const updateData = { updatedAt: new Date().toISOString() };
+
+        // SALES_DEPT może tylko zmieniać isActive i notes
+        if (role === 'SALES_DEPT') {
+            if (isActive !== undefined) updateData.isActive = isActive;
+            if (notes !== undefined) updateData.notes = notes?.trim() || null;
+        } else {
+            // ADMIN może wszystko
+            if (cityName !== undefined) updateData.cityName = cityName.trim();
+            if (isActive !== undefined) updateData.isActive = isActive;
+            if (notes !== undefined) updateData.notes = notes?.trim() || null;
+        }
+
+        const { data, error } = await supabase
+            .from('UserCityAccess')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Błąd aktualizacji przypisania miejscowości:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować przypisania', details: error.message });
+        }
+
+        // Określ typ akcji dla audytu
+        let action = 'UPDATE';
+        if (isActive !== undefined && oldValue.isActive !== isActive) {
+            action = isActive ? 'REACTIVATE' : 'DEACTIVATE';
+        }
+
+        // Audit log
+        const newValue = { cityName: data.cityName, isActive: data.isActive, notes: data.notes };
+        await logCityAccessChange(actorId, currentData.userId, action, data.cityName, parseInt(id), oldValue, newValue);
+
+        return res.json({ status: 'success', data, message: 'Przypisanie zaktualizowane' });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/admin/user-city-access/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Usunięcie przypisania miejscowości (ADMIN, SALES_DEPT, GRAPHICS)
+app.delete('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id: actorId } = req.user;
+    const { id } = req.params;
+
+    try {
+        // Pobierz dane przed usunięciem (do audytu)
+        const { data: toDelete } = await supabase
+            .from('UserCityAccess')
+            .select('userId, cityName, isActive, notes')
+            .eq('id', id)
+            .single();
+
+        if (!toDelete) {
+            return res.status(404).json({ status: 'error', message: 'Przypisanie nie znalezione' });
+        }
+
+        const { error } = await supabase
+            .from('UserCityAccess')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Błąd usuwania przypisania miejscowości:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć przypisania', details: error.message });
+        }
+
+        // Audit log
+        await logCityAccessChange(actorId, toDelete.userId, 'DELETE', toDelete.cityName, parseInt(id), 
+            { cityName: toDelete.cityName, isActive: toDelete.isActive, notes: toDelete.notes }, null);
+
+        return res.json({ status: 'success', message: 'Przypisanie usunięte' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/admin/user-city-access/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Wykrywanie nieprzypisanych miejscowości (dla GRAPHICS, ADMIN, SALES_DEPT)
+app.get('/api/admin/unassigned-cities', requireRole(['GRAPHICS', 'ADMIN', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        // Pobierz wszystkie miejscowości z systemu plików (przez proxy do QNAP)
+        console.log('[unassigned-cities] Pobieranie z:', `${GALLERY_BASE}/list_cities.php`);
+        const galleryResponse = await fetch(`${GALLERY_BASE}/list_cities.php`);
+        if (!galleryResponse.ok) {
+            console.error('[unassigned-cities] Błąd odpowiedzi galerii:', galleryResponse.status);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać listy miejscowości z galerii' });
+        }
+        
+        const galleryData = await galleryResponse.json();
+        console.log('[unassigned-cities] Pobrano miejscowości:', galleryData.cities?.length || 0);
+        const allCities = Array.isArray(galleryData.cities) ? galleryData.cities : [];
+        
+        // Filtruj tylko prawdziwe miejscowości (bez folderów technicznych)
+        const realCities = allCities.filter(city => !/^\d+\./.test((city ?? '').trim()));
+        
+        // Pobierz wszystkie przypisania z bazy
+        const { data: assignments, error: assignmentsError } = await supabase
+            .from('UserCityAccess')
+            .select('cityName, isActive');
+        
+        if (assignmentsError) {
+            console.error('Błąd pobierania przypisań:', assignmentsError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać przypisań', details: assignmentsError.message });
+        }
+        
+        // Znajdź przypisane miejscowości
+        const assignedCities = new Set();
+        (assignments || []).forEach(assignment => {
+            if (assignment.isActive && assignment.cityName) {
+                assignedCities.add(assignment.cityName);
+            }
+        });
+        
+        // Znajdź nieprzypisane miejscowości
+        const unassignedCities = realCities.filter(city => !assignedCities.has(city));
+        
+        return res.json({
+            status: 'success',
+            data: {
+                allCities: realCities,
+                assignedCities: Array.from(assignedCities),
+                unassignedCities: unassignedCities,
+                stats: {
+                    total: realCities.length,
+                    assigned: assignedCities.size,
+                    unassigned: unassignedCities.length
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/unassigned-cities:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// -----------------------------
+// API - Ulubione użytkownika (UserFavorites)
+// -----------------------------
+
+const MAX_FAVORITES = 12;
+
+// Pobierz ulubione użytkownika
+app.get('/api/favorites', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+
+    if (!userId) {
+        return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+    const { type } = req.query; // 'city' lub 'ki_object'
+
+    try {
+        let query = supabase
+            .from('UserFavorites')
+            .select('id, type, itemId, displayName, metadata, createdAt')
+            .eq('userId', userId)
+            .order('createdAt', { ascending: false });
+
+        if (type) {
+            query = query.eq('type', type);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania ulubionych:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać ulubionych', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            data: data || [],
+            count: data?.length || 0
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/favorites:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Dodaj do ulubionych
+app.post('/api/favorites', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+
+    if (!userId) {
+        return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+    const { type, itemId, displayName, metadata } = req.body || {};
+
+    if (!type || !itemId || !displayName) {
+        return res.status(400).json({ status: 'error', message: 'type, itemId i displayName są wymagane' });
+    }
+
+    if (!['city', 'ki_object'].includes(type)) {
+        return res.status(400).json({ status: 'error', message: 'Nieprawidłowy typ: dozwolone city lub ki_object' });
+    }
+
+    try {
+        // Sprawdź limit ulubionych
+        const { count, error: countError } = await supabase
+            .from('UserFavorites')
+            .select('id', { count: 'exact', head: true })
+            .eq('userId', userId)
+            .eq('type', type);
+
+        if (countError) {
+            console.error('Błąd liczenia ulubionych:', countError);
+        } else if (count >= MAX_FAVORITES) {
+            return res.status(400).json({ 
+                status: 'error', 
+                message: `Osiągnięto limit ${MAX_FAVORITES} ulubionych pozycji dla tego typu` 
+            });
+        }
+
+        // Sprawdź czy już istnieje
+        const { data: existing } = await supabase
+            .from('UserFavorites')
+            .select('id')
+            .eq('userId', userId)
+            .eq('type', type)
+            .eq('itemId', itemId)
+            .single();
+
+        if (existing) {
+            return res.status(409).json({ status: 'error', message: 'Ta pozycja jest już w ulubionych' });
+        }
+
+        // Dodaj do ulubionych
+        const { data, error } = await supabase
+            .from('UserFavorites')
+            .insert({
+                userId,
+                type,
+                itemId,
+                displayName,
+                metadata: metadata || null,
+                createdAt: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Błąd dodawania do ulubionych:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się dodać do ulubionych', details: error.message });
+        }
+
+        return res.status(201).json({ status: 'success', data, message: 'Dodano do ulubionych' });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/favorites:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Usuń z ulubionych
+app.delete('/api/favorites/:type/:itemId', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+
+    if (!userId) {
+        return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+    const { type, itemId } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('UserFavorites')
+            .delete()
+            .eq('userId', userId)
+            .eq('type', type)
+            .eq('itemId', decodeURIComponent(itemId));
+
+        if (error) {
+            console.error('Błąd usuwania z ulubionych:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć z ulubionych', details: error.message });
+        }
+
+        return res.json({ status: 'success', message: 'Usunięto z ulubionych' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/favorites:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
     }
 });
 
@@ -3200,7 +4208,53 @@ process.on('unhandledRejection', (err) => {
     console.error('Niezłapany błąd:', err);
 });
 
-// Start server
+// Tymczasowy endpoint do sprawdzania ścieżek produkcyjnych
+app.post('/api/orders/test-production-paths', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('Product')
+      .select('identifier, productionPath')
+      .not('productionPath', 'is', null)
+      .limit(20);
+    
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+    
+    console.log('Ścieżki produkcyjne w bazie danych:');
+    console.log('=====================================');
+    data.forEach((row, index) => {
+      console.log(`${index + 1}. ${row.identifier}: ${row.productionPath}`);
+    });
+    
+    // Grupowanie według ścieżek
+    const grouped = {};
+    data.forEach(row => {
+      const path = row.productionPath || 'Brak ścieżki';
+      if (!grouped[path]) grouped[path] = [];
+      grouped[path].push(row.identifier);
+    });
+    
+    console.log('\nGrupy produktów według ścieżek:');
+    Object.entries(grouped).forEach(([path, products]) => {
+      console.log(`\n"${path}":`);
+      products.forEach(product => console.log(`  - ${product}`));
+    });
+    
+    res.json({ 
+      message: 'Sprawdzono ścieżki produkcyjne',
+      count: data.length,
+      products: data,
+      grouped: grouped
+    });
+    
+  } catch (error) {
+    console.error('Błąd:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Start serwera
 const server = app.listen(PORT, () => {
     console.log(`Serwer działa na porcie ${PORT}`);    
     console.log(`Środowisko: ${process.env.NODE_ENV || 'development'}`);

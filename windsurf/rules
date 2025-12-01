@@ -2,21 +2,48 @@
 
 W projekcie ZAMÓWIENIA stosuj następujące zasady pracy z AI (Cascade/Windsurf):
 
-1. **Język i styl odpowiedzi**
-   - Odpowiadaj po polsku.
-   - Pisz krótko i konkretnie, z naciskiem na praktyczne kroki i zmiany w kodzie.
+## 1. Język i styl odpowiedzi
+- Odpowiadaj po polsku.
+- Pisz krótko i konkretnie, z naciskiem na praktyczne kroki i zmiany w kodzie.
 
-2. **Korzystanie z PLAN_ROZWOJU.md**
-   - Przed każdą większą zmianą w kodzie najpierw sprawdź plik `PLAN_ROZWOJU.md` i powiąż swoje działania z odpowiednim punktem tego planu.
+## 2. Dokumentacja projektu
+Struktura dokumentacji (NIE tworzyć nowych plików bez uzgodnienia):
 
-3. **Katalog `SOURCE/`**
-   - Traktuj katalog `SOURCE/` jako archiwum i zbiór szablonów.
-   - Nie modyfikuj ani nie usuwaj plików w `SOURCE/` (w szczególności `list_cities.php` i `list_products.php`), chyba że użytkownik wyraźnie o to poprosi.
+| Plik | Zawartość |
+|------|-----------|
+| `README.md` | Szybki start, instrukcja uruchomienia |
+| `docs/SPEC.md` | Specyfikacja techniczna (stack, API, model danych) |
+| `docs/USER_MANUAL.md` | Podręcznik użytkownika (role, workflow, FAQ) |
+| `docs/roadmap.md` | Plan rozwoju (co zrobione, co planowane) |
+| `docs/SPEC_FOLDER_ACCESS.md` | Szczegóły modułu folderów KI |
 
-4. **Komentarze i dokumentacja**
-   - Nie usuwaj ani nie przerabiaj istniejących komentarzy w kodzie oraz plików dokumentacji `.md`, chyba że użytkownik wyraźnie o to poprosi.
-   - Możesz dopisywać nowe sekcje/pliki dokumentacji, gdy są potrzebne.
+**Zasady:**
+- Przed większą zmianą sprawdź `docs/roadmap.md`
+- Zmiany techniczne dokumentuj w `docs/SPEC.md`
+- Zmiany dla użytkownika dokumentuj w `docs/USER_MANUAL.md`
+- NIE twórz nowych plików .md w katalogu głównym
 
-5. **Stack i alternatywy technologiczne**
-   - Domyślnie trzymaj się obecnej architektury: statyczny frontend (`index.html`, `assets/`, `scripts/app.js`) + backend Node/Express w `backend/`.
-   - Jeśli widzisz wyraźnie lepsze rozwiązanie lub ryzyko długu technologicznego, zaproponuj alternatywy (z plusami i minusami), ale nie zmieniaj stacku bez wyraźnej zgody użytkownika.
+## 3. Katalog `SOURCE/`
+- Traktuj jako archiwum i zbiór szablonów.
+- Nie modyfikuj ani nie usuwaj plików w `SOURCE/`.
+
+## 4. Stack technologiczny
+- Frontend: statyczny (`index.html`, `assets/`, `scripts/app.js`)
+- Backend: Node/Express w `backend/`
+- Baza: Supabase (PostgreSQL)
+- Nie zmieniaj stacku bez wyraźnej zgody użytkownika.
+
+## 5. API - ważne konwencje
+**Ulubione (`/api/favorites`):**
+- POST wymaga: `type`, `itemId`, `displayName`
+- GET zwraca dane w polu `data` (nie `favorites`)
+- DELETE: `/api/favorites/:type/:itemId`
+
+**Miejscowości (`/api/gallery/cities`):**
+- Zwraca WSZYSTKIE miasta w `cities`
+- Przypisane w `assignedCities`
+- Frontend filtruje po stronie klienta
+
+## 6. Komentarze i kod
+- Nie usuwaj istniejących komentarzy bez zgody.
+- Zachowaj spójność z istniejącym stylem kodu.

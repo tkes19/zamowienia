@@ -7,6 +7,148 @@
     <link rel="stylesheet" href="./assets/styles.css" />
     <link rel="stylesheet" href="./assets/templates.css" />
     <link rel="stylesheet" href="./assets/vendor/fontawesome/all.min.css" />
+    <style>
+      /* Tryb readOnly - ukrywanie przycisków zamawiania */
+      body.read-only-mode .add-to-cart-btn,
+      body.read-only-mode #submit-order,
+      body.read-only-mode #clear-cart,
+      body.read-only-mode .cart-actions {
+        display: none !important;
+      }
+      
+      body.read-only-mode .gallery-placeholder::after {
+        content: " (Tryb podglądu - nie można składać zamówień)";
+        color: #ef4444;
+        font-weight: bold;
+      }
+      
+      /* Przyciski ulubionych */
+      .favorite-btn {
+        background: transparent;
+        border: none;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 18px;
+        color: #d1d5db;
+      }
+      
+      .favorite-btn:hover {
+        color: #fbbf24;
+        transform: scale(1.15);
+      }
+      
+      .favorite-btn.is-favorite {
+        color: #fbbf24;
+      }
+      
+      .favorite-btn.is-favorite i {
+        color: #fbbf24;
+      }
+      
+      /* Wrapper dla dropdownu miejscowości z przyciskiem ulubionych */
+      .city-select-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      
+      .city-select-wrapper select {
+        flex: 1;
+      }
+      
+      .city-favorite-btn {
+        flex-shrink: 0;
+      }
+      
+      /* Pasek ulubionych miejscowości */
+      .favorites-bar {
+        display: none;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 12px;
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        border-radius: 8px;
+        margin-bottom: 16px;
+        align-items: center;
+      }
+      
+      .favorites-bar.has-favorites {
+        display: flex;
+      }
+      
+      .favorites-bar__label {
+        font-size: 12px;
+        color: #92400e;
+        font-weight: 600;
+        margin-right: 4px;
+      }
+      
+      .favorites-bar__item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        background: white;
+        border-radius: 16px;
+        font-size: 13px;
+        color: #78350f;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 1px solid #fcd34d;
+      }
+      
+      .favorites-bar__item:hover {
+        background: #fffbeb;
+        border-color: #f59e0b;
+      }
+      
+      .favorites-bar__item i {
+        color: #f59e0b;
+        font-size: 10px;
+      }
+      
+      .favorites-bar__remove {
+        background: none;
+        border: none;
+        color: #dc2626;
+        cursor: pointer;
+        padding: 0 2px;
+        font-size: 12px;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+      }
+      
+      .favorites-bar__remove:hover {
+        opacity: 1;
+      }
+      
+      /* Przełącznik wszystkie miejscowości */
+      .show-all-cities-toggle {
+        font-size: 11px;
+        color: #6b7280;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 2px 6px;
+        margin-left: 8px;
+        text-decoration: underline;
+        opacity: 0.7;
+      }
+      
+      .show-all-cities-toggle:hover {
+        opacity: 1;
+        color: #3b82f6;
+      }
+      
+      .gallery-preview__frame {
+        position: relative;
+      }
+    </style>
   </head>
   <body class="hide-prices hide-guest">
     <!-- Globalna belka nawigacji (pełna szerokość, jak apple.com) -->
@@ -151,13 +293,29 @@
         <div class="search-gallery__divider"></div>
 
         <section class="panel panel--gallery" id="gallery-panel">
+          <!-- Pasek ulubionych miejscowości -->
+          <div id="favorites-bar" class="favorites-bar">
+            <span class="favorites-bar__label">⭐ Ulubione:</span>
+            <div id="favorites-bar-items"></div>
+          </div>
+          
           <div class="gallery-controls">
             <div id="gallery-controls-city">
-              <label class="field field--gallery">
-                <span class="field__label">Miejscowość</span>
-                <select id="gallery-city" class="field__input" aria-label="Wybierz miejscowość">
-                  <option value="">Ładowanie…</option>
-                </select>
+              <label class="field field--gallery city-field-with-favorite">
+                <span class="field__label">
+                  Miejscowość
+                  <button id="show-all-cities-toggle" class="show-all-cities-toggle" style="display: none;">
+                    pokaż wszystkie
+                  </button>
+                </span>
+                <div class="city-select-wrapper">
+                  <select id="gallery-city" class="field__input" aria-label="Wybierz miejscowość">
+                    <option value="">Ładowanie…</option>
+                  </select>
+                  <button id="city-favorite-btn" class="favorite-btn city-favorite-btn" data-type="city" data-item-id="" style="display: none;" title="Dodaj do ulubionych">
+                    <i class="far fa-star"></i>
+                  </button>
+                </div>
               </label>
             </div>
             <div id="gallery-controls-sales" hidden>
@@ -169,9 +327,14 @@
               </label>
               <label class="field field--gallery">
                 <span class="field__label">Obiekt</span>
-                <select id="gallery-object" class="field__input" aria-label="Wybierz obiekt" disabled>
-                  <option value="">Najpierw wybierz handlowca</option>
-                </select>
+                <div class="city-select-wrapper">
+                  <select id="gallery-object" class="field__input" aria-label="Wybierz obiekt" disabled>
+                    <option value="">Najpierw wybierz handlowca</option>
+                  </select>
+                  <button id="object-favorite-btn" class="favorite-btn city-favorite-btn" data-type="ki_object" data-item-id="" style="display: none;" title="Dodaj do ulubionych">
+                    <i class="far fa-star"></i>
+                  </button>
+                </div>
               </label>
             </div>
             <label class="field field--gallery">
@@ -193,7 +356,7 @@
               <p id="gallery-preview-placeholder" class="gallery-preview__placeholder">
                 Wybierz miejscowość i produkt, aby zobaczyć grafikę.
               </p>
-            </div>
+                          </div>
             <p id="gallery-errors" class="status status--error" hidden></p>
           </div>
 
@@ -239,7 +402,7 @@
         </div>
         <p id="status-message" class="status status--info status--compact">Wpisz frazę i kliknij „Szukaj”.</p>
         <div class="table-wrapper">
-          <table class="table" aria-live="polite">
+          <table class="table table--results" aria-live="polite">
             <thead>
               <tr>
                 <th>IDENTYFIKATOR i INDEKS</th>
@@ -247,11 +410,12 @@
                 <th class="price-column">Cena</th>
                 <th>Stan mag.</th>
                 <th>Ilość</th>
+                <th>Uwagi</th>
                 <th>Dodaj</th>
               </tr>
             </thead>
             <tbody id="results-body">
-              <tr class="table__placeholder"><td colspan="6">Brak wyników do wyświetlenia.</td></tr>
+              <tr class="table__placeholder"><td colspan="7">Brak wyników do wyświetlenia.</td></tr>
             </tbody>
           </table>
         </div>
@@ -295,13 +459,13 @@
           </div>
         </div>
         <div class="table-wrapper">
-          <table class="table">
+          <table class="table table--cart">
             <thead>
               <tr>
                 <th>IDENTYFIKATOR i INDEKS</th>
-                <th>Nr projektów</th>
+                <th>Nr projektów / Ilości na proj.</th>
                 <th>Ilość</th>
-                <th class="price-column">Cena jednostkowa</th>
+                <th>Uwagi</th>
                 <th class="price-column">Wartość</th>
                 <th>Akcje</th>
               </tr>
@@ -311,8 +475,9 @@
             </tbody>
             <tfoot>
               <tr>
-                <td colspan="5" class="table__total-label">Suma zamówienia</td>
+                <td colspan="4" class="table__total-label">Suma zamówienia</td>
                 <td id="cart-total" class="table__total-value">0,00 zł</td>
+                <td></td>
               </tr>
             </tfoot>
           </table>
@@ -321,7 +486,21 @@
 
       <section class="panel panel--note guest-hidden">
         <h2>Eksport danych i wysyłka</h2>
-        <p>Pobierz aktualny koszyk w wybranym formacie lub wyślij zamówienie do bazy:</p>
+        
+        <!-- Pole uwag ogólnych do zamówienia -->
+        <div class="order-notes-section">
+          <label for="order-general-notes">
+            <i class="fas fa-sticky-note"></i> Uwagi do zamówienia (opcjonalnie)
+          </label>
+          <textarea 
+            id="order-general-notes" 
+            class="order-notes-textarea" 
+            placeholder="Wpisz uwagi dotyczące całego zamówienia, np. termin realizacji, sposób dostawy, specjalne wymagania..."
+            rows="2"
+          ></textarea>
+        </div>
+        
+        <p style="margin-top: 1rem;">Pobierz aktualny koszyk w wybranym formacie lub wyślij zamówienie do bazy:</p>
         <div class="export-buttons">
           <button id="export-json" class="btn" type="button">Pobierz koszyk (JSON)</button>
           <button id="export-pdf" class="btn btn--primary" type="button">Pobierz zamówienie (PDF)</button>

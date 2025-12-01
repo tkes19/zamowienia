@@ -186,6 +186,19 @@ function formatGalleryProductLabel(slug = '') {
   return slug.replace(/_/g, ' ').toUpperCase();
 }
 
+// Funkcja pomocnicza do pobierania roli użytkownika
+async function getCurrentUserRole() {
+  try {
+    const response = await fetch('/api/auth/me', { credentials: 'include' });
+    if (!response.ok) return null;
+    const result = await response.json();
+    return result.role || null;
+  } catch (error) {
+    console.error('Błąd pobierania roli użytkownika:', error);
+    return null;
+  }
+}
+
 async function loadGalleryCities() {
   console.log('[DEBUG] loadGalleryCities() called, galleryCitySelect:', galleryCitySelect);
   if (!galleryCitySelect) {
@@ -196,22 +209,122 @@ async function loadGalleryCities() {
     console.log('[DEBUG] Fetching cities from:', `${GALLERY_API_BASE}/cities`);
     galleryCitySelect.disabled = true;
     galleryCitySelect.innerHTML = '<option value="">Ładowanie…</option>';
+    
+    // Pobierz miasta z filtrowaniem po przypisaniach użytkownika
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/cities`);
-    console.log('[DEBUG] Cities loaded:', data);
-    const visibleCities = Array.isArray(data.cities)
+    console.log('[DEBUG] Cities loaded, count:', data.cities?.length, 'assigned:', data.assignedCities?.length);
+    
+    let visibleCities = Array.isArray(data.cities)
       ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
       : [];
-    if (!visibleCities.length) {
-      galleryCitySelect.innerHTML = '<option value="">Brak danych</option>';
-      setGalleryPlaceholder('Brak dostępnych miejscowości.');
+    
+    // Sprawdź rolę użytkownika, aby zdecydować o filtrowaniu
+    const currentUserRole = await getCurrentUserRole();
+    console.log('[DEBUG] Current user role:', currentUserRole);
+    
+    let userAssignedCities = [];
+    
+    // ADMIN, SALES_DEPT i GRAPHICS widzą wszystkie miejscowości domyślnie
+    if (['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(currentUserRole)) {
+      // Nie filtruj - pokaż wszystkie miejscowości
+      userAssignedCities = data.assignedCities || [];
+      console.log('[DEBUG] User can see all cities (ADMIN/SALES_DEPT/GRAPHICS):', visibleCities.length);
+      
+      // Dla GRAPHICS ustaw tryb read-only (nie mogą składać zamówień)
+      if (currentUserRole === 'GRAPHICS') {
+        document.body.classList.add('read-only-mode');
+      } else {
+        document.body.classList.remove('read-only-mode');
+      }
+    } else if (data.assignedCities && data.assignedCities.length > 0) {
+      // SALES_REP i CLIENT z przypisaniami - filtruj miasta
+      userAssignedCities = data.assignedCities;
+      const assignedCities = new Set(data.assignedCities);
+      visibleCities = visibleCities.filter(city => assignedCities.has(city));
+      console.log('[DEBUG] Cities filtered by user access (SALES_REP/CLIENT):', visibleCities.length);
+    } else {
+      // Brak przypisań - pokaż pustą listę
+      visibleCities = [];
+    }
+    
+    if (!visibleCities.length && !['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(currentUserRole)) {
+      // Jeśli użytkownik nie ma przypisań, pokaż opcję "Wszystkie miejscowości" do przeglądania
+      if (data.assignedCities && data.assignedCities.length === 0) {
+        // Pobierz wszystkie miasta (bez folderów technicznych) do opcji "Wszystkie miejscowości"
+        const allCitiesFiltered = Array.isArray(data.cities)
+          ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
+          : [];
+        
+        const options = ['<option value="">Wybierz miejscowość (brak przypisanych)</option>',
+          ...allCitiesFiltered.map((city) => `<option value="${city}">${city} (podgląd)</option>`),
+        ];
+        galleryCitySelect.innerHTML = options.join('');
+        galleryCitySelect.disabled = false;
+        setGalleryPlaceholder('Nie masz przypisanych miejscowości. Wybierz "Wszystkie miejscowości" aby przeglądać.');
+        document.body.classList.add('read-only-mode');
+        updateProjectFilterAvailability();
+        return;
+      } else {
+        galleryCitySelect.innerHTML = '<option value="">Brak danych</option>';
+        setGalleryPlaceholder('Brak dostępnych miejscowości.');
+      }
       galleryFilesCache = [];
       galleryProducts = [];
       updateProjectFilterAvailability();
       return;
     }
-    const options = ['<option value="">Wszystkie miejscowości</option>',
+    
+    // Jeśli tryb readOnly, dodaj informację
+    if (data.readOnly) {
+      document.body.classList.add('read-only-mode');
+    } else {
+      document.body.classList.remove('read-only-mode');
+    }
+    
+    // Przechowaj wszystkie miasta do przełącznika "pokaż wszystkie" (PRZED filtrowaniem!)
+    const allCitiesFiltered = Array.isArray(data.cities)
+      ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
+      : [];
+    window._allCitiesForToggle = allCitiesFiltered;
+    
+    // Zapisz przypisane miasta PRZED filtrowaniem
+    const assignedCitiesBeforeFilter = data.assignedCities && data.assignedCities.length > 0 
+      ? data.assignedCities 
+      : [];
+    window._userAssignedCities = assignedCitiesBeforeFilter;
+    
+    // Pokaż przełącznik dla użytkowników z przypisaniami
+    const showAllToggle = document.getElementById('show-all-cities-toggle');
+    if (showAllToggle) {
+      // Pobierz przypisane miejscowości z danych (niezależnie od roli)
+      const hasAssignedCities = data.assignedCities && data.assignedCities.length > 0;
+      
+      if (['ADMIN', 'SALES_DEPT'].includes(currentUserRole) && hasAssignedCities) {
+        // ADMIN i SALES_DEPT z przypisaniami - pokaż przełącznik "moje miejscowości"
+        showAllToggle.style.display = 'inline';
+        showAllToggle.textContent = 'moje miejscowości';
+        showAllToggle.dataset.showingAll = 'true'; // domyślnie pokazują wszystkie
+        showAllToggle.dataset.mode = 'all-to-assigned';
+        // Zapisz przypisane miejscowości do przełącznika
+        window._userAssignedCities = data.assignedCities;
+      } else if (currentUserRole === 'GRAPHICS') {
+        // GRAPHICS - nie pokazuj przełącznika (tylko podgląd)
+        showAllToggle.style.display = 'none';
+      } else if (hasAssignedCities && !['ADMIN', 'SALES_DEPT'].includes(currentUserRole)) {
+        // Dla SALES_REP/CLIENT z przypisaniami pokaż przełącznik "pokaż wszystkie"
+        showAllToggle.style.display = 'inline';
+        showAllToggle.textContent = 'pokaż wszystkie';
+        showAllToggle.dataset.showingAll = 'false';
+        showAllToggle.dataset.mode = 'assigned-to-all';
+      } else {
+        showAllToggle.style.display = 'none';
+      }
+    }
+    
+    const options = ['<option value="">Wybierz miejscowość</option>',
       ...visibleCities.map((city) => `<option value="${city}">${city}</option>`),
     ];
+    
     galleryCitySelect.innerHTML = options.join('');
     galleryCitySelect.disabled = false;
     galleryCitySelect.value = '';
@@ -247,7 +360,9 @@ async function loadGalleryProductsForObject(salesperson, object) {
   }
 
   try {
-    const lockedSlug = galleryLockCheckbox?.checked ? galleryProductSelect?.value || '' : '';
+    // Użyj lastLockedProductSlug jeśli checkbox jest zaznaczony
+    const lockedSlug = galleryLockCheckbox?.checked ? lastLockedProductSlug : '';
+    
     galleryProductSelect.disabled = true;
     galleryProductSelect.innerHTML = '<option value="">Ładowanie…</option>';
 
@@ -325,7 +440,9 @@ async function loadGalleryProducts(city) {
   }
 
   try {
-    const lockedSlug = galleryLockCheckbox?.checked ? galleryProductSelect?.value || '' : '';
+    // Użyj lastLockedProductSlug jeśli checkbox jest zaznaczony
+    const lockedSlug = galleryLockCheckbox?.checked ? lastLockedProductSlug : '';
+    
     galleryProductSelect.disabled = true;
     galleryProductSelect.innerHTML = '<option value="">Ładowanie…</option>';
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/products/${encodeURIComponent(targetCity)}`);
@@ -495,6 +612,21 @@ async function loadSalespeople() {
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/salespeople`);
     const salesPeople = Array.isArray(data.salesPeople) ? data.salesPeople : [];
 
+    // Sprawdź czy wyniki są filtrowane (handlowiec/klient z przypisaniami)
+    const isFiltered = data.filtered === true;
+    const noAssignments = isFiltered && salesPeople.length === 0;
+
+    if (noAssignments) {
+      gallerySalespersonSelect.innerHTML = '<option value="">Brak przypisanych folderów</option>';
+      if (galleryObjectSelect) {
+        galleryObjectSelect.disabled = true;
+        galleryObjectSelect.innerHTML = '<option value="">Brak dostępu</option>';
+      }
+      // Pokaż komunikat użytkownikowi
+      console.info('KI: Użytkownik nie ma przypisanych folderów. Skontaktuj się z administratorem.');
+      return;
+    }
+
     if (!salesPeople.length) {
       gallerySalespersonSelect.innerHTML = '<option value="">Brak handlowców</option>';
       if (galleryObjectSelect) {
@@ -511,9 +643,59 @@ async function loadSalespeople() {
     gallerySalespersonSelect.innerHTML = options.join('');
     gallerySalespersonSelect.disabled = false;
 
+    // Pokaż select z powrotem i usuń info o folderze (jeśli istnieje)
+    const parent = gallerySalespersonSelect.parentElement;
+    if (parent) {
+      parent.classList.remove('hidden');
+      const folderInfo = document.getElementById('assigned-folder-info');
+      if (folderInfo) {
+        folderInfo.remove();
+      }
+    }
+
     if (galleryObjectSelect) {
       galleryObjectSelect.disabled = true;
       galleryObjectSelect.innerHTML = '<option value="">Wybierz handlowca</option>';
+    }
+
+    // Automatyczny wybór jedynego folderu dla handlowca/klienta
+    if (isFiltered && salesPeople.length === 1) {
+      const onlyFolder = salesPeople[0];
+      gallerySalespersonSelect.value = onlyFolder;
+      gallerySalespersonSelect.disabled = true;
+      
+      // Ukryj select i pokaż info o przypisanym folderze
+      const parent = gallerySalespersonSelect.parentElement;
+      if (parent) {
+        parent.classList.add('hidden');
+        
+        // Stwórz lub zaktualizuj info o folderze
+        let folderInfo = document.getElementById('assigned-folder-info');
+        if (!folderInfo) {
+          folderInfo = document.createElement('div');
+          folderInfo.id = 'assigned-folder-info';
+          folderInfo.className = 'bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4';
+          parent.parentElement.insertBefore(folderInfo, parent);
+        }
+        folderInfo.innerHTML = `
+          <div class="flex items-center gap-2">
+            <i class="fas fa-folder text-blue-600"></i>
+            <span class="text-sm font-medium text-blue-900">Przypisany folder:</span>
+            <span class="text-sm text-blue-700 font-semibold">${onlyFolder}</span>
+          </div>
+        `;
+      }
+      
+      // Automatycznie załaduj obiekty dla tego folderu
+      loadObjectsForSalesperson(onlyFolder);
+      
+      console.info(`KI: Automatycznie wybrano jedyny przypisany folder: ${onlyFolder}`);
+      return;
+    }
+
+    // Log info o filtrowanych wynikach
+    if (isFiltered) {
+      console.info(`KI: Załadowano ${salesPeople.length} przypisanych folderów (z ${data.totalAvailable || '?'} dostępnych)`);
     }
   } catch (error) {
     console.error('Nie udało się pobrać handlowców:', error);
@@ -527,12 +709,12 @@ async function loadSalespeople() {
 }
 
 async function loadObjectsForSalesperson(salesperson) {
-  if (!galleryObjectSelect) return;
+  if (!galleryObjectSelect) return [];
 
   if (!salesperson) {
     galleryObjectSelect.disabled = true;
     galleryObjectSelect.innerHTML = '<option value="">Najpierw wybierz handlowca</option>';
-    return;
+    return [];
   }
 
   try {
@@ -540,12 +722,26 @@ async function loadObjectsForSalesperson(salesperson) {
     galleryObjectSelect.innerHTML = '<option value="">Ładowanie…</option>';
 
     const url = `${GALLERY_API_BASE}/objects/${encodeURIComponent(salesperson)}`;
-    const data = await fetchGalleryJSON(url);
+    const response = await fetch(url, { credentials: 'include' });
+    
+    // Obsługa błędu 403 - brak dostępu do folderu
+    if (response.status === 403) {
+      galleryObjectSelect.innerHTML = '<option value="">Brak dostępu do tego folderu</option>';
+      galleryObjectSelect.disabled = true;
+      console.warn(`KI: Brak uprawnień do folderu "${salesperson}"`);
+      return [];
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
     const objects = Array.isArray(data.objects) ? data.objects : [];
 
     if (!objects.length) {
       galleryObjectSelect.innerHTML = '<option value="">Brak obiektów</option>';
-      return;
+      return [];
     }
 
     const options = ['<option value="">Wybierz obiekt</option>',
@@ -554,10 +750,12 @@ async function loadObjectsForSalesperson(salesperson) {
 
     galleryObjectSelect.innerHTML = options.join('');
     galleryObjectSelect.disabled = false;
+    return objects;
   } catch (error) {
     console.error('Nie udało się pobrać obiektów:', error);
     galleryObjectSelect.innerHTML = '<option value="">Błąd ładowania</option>';
     galleryObjectSelect.disabled = true;
+    return [];
   }
 }
 
@@ -702,6 +900,9 @@ function setFormMode(mode) {
       handleGalleryProductChangeFromSelect();
     }
   }
+  
+  // Przerenderuj pasek ulubionych dla nowego trybu
+  renderFavoritesBar();
 }
 
 async function handleGalleryProductChangeFromSelect() {
@@ -978,7 +1179,8 @@ async function submitOrder() {
         projectQuantities,
         totalQuantity: qty,
         locationName: item.locationName || null,
-        source: item.source || 'MIEJSCOWOSCI'
+        source: item.source || 'MIEJSCOWOSCI',
+        productionNotes: item.itemNotes || null  // Uwagi produkcyjne do pozycji
       });
     }
 
@@ -992,9 +1194,13 @@ async function submitOrder() {
 
     setStatus('Wysyłam zamówienie…', 'info', 'cart');
 
+    // Pobierz uwagi ogólne do zamówienia
+    const orderGeneralNotesEl = document.getElementById('order-general-notes');
+    const orderGeneralNotes = orderGeneralNotesEl ? orderGeneralNotesEl.value.trim() : null;
+
     const payload = {
       customerId: currentCustomer.id,
-      notes: null,
+      notes: orderGeneralNotes || null,  // Uwagi ogólne do zamówienia
       items,
     };
 
@@ -1035,9 +1241,14 @@ async function submitOrder() {
 
     console.log('[ORDER] Sukces! orderNumber:', orderNumber, 'total:', total);
 
-    // Wyczyść koszyk
+    // Wyczyść koszyk i pole uwag ogólnych
     cart.clear();
     renderCart();
+    
+    // Wyczyść pole uwag ogólnych
+    if (orderGeneralNotesEl) {
+      orderGeneralNotesEl.value = '';
+    }
 
   } catch (error) {
     console.error('[ORDER] Wyjątek:', error);
@@ -1077,12 +1288,14 @@ function showGalleryImage(src, alt) {
   galleryPreviewPlaceholder.hidden = true;
   galleryPreviewImage.hidden = false;
   galleryPreviewImage.alt = alt ?? 'Podgląd produktu';
+  
   // Na produkcji (HTTPS) nie możemy ładować obrazka bezpośrednio z HTTP QNAP-a,
   // dlatego korzystamy z proxy backendu (/api/gallery/image), który pobiera obraz
   // z GALLERY_BASE i zwraca go z tego samego originu.
   const proxiedUrl = `${GALLERY_API_BASE}/image?url=${encodeURIComponent(src)}`;
   galleryPreviewImage.src = proxiedUrl;
-
+  
+  
   // initGalleryZoom() jest wywoływana w initialize(), nie tutaj
   // const frame = galleryPreviewImage.parentElement;
   // if (frame && frame.classList.contains('gallery-preview__frame')) {
@@ -1090,10 +1303,168 @@ function showGalleryImage(src, alt) {
   // }
 }
 
+// Zaktualizuj przycisk ulubionych przy miejscowości (PM)
+function updateCityFavoriteButton(cityName) {
+  const favoriteBtn = document.getElementById('city-favorite-btn');
+  if (!favoriteBtn) return;
+  
+  // Pokaż przycisk tylko dla zalogowanych użytkowników i gdy wybrano miejscowość
+  if (!currentUser || !cityName) {
+    favoriteBtn.style.display = 'none';
+    return;
+  }
+  
+  favoriteBtn.style.display = 'flex';
+  favoriteBtn.dataset.itemId = cityName;
+  favoriteBtn.dataset.cityName = cityName;
+  
+  // Zaktualizuj stan przycisku
+  if (isFavorite('city', cityName)) {
+    favoriteBtn.classList.add('is-favorite');
+    favoriteBtn.innerHTML = '<i class="fas fa-star"></i>';
+    favoriteBtn.title = 'Usuń z ulubionych';
+  } else {
+    favoriteBtn.classList.remove('is-favorite');
+    favoriteBtn.innerHTML = '<i class="far fa-star"></i>';
+    favoriteBtn.title = 'Dodaj do ulubionych';
+  }
+}
+
+// Zaktualizuj przycisk ulubionych przy obiekcie (KI)
+function updateObjectFavoriteButton(objectName) {
+  const favoriteBtn = document.getElementById('object-favorite-btn');
+  if (!favoriteBtn) return;
+  
+  // Pokaż przycisk tylko dla zalogowanych użytkowników i gdy wybrano obiekt
+  if (!currentUser || !objectName) {
+    favoriteBtn.style.display = 'none';
+    return;
+  }
+  
+  // Pobierz również handlowca, aby utworzyć unikalny identyfikator
+  const salesperson = gallerySalespersonSelect?.value || '';
+  const itemId = salesperson ? `${salesperson}/${objectName}` : objectName;
+  
+  favoriteBtn.style.display = 'flex';
+  favoriteBtn.dataset.itemId = itemId;
+  favoriteBtn.dataset.objectName = objectName;
+  favoriteBtn.dataset.salesperson = salesperson;
+  
+  // Zaktualizuj stan przycisku
+  if (isFavorite('ki_object', itemId)) {
+    favoriteBtn.classList.add('is-favorite');
+    favoriteBtn.innerHTML = '<i class="fas fa-star"></i>';
+    favoriteBtn.title = 'Usuń z ulubionych';
+  } else {
+    favoriteBtn.classList.remove('is-favorite');
+    favoriteBtn.innerHTML = '<i class="far fa-star"></i>';
+    favoriteBtn.title = 'Dodaj do ulubionych';
+  }
+}
+
+// Renderuj pasek ulubionych (PM: miejscowości, KI: obiekty)
+function renderFavoritesBar() {
+  const favoritesBar = document.getElementById('favorites-bar');
+  const favoritesBarItems = document.getElementById('favorites-bar-items');
+  
+  if (!favoritesBar || !favoritesBarItems) return;
+  
+  // Pobierz aktualny tryb (PM/KI)
+  const isKIMode = currentFormMode === 'klienci-indywidualni';
+  
+  // Filtruj ulubione według typu (city dla PM, ki_object dla KI)
+  const typeFilter = isKIMode ? 'ki_object' : 'city';
+  const filteredFavorites = userFavorites.filter(f => f.type === typeFilter);
+  
+  console.log('[DEBUG] renderFavoritesBar - mode:', currentFormMode, 'typeFilter:', typeFilter, 'found:', filteredFavorites.length);
+  
+  if (filteredFavorites.length === 0) {
+    favoritesBar.classList.remove('has-favorites');
+    favoritesBarItems.innerHTML = '';
+    return;
+  }
+  
+  favoritesBar.classList.add('has-favorites');
+  
+  favoritesBarItems.innerHTML = filteredFavorites.map(fav => {
+    // Dla KI: item_id to "handlowiec/obiekt", wyświetlamy tylko nazwę obiektu
+    const displayName = fav.name || (isKIMode ? fav.item_id.split('/').pop() : fav.item_id);
+    return `
+    <span class="favorites-bar__item" data-item-id="${fav.item_id}" data-type="${fav.type}" title="Kliknij aby wybrać ${displayName}">
+      <i class="fas fa-star"></i>
+      ${displayName}
+      <button class="favorites-bar__remove" data-favorite-id="${fav.id}" title="Usuń z ulubionych">×</button>
+    </span>
+  `;
+  }).join('');
+  
+  // Dodaj event listenery do elementów
+  favoritesBarItems.querySelectorAll('.favorites-bar__item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('favorites-bar__remove')) return;
+      
+      const itemId = item.dataset.itemId;
+      const type = item.dataset.type;
+      
+      if (type === 'city' && galleryCitySelect) {
+        // Tryb PM - wybierz miejscowość
+        galleryCitySelect.value = itemId;
+        galleryCitySelect.dispatchEvent(new Event('change'));
+      } else if (type === 'ki_object') {
+        // Tryb KI - wybierz handlowca i obiekt
+        const parts = itemId.split('/');
+        if (parts.length === 2) {
+          const [salesperson, objectName] = parts;
+          if (gallerySalespersonSelect && galleryObjectSelect) {
+            // Ustaw handlowca
+            gallerySalespersonSelect.value = salesperson;
+            
+            // Załaduj obiekty i poczekaj na zakończenie
+            const objects = await loadObjectsForSalesperson(salesperson);
+            
+            // Jeśli obiekt istnieje na liście, wybierz go
+            if (objects.includes(objectName)) {
+              galleryObjectSelect.value = objectName;
+              // Załaduj produkty dla tego obiektu
+              loadGalleryProductsForObject(salesperson, objectName);
+              // Zaktualizuj przycisk ulubionych
+              updateObjectFavoriteButton(objectName);
+            }
+          }
+        }
+      }
+    });
+  });
+  
+  // Dodaj event listenery do przycisków usuwania
+  const removeButtons = favoritesBarItems.querySelectorAll('.favorites-bar__remove');
+  removeButtons.forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const favoriteId = btn.dataset.favoriteId;
+      await removeFromFavorites(favoriteId);
+      renderFavoritesBar();
+      
+      // Zaktualizuj gwiazdkę przy aktualnie wybranym elemencie
+      if (currentFormMode === 'klienci-indywidualni') {
+        const currentObject = galleryObjectSelect?.value;
+        if (currentObject) {
+          updateObjectFavoriteButton(currentObject);
+        }
+      } else {
+        const currentCity = galleryCitySelect?.value;
+        if (currentCity) {
+          updateCityFavoriteButton(currentCity);
+        }
+      }
+    });
+  });
+}
+
 function resetResultsPlaceholder(text = 'Brak wyników do wyświetlenia.') {
   resultsBody.innerHTML = `
     <tr class="table__placeholder">
-      <td colspan="6">${text}</td>
+      <td colspan="7">${text}</td>
     </tr>
   `;
 }
@@ -1380,43 +1751,23 @@ function renderResults(products) {
       <td class="projects-cell">
         <div class="projects-field">
           <label class="projects-field__label">Nr projektów</label>
-          <input
-            type="text"
-            class="projects-input"
-            placeholder="np. 1-5,7"
-            inputmode="numeric"
-            pattern="[0-9,\-\s]*"
-          />
+          <input type="text" class="projects-input" placeholder="1-5,7" inputmode="numeric" pattern="[0-9,\\-\\s]*" />
         </div>
         <div class="projects-field">
           <label class="projects-field__label">Ilości na proj.</label>
-          <input
-            type="text"
-            class="qty-per-project-input-results"
-            placeholder="po 20 lub 20,30,40"
-          />
+          <input type="text" class="qty-per-project-input-results" placeholder="po 20" />
         </div>
       </td>
       <td class="price-column">${formatCurrency(product.price)}</td>
       <td>${createBadge(product.stock, product.stock_optimal)}</td>
       <td>
-        <div class="qty-controls-results">
-          <div class="qty-field">
-            <label class="qty-label">Łącznie szt.</label>
-            <input
-              type="number"
-              class="qty-input"
-              value="1"
-              min="1"
-              ${product.stock > 0 ? '' : 'disabled'}
-            />
-          </div>
-        </div>
+        <input type="number" class="qty-input" value="1" min="1" ${product.stock > 0 ? '' : 'disabled'} title="Łącznie szt." />
       </td>
       <td>
-        <button type="button" class="btn btn--primary" ${product.stock > 0 ? '' : 'disabled'}>
-          Dodaj
-        </button>
+        <textarea class="item-notes-input" placeholder="Uwagi..." title="Uwagi produkcyjne"></textarea>
+      </td>
+      <td>
+        <button type="button" class="btn btn--primary btn--sm" ${product.stock > 0 ? '' : 'disabled'}>Dodaj</button>
       </td>
     `;
 
@@ -1432,13 +1783,14 @@ function renderResults(products) {
     const projectsInput = row.querySelector('.projects-input');
     const qtyInput = row.querySelector('.qty-input');
     const qtyPerProjectInput = row.querySelector('.qty-per-project-input-results');
+    const itemNotesInput = row.querySelector('.item-notes-input');
     const qtyPreviewContainer = document.createElement('div');
     qtyPreviewContainer.className = 'qty-preview-results';
     const previewRow = document.createElement('tr');
     previewRow.className = 'results-preview-row';
     previewRow.style.display = 'none';
     const previewCell = document.createElement('td');
-    previewCell.colSpan = 6;
+    previewCell.colSpan = 7;
     previewCell.appendChild(qtyPreviewContainer);
     previewRow.appendChild(previewCell);
 
@@ -1520,6 +1872,7 @@ function renderResults(products) {
       }
 
       const result = computePerProjectQuantities(projectsValue, '', perValue);
+
       if (!result.success) {
         showQtyPreview(`❌ ${result.error}`, 'error');
         return;
@@ -1564,6 +1917,7 @@ function renderResults(products) {
       const projectsValue = projectsInput.value.trim();
       const qtyTotalValue = parseInt(qtyInput.value, 10);
       const qtyPerProjectValue = qtyPerProjectInput.value.trim();
+      const itemNotesValue = itemNotesInput.value.trim();
 
       if (projectsValue && !isValidProjectInput(projectsValue)) {
         alert('Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.');
@@ -1582,19 +1936,20 @@ function renderResults(products) {
           return;
         }
 
-        // Dodaj do koszyka z obliczonym rozkładem
-        addToCartWithQuantityBreakdown(product, result);
+        // Dodaj do koszyka z obliczonym rozkładem i uwagami
+        addToCartWithQuantityBreakdown(product, result, itemNotesValue);
       } else {
         // Zwykłe dodanie bez rozkładu
         const quantity = Number.isFinite(qtyTotalValue) && qtyTotalValue > 0 ? qtyTotalValue : 1;
         const normalizedProjects = sanitizeProjectsValue(projectsValue);
-        addToCart(product, quantity, normalizedProjects);
+        addToCart(product, quantity, normalizedProjects, itemNotesValue);
       }
 
       // Czyszczenie pól po dodaniu
       projectsInput.value = '';
       qtyInput.value = '1';
       qtyPerProjectInput.value = '';
+      itemNotesInput.value = '';
       hideQtyPreview();
     });
 
@@ -1608,7 +1963,7 @@ function renderResults(products) {
   });
 }
 
-function addToCart(product, quantity, projects) {
+function addToCart(product, quantity, projects, itemNotes = '') {
   const stock = product.stock ?? 0;
   if (stock <= 0) {
     setStatus(`Produkt ${product.name} jest niedostępny.`, 'error');
@@ -1621,6 +1976,7 @@ function addToCart(product, quantity, projects) {
 
   const sanitizedProjects = sanitizeProjectsValue(projects);
   const currentProjects = sanitizedProjects || entry?.projects || '';
+  const currentNotes = itemNotes || entry?.itemNotes || '';
 
   // Pobierz nazwę lokalizacji i źródło w zależności od trybu
   let locationName = null;
@@ -1642,13 +1998,14 @@ function addToCart(product, quantity, projects) {
     quantityInputPerProject: '',  // Pole B: ilości na projekty
     perProjectQuantities: [],  // Rozkład na projekty
     locationName,  // Nazwa miejscowości (PM) lub obiektu KI
-    source  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
+    source,  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
+    itemNotes: currentNotes  // Uwagi do pozycji
   });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka.`, 'success');
 }
 
-function addToCartWithQuantityBreakdown(product, computeResult) {
+function addToCartWithQuantityBreakdown(product, computeResult, itemNotes = '') {
   const stock = product.stock ?? 0;
   if (stock <= 0) {
     setStatus(`Produkt ${product.name} jest niedostępny.`, 'error');
@@ -1658,6 +2015,7 @@ function addToCartWithQuantityBreakdown(product, computeResult) {
   const key = product._id;
   const entry = cart.get(key);
   const { totalQuantity, perProjectQuantities, mode, quantityInput } = computeResult;
+  const currentNotes = itemNotes || entry?.itemNotes || '';
 
   // Pobierz nazwę lokalizacji i źródło w zależności od trybu
   let locationName = null;
@@ -1679,7 +2037,8 @@ function addToCartWithQuantityBreakdown(product, computeResult) {
     quantityInputPerProject: mode !== 'total' ? quantityInput : '',
     perProjectQuantities: perProjectQuantities,
     locationName,  // Nazwa miejscowości (PM) lub obiektu KI
-    source  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
+    source,  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
+    itemNotes: currentNotes  // Uwagi do pozycji
   });
   renderCart();
   setStatus(`Dodano produkt ${product.name} do koszyka (rozkład na projekty).`, 'success');
@@ -1727,7 +2086,8 @@ function renderCart() {
     projects = '',
     quantityInputTotal = '',
     quantityInputPerProject = '',
-    perProjectQuantities = []
+    perProjectQuantities = [],
+    itemNotes = ''
   }]) => {
     const price = Number(product.price ?? 0);
     const lineTotal = price * quantity;
@@ -1735,51 +2095,23 @@ function renderCart() {
 
     return `
       <tr data-id="${id}">
-        <td class="product-identifiers">
+        <td class="product-identifiers" title="${product.name ?? '-'}">
           <div class="product-name">${product.name ?? '-'}</div>
           <div class="product-id">${product.pc_id || ''}</div>
         </td>
-        <td>
-          <input
-            type="text"
-            class="projects-input"
-            value="${projects}"
-            placeholder="np. 1-5,7"
-            data-id="${id}"
-            inputmode="numeric"
-            pattern="[0-9,\-\s]*"
-          />
+        <td class="cart-projects-col">
+          <input type="text" class="projects-input" value="${projects}" placeholder="1-5,7" data-id="${id}" inputmode="numeric" pattern="[0-9,\\-\\s]*" title="Nr projektów" />
+          <input type="text" class="qty-per-project-input" value="${quantityInputPerProject}" placeholder="po 20" data-id="${id}" title="Ilości na projekty: po X lub lista 10,20,30" />
         </td>
         <td>
-          <div class="qty-controls">
-            <input
-              type="number"
-              class="qty-input"
-              value="${quantity}"
-              min="1"
-              data-id="${id}"
-              placeholder="Łącznie"
-            />
-            <input
-              type="text"
-              class="qty-per-project-input"
-              value="${quantityInputPerProject}"
-              placeholder="po 20 lub 20,30,40"
-              data-id="${id}"
-            />
-            ${perProjectQuantities.length > 0 ? `
-              <div class="qty-preview">
-                ${perProjectQuantities.map(p => `Proj. ${p.projectNo}: ${p.qty}`).join(' | ')}
-              </div>
-            ` : ''}
-          </div>
+          <input type="number" class="qty-input" value="${quantity}" min="1" data-id="${id}" title="Łączna ilość" />
         </td>
-        <td class="price-cell">${formatCurrency(price)}</td>
+        <td>
+          <textarea class="cart-notes-input" data-id="${id}" placeholder="Uwagi do pozycji..." title="Uwagi produkcyjne">${itemNotes}</textarea>
+        </td>
         <td class="price-cell">${formatCurrency(lineTotal)}</td>
-        <td>
-          <button type="button" class="btn btn--danger remove-from-cart" data-id="${id}">
-            Usuń
-          </button>
+        <td class="cart-actions-cell">
+          <button type="button" class="btn btn--danger btn--sm remove-from-cart" data-id="${id}">Usuń</button>
         </td>
       </tr>
     `;
@@ -1891,6 +2223,21 @@ function renderCart() {
     removeBtn.addEventListener('click', () => {
       cart.delete(removeBtn.dataset.id);
       renderCart();
+    });
+  });
+
+  // Obsługa pola uwag do pozycji
+  const notesInputs = cartBody.querySelectorAll('.cart-notes-input');
+  notesInputs.forEach(notesInput => {
+    notesInput.addEventListener('input', () => {
+      const id = notesInput.dataset.id;
+      const entry = cart.get(id);
+      if (!entry) return;
+
+      cart.set(id, { 
+        ...entry,
+        itemNotes: notesInput.value.trim()
+      });
     });
   });
 
@@ -2246,6 +2593,58 @@ function initialize() {
 
     toggleBtn.addEventListener('click', togglePrices);
   }
+  
+  // Inicjalizacja przycisku ulubionych przy miejscowości (PM)
+  const cityFavoriteBtn = document.getElementById('city-favorite-btn');
+  if (cityFavoriteBtn) {
+    cityFavoriteBtn.addEventListener('click', async () => {
+      const type = cityFavoriteBtn.dataset.type;
+      const cityName = cityFavoriteBtn.dataset.cityName;
+      
+      if (!type || !cityName) return;
+      
+      if (isFavorite(type, cityName)) {
+        // Znajdź ID ulubionego i usuń
+        const favorite = userFavorites.find(f => f.type === type && f.item_id === cityName);
+        if (favorite) {
+          await removeFromFavorites(favorite.id);
+        }
+      } else {
+        // Dodaj do ulubionych
+        await addToFavorites(type, cityName, cityName);
+      }
+      
+      // Zaktualizuj UI
+      updateCityFavoriteButton(cityName);
+      renderFavoritesBar();
+    });
+  }
+  
+  // Inicjalizacja przycisku ulubionych przy obiekcie (KI)
+  const objectFavoriteBtn = document.getElementById('object-favorite-btn');
+  if (objectFavoriteBtn) {
+    objectFavoriteBtn.addEventListener('click', async () => {
+      const itemId = objectFavoriteBtn.dataset.itemId;
+      const objectName = objectFavoriteBtn.dataset.objectName;
+      
+      if (!itemId || !objectName) return;
+      
+      if (isFavorite('ki_object', itemId)) {
+        // Znajdź ID ulubionego i usuń
+        const favorite = userFavorites.find(f => f.type === 'ki_object' && f.item_id === itemId);
+        if (favorite) {
+          await removeFromFavorites(favorite.id);
+        }
+      } else {
+        // Dodaj do ulubionych - użyj nazwy obiektu jako displayName
+        await addToFavorites('ki_object', itemId, objectName);
+      }
+      
+      // Zaktualizuj UI
+      updateObjectFavoriteButton(objectName);
+      renderFavoritesBar();
+    });
+  }
 
   if (formModeNav) {
     const modeButtons = Array.from(formModeNav.querySelectorAll('.mode-nav__item'));
@@ -2288,6 +2687,44 @@ function initialize() {
       if (currentFormMode !== 'projekty-miejscowosci') return;
       const city = galleryCitySelect.value;
       loadGalleryProducts(city);
+      
+      // Zaktualizuj przycisk ulubionych przy miejscowości
+      updateCityFavoriteButton(city);
+    });
+  }
+  
+  // Przełącznik "pokaż wszystkie" miejscowości
+  const showAllToggle = document.getElementById('show-all-cities-toggle');
+  if (showAllToggle) {
+    showAllToggle.addEventListener('click', () => {
+      console.log('[DEBUG] Toggle clicked, current state:', showAllToggle.dataset.showingAll);
+      console.log('[DEBUG] All cities stored:', window._allCitiesForToggle?.length);
+      console.log('[DEBUG] User cities stored:', window._userAssignedCities?.length);
+      
+      const showingAll = showAllToggle.dataset.showingAll === 'true';
+      
+      if (showingAll) {
+        // Pokaż tylko przypisane
+        console.log('[DEBUG] Showing user assigned cities only');
+        const options = ['<option value="">Wybierz miejscowość</option>',
+          ...(window._userAssignedCities || []).map((city) => `<option value="${city}">${city}</option>`),
+        ];
+        galleryCitySelect.innerHTML = options.join('');
+        showAllToggle.textContent = 'pokaż wszystkie';
+        showAllToggle.dataset.showingAll = 'false';
+      } else {
+        // Pokaż wszystkie
+        console.log('[DEBUG] Showing all cities');
+        const options = ['<option value="">Wybierz miejscowość</option>',
+          ...(window._allCitiesForToggle || []).map((city) => `<option value="${city}">${city}</option>`),
+        ];
+        galleryCitySelect.innerHTML = options.join('');
+        showAllToggle.textContent = 'tylko moje';
+        showAllToggle.dataset.showingAll = 'true';
+      }
+      
+      galleryCitySelect.value = '';
+      updateCityFavoriteButton('');
     });
   }
 
@@ -2297,6 +2734,8 @@ function initialize() {
       const sp = gallerySalespersonSelect ? gallerySalespersonSelect.value : '';
       const obj = galleryObjectSelect.value;
       loadGalleryProductsForObject(sp, obj);
+      // Zaktualizuj przycisk ulubionych dla obiektu KI
+      updateObjectFavoriteButton(obj);
     });
   }
 
@@ -2319,6 +2758,12 @@ function initialize() {
         }
       }
       
+      // Jeśli checkbox blokady jest włączony, zaktualizuj lastLockedProductSlug na nowo wybrany produkt
+      if (galleryLockCheckbox?.checked && slug) {
+        lastLockedProductSlug = slug;
+        console.log('[DEBUG] Product changed with lock enabled, updated lastLockedProductSlug:', slug);
+      }
+      
       renderGalleryPreview();
       handleGalleryProductChangeFromSelect();
     });
@@ -2327,9 +2772,15 @@ function initialize() {
   // Listener dla checkboxa "pamiętaj produkt"
   if (galleryLockCheckbox) {
     galleryLockCheckbox.addEventListener('change', () => {
-      // Gdy checkbox jest wyłączany, wyczyść lastLockedProductSlug
-      if (!galleryLockCheckbox.checked) {
+      if (galleryLockCheckbox.checked) {
+        // Gdy checkbox jest włączany, zapamiętaj aktualnie wybrany produkt
+        const currentSlug = galleryProductSelect?.value || '';
+        lastLockedProductSlug = currentSlug;
+        console.log('[DEBUG] Lock enabled, saved lastLockedProductSlug:', currentSlug);
+      } else {
+        // Gdy checkbox jest wyłączany, wyczyść lastLockedProductSlug
         lastLockedProductSlug = '';
+        console.log('[DEBUG] Lock disabled, cleared lastLockedProductSlug');
       }
     });
   }
@@ -2353,7 +2804,7 @@ function initialize() {
     isClientsModeInitialized = true;
   }
 }
- 
+
 // -----------------------------
 // Klient zamówienia – helpery (search + select)
 // -----------------------------
@@ -2488,6 +2939,8 @@ async function checkAuthAndInitialize() {
     if (response.ok) {
       const userData = await response.json();
       currentUser = userData;
+      console.log('[DEBUG] User authenticated:', currentUser);
+      console.log('[DEBUG] User role:', currentUser.role);
 
       // Usuń tryb gościa – pokaż pełny widok
       document.body.classList.remove('hide-guest');
@@ -2514,6 +2967,9 @@ async function checkAuthAndInitialize() {
       }
 
       showUserNavigation(userData.role);
+      
+      // Załaduj ulubione użytkownika
+      loadUserFavorites();
     } else {
       // Niezalogowany – tryb gościa
       currentUser = null;
@@ -2553,8 +3009,25 @@ function showUserNavigation(role) {
     clientsLink.style.display = 'flex';
   }
   
-  if (adminLink && role === 'ADMIN') {
-    adminLink.style.display = 'flex';
+  // Panel admina - tylko dla ADMIN
+  if (adminLink) {
+    if (role === 'ADMIN') {
+      adminLink.style.display = 'flex';
+      adminLink.href = '/admin';
+      adminLink.innerHTML = '<i class="fas fa-cog"></i> Panel admina';
+    } else if (role === 'SALES_DEPT') {
+      // Dział sprzedaży - przycisk do ustawień
+      adminLink.style.display = 'flex';
+      adminLink.href = '/admin';
+      adminLink.innerHTML = '<i class="fas fa-cog"></i> Ustawienia';
+    } else if (role === 'GRAPHICS') {
+      // Graficy - przycisk do przypisywania miejscowości
+      adminLink.style.display = 'flex';
+      adminLink.href = '/admin#city-access';
+      adminLink.innerHTML = '<i class="fas fa-folder-plus"></i> Nowe miejscowości';
+    } else {
+      adminLink.style.display = 'none';
+    }
   }
   
   if (logoutBtn) {
@@ -3372,6 +3845,168 @@ if (headerLoginToggle && headerLoginForm && headerAuth) {
       headerLoginForm.style.display = 'none';
     }
   });
+}
+
+// ============================================
+// MODUŁ: ULUBIONE (FAVORITES)
+// ============================================
+
+let userFavorites = [];
+let favoritesLoading = false;
+
+// Pobierz ulubione użytkownika
+async function loadUserFavorites() {
+  if (!currentUser || favoritesLoading) return;
+  
+  try {
+    favoritesLoading = true;
+    const response = await fetch('/api/favorites');
+    const result = await response.json();
+    
+    if (result.status === 'success') {
+      // Backend zwraca dane w polu 'data', mapuj na format frontendu
+      userFavorites = (result.data || []).map(f => ({
+        id: f.id,
+        type: f.type,
+        item_id: f.itemId,
+        name: f.displayName
+      }));
+      console.log('[DEBUG] User favorites loaded:', userFavorites);
+      updateFavoritesUI();
+    } else {
+      console.error('[ERROR] Failed to load favorites:', result.message);
+    }
+  } catch (error) {
+    console.error('[ERROR] Error loading favorites:', error);
+  } finally {
+    favoritesLoading = false;
+  }
+}
+
+// Dodaj do ulubionych
+async function addToFavorites(type, itemId, name) {
+  if (!currentUser) {
+    setStatus('Musisz być zalogowany, aby dodać do ulubionych', 'error');
+    return;
+  }
+  
+  try {
+    // Sprawdź limit 12 ulubionych dla danego typu
+    const currentTypeFavorites = userFavorites.filter(f => f.type === type);
+    if (currentTypeFavorites.length >= 12) {
+      setStatus('Możesz mieć maksymalnie 12 ulubionych pozycji tego typu', 'error');
+      return;
+    }
+    
+    console.log('[DEBUG] addToFavorites - type:', type, 'itemId:', itemId, 'name:', name);
+    
+    const response = await fetch('/api/favorites', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        type: type,
+        itemId: itemId,
+        displayName: name
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (result.status === 'success') {
+      // Backend zwraca dane w polu 'data', mapuj na format frontendu
+      const newFavorite = result.data;
+      // Mapuj pola z backendu na format frontendu
+      userFavorites.push({
+        id: newFavorite.id,
+        type: newFavorite.type,
+        item_id: newFavorite.itemId,
+        name: newFavorite.displayName
+      });
+      updateFavoritesUI();
+      setStatus('Dodano do ulubionych', 'success');
+    } else {
+      setStatus('Błąd: ' + result.message, 'error');
+    }
+  } catch (error) {
+    console.error('[ERROR] Error adding to favorites:', error);
+    setStatus('Wystąpił błąd podczas dodawania do ulubionych', 'error');
+  }
+}
+
+// Usuń z ulubionych (przyjmuje favoriteId lub obiekt {type, itemId})
+async function removeFromFavorites(favoriteIdOrType, itemId = null) {
+  if (!currentUser) return;
+  
+  try {
+    let type, targetItemId, favoriteId;
+    
+    if (itemId !== null) {
+      // Wywołanie z type i itemId
+      type = favoriteIdOrType;
+      targetItemId = itemId;
+    } else {
+      // Wywołanie z favoriteId - znajdź type i itemId
+      favoriteId = favoriteIdOrType;
+      console.log('[DEBUG] Looking for favorite with id:', favoriteId, 'type:', typeof favoriteId);
+      console.log('[DEBUG] Available favorites:', userFavorites.map(f => ({ id: f.id, type: typeof f.id })));
+      // Konwertuj favoriteId na number, ponieważ HTML zwraca string
+      const favoriteIdNum = parseInt(favoriteId, 10);
+      const favorite = userFavorites.find(f => f.id === favoriteIdNum);
+      console.log('[DEBUG] Found favorite:', favorite);
+      if (!favorite) {
+        console.error('[ERROR] Favorite not found:', favoriteId);
+        return;
+      }
+      type = favorite.type;
+      targetItemId = favorite.item_id;
+    }
+    
+    const response = await fetch(`/api/favorites/${type}/${encodeURIComponent(targetItemId)}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    
+    const result = await response.json();
+    
+    if (result.status === 'success') {
+      userFavorites = userFavorites.filter(f => !(f.type === type && f.item_id === targetItemId));
+      updateFavoritesUI();
+      setStatus('Usunięto z ulubionych', 'success');
+    } else {
+      setStatus('Błąd: ' + result.message, 'error');
+    }
+  } catch (error) {
+    console.error('[ERROR] Error removing from favorites:', error);
+    setStatus('Wystąpił błąd podczas usuwania z ulubionych', 'error');
+  }
+}
+
+// Sprawdź, czy pozycja jest w ulubionych
+function isFavorite(type, itemId) {
+  return userFavorites.some(f => f.type === type && f.item_id === itemId);
+}
+
+// Zaktualizuj UI ulubionych
+function updateFavoritesUI() {
+  // Dodaj/usuń klasy CSS dla przycisków ulubionych
+  document.querySelectorAll('.favorite-btn').forEach(btn => {
+    const type = btn.dataset.type;
+    const itemId = btn.dataset.itemId;
+    
+    if (isFavorite(type, itemId)) {
+      btn.classList.add('is-favorite');
+      btn.innerHTML = '<i class="fas fa-star"></i>';
+    } else {
+      btn.classList.remove('is-favorite');
+      btn.innerHTML = '<i class="far fa-star"></i>';
+    }
+  });
+  
+  // Renderuj pasek ulubionych miejscowości
+  renderFavoritesBar();
 }
 
 document.addEventListener('DOMContentLoaded', checkAuthAndInitialize);

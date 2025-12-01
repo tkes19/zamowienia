@@ -6,6 +6,43 @@
     <title>Panel Administratora - Rezon</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="../assets/vendor/fontawesome/all.min.css">
+    <style>
+        /* Style dla tooltipa z dostępnymi miejscowościami */
+        #available-cities-tooltip {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            opacity: 0;
+            transform: translateY(5px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            pointer-events: none;
+        }
+        
+        .group:hover #available-cities-tooltip {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        
+        #available-cities-trigger {
+            transition: border-color 0.2s ease;
+        }
+        
+        #available-cities-trigger:hover {
+            border-color: #4B5563;
+        }
+        
+        /* Dla lepszej widoczności na ciemnych motywach */
+        @media (prefers-color-scheme: dark) {
+            #available-cities-tooltip {
+                background-color: #1F2937;
+                border-color: #374151;
+                color: #E5E7EB;
+            }
+            
+            #available-cities-tooltip div {
+                color: #E5E7EB;
+            }
+        }
+    </style>
     <script>
         tailwind.config = {
             theme: {
@@ -47,6 +84,14 @@
                 <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="users">
                     <i class="fas fa-users w-5"></i>
                     <span>Użytkownicy</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="folder-access">
+                    <i class="fas fa-folder-open w-5"></i>
+                    <span>Foldery KI</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="city-access">
+                    <i class="fas fa-map-marker-alt w-5"></i>
+                    <span>Miejscowości PM</span>
                 </a>
                 <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="settings">
                     <i class="fas fa-cog w-5"></i>
@@ -422,7 +467,323 @@
                 </div>
             </div>
             <!-- Koniec widoku: Użytkownicy -->
+
+            <!-- Widok: Foldery KI -->
+            <div id="view-folder-access" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Przypisania folderów KI</h2>
+                        <p class="text-gray-600 mt-1">Zarządzaj dostępem handlowców do folderów klientów indywidualnych</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="new-folder-access-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj przypisanie
+                        </button>
+                        <button id="refresh-folder-access-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Statystyki -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-green-100 rounded-lg">
+                                <i class="fas fa-check-circle text-green-600"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-sm font-medium">Aktywne przypisania</div>
+                                <div class="text-2xl font-bold text-green-600" id="folder-stats-active">0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-blue-100 rounded-lg">
+                                <i class="fas fa-users text-blue-600"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-sm font-medium">Użytkowników z dostępem</div>
+                                <div class="text-2xl font-bold text-blue-600" id="folder-stats-users">0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-purple-100 rounded-lg">
+                                <i class="fas fa-folder text-purple-600"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-sm font-medium">Unikalnych folderów</div>
+                                <div class="text-2xl font-bold text-purple-600" id="folder-stats-folders">0</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filtry -->
+                <div class="bg-white p-4 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-center shadow-sm">
+                    <div class="relative w-full sm:w-96">
+                        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                        <input type="text" id="folder-access-search" placeholder="Szukaj po użytkowniku lub folderze..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    </div>
+                    <div class="flex gap-2">
+                        <select id="folder-access-user-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                            <option value="">Wszyscy użytkownicy</option>
+                        </select>
+                        <select id="folder-access-status-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                            <option value="">Wszystkie statusy</option>
+                            <option value="active">Aktywne</option>
+                            <option value="inactive">Nieaktywne</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Tabela przypisań -->
+                <div class="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
+                                <tr>
+                                    <th class="p-4">Użytkownik</th>
+                                    <th class="p-4">Folder KI</th>
+                                    <th class="p-4 text-center">Status</th>
+                                    <th class="p-4">Przypisał</th>
+                                    <th class="p-4">Data</th>
+                                    <th class="p-4">Notatki</th>
+                                    <th class="p-4 text-right">Akcje</th>
+                                </tr>
+                            </thead>
+                            <tbody id="folder-access-table-body" class="divide-y divide-gray-100 text-sm">
+                                <tr>
+                                    <td colspan="7" class="p-8 text-center text-gray-500">
+                                        <div class="flex flex-col items-center gap-2">
+                                            <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                                            <span>Ładowanie danych...</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                        <div class="text-sm text-gray-500" id="folder-access-table-info">Pokazuje 0 przypisań</div>
+                    </div>
+                </div>
+
+                <!-- Informacje -->
+                <div class="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-6">
+                    <h3 class="text-lg font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                        <i class="fas fa-info-circle"></i> Jak działają przypisania folderów?
+                    </h3>
+                    <ul class="text-sm text-blue-700 space-y-1 list-disc list-inside">
+                        <li>Handlowiec widzi w trybie KI tylko foldery, do których ma aktywne przypisanie</li>
+                        <li>Administrator i Dział Sprzedaży widzą wszystkie foldery z QNAP</li>
+                        <li>Dezaktywowane przypisanie można reaktywować bez utraty danych</li>
+                        <li>Jeden użytkownik może mieć dostęp do wielu folderów</li>
+                    </ul>
+                </div>
+            </div>
+            <!-- Koniec widoku: Foldery KI -->
+
+            <!-- Widok: Miejscowości PM -->
+            <div id="view-city-access" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Przypisania miejscowości PM</h2>
+                        <p class="text-gray-600 mt-1">Kliknij kafelek, aby przypisać lub usunąć miejscowość</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="refresh-city-access-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Wybór użytkownika i statystyki -->
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
+                    <div class="flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
+                        <div class="flex-1 w-full lg:w-auto">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                <i class="fas fa-user mr-1"></i> Wybierz użytkownika do zarządzania
+                            </label>
+                            <select id="city-access-user-select" class="w-full lg:w-96 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 text-lg">
+                                <option value="">-- Wybierz handlowca --</option>
+                            </select>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-green-600" id="city-stats-assigned">0</div>
+                                <div class="text-xs text-gray-500 uppercase tracking-wide">Przypisanych</div>
+                            </div>
+                            <div class="text-center group relative">
+                                <div class="text-3xl font-bold text-gray-400" id="city-stats-available">0</div>
+                                <div class="text-xs text-gray-500 uppercase tracking-wide">
+                                    <span class="cursor-help border-b border-dashed border-gray-400 hover:border-gray-600 transition-colors" 
+                                          id="available-cities-trigger" 
+                                          title="Kliknij, aby zobaczyć listę">
+                                        Dostępnych
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-blue-600" id="city-stats-total">0</div>
+                                <div class="text-xs text-gray-500 uppercase tracking-wide">Wszystkich</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wyszukiwarka i sortowanie -->
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
+                    <div class="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                        <div class="relative w-full sm:w-96">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                            <input type="text" id="city-tiles-search" placeholder="Szukaj miejscowości..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        </div>
+                        <div class="flex gap-2 items-center">
+                            <span class="text-sm text-gray-500">Sortuj:</span>
+                            <select id="city-tiles-sort" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 text-sm">
+                                <option value="alpha">Alfabetycznie</option>
+                                <option value="assigned-first">Przypisane najpierw</option>
+                                <option value="unassigned-first">Dostępne najpierw</option>
+                            </select>
+                            <label class="flex items-center gap-2 ml-4 text-sm text-gray-600">
+                                <input type="checkbox" id="city-tiles-show-assigned-only" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
+                                Tylko przypisane
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Kontener na kafelki -->
+                <div id="city-tiles-container" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 min-h-[400px]">
+                    <div class="flex flex-col items-center justify-center h-64 text-gray-400">
+                        <i class="fas fa-user-circle text-6xl mb-4"></i>
+                        <p class="text-lg">Wybierz użytkownika, aby zobaczyć miejscowości</p>
+                    </div>
+                </div>
+
+                <!-- Legenda -->
+                <div class="mt-6 flex flex-wrap gap-6 justify-center text-sm">
+                    <div class="flex items-center gap-2">
+                        <div class="w-6 h-6 rounded bg-green-500 shadow-md"></div>
+                        <span class="text-gray-600">Przypisana</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-6 h-6 rounded bg-gray-200 border border-gray-300 relative">
+                            <span class="absolute -top-1 -right-1 w-2 h-2 bg-orange-400 rounded-full"></span>
+                        </div>
+                        <span class="text-gray-600">Nieprzypisana</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-mouse-pointer text-gray-400"></i>
+                        <span class="text-gray-600">Kliknij, aby zmienić status</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 bg-orange-400 rounded-full"></span>
+                        <span class="text-gray-500 text-xs">Pomarańczowa kropka = nieprzypisana do żadnego handlowca</span>
+                    </div>
+                </div>
+
+                <!-- Informacje -->
+                <div class="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-6">
+                    <h3 class="text-lg font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                        <i class="fas fa-info-circle"></i> Jak działają przypisania miejscowości?
+                    </h3>
+                    <ul class="text-sm text-blue-700 space-y-1 list-disc list-inside">
+                        <li>Handlowiec widzi w trybie PM tylko miejscowości, do których ma aktywne przypisanie</li>
+                        <li>Handlowiec bez przypisań widzi wszystkie miejscowości, ale tylko do podglądu (nie może składać zamówień)</li>
+                        <li>Administrator i Dział Sprzedaży widzą wszystkie miejscowości z QNAP</li>
+                        <li>Kliknij zielony kafelek, aby usunąć przypisanie • Kliknij szary, aby przypisać</li>
+                    </ul>
+                </div>
+            </div>
+            <!-- Koniec widoku: Miejscowości PM -->
         </main>
+    </div>
+
+    <!-- Modal przypisania miejscowości -->
+    <div id="city-access-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200">
+            <div class="flex justify-between items-center px-6 py-4 border-b">
+                <h3 id="city-access-modal-title" class="text-lg font-semibold text-gray-800">Nowe przypisanie miejscowości</h3>
+                <button id="city-access-modal-close" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="city-access-form" class="px-6 py-4 space-y-4">
+                <input type="hidden" name="id" value="">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Użytkownik *</label>
+                    <select name="userId" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" id="city-access-user-select">
+                        <option value="">Wybierz użytkownika...</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Miejscowość *</label>
+                    <input type="text" name="cityName" required list="city-suggestions" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Wpisz lub wybierz miejscowość...">
+                    <datalist id="city-suggestions"></datalist>
+                    <p class="mt-1 text-xs text-gray-500">Wpisz nazwę miejscowości dokładnie jak na QNAP lub wybierz z listy</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Notatki</label>
+                    <textarea name="notes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Opcjonalne uwagi..."></textarea>
+                </div>
+                <div id="city-access-active-field" class="hidden">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" name="isActive" class="h-4 w-4 text-blue-600 border-gray-300 rounded" checked>
+                        <span class="text-sm text-gray-700">Aktywne przypisanie</span>
+                    </label>
+                </div>
+            </form>
+            <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3 rounded-b-xl">
+                <button type="button" id="city-access-cancel-btn" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Anuluj</button>
+                <button type="submit" form="city-access-form" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Zapisz</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal przypisania folderu -->
+    <div id="folder-access-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200">
+            <div class="flex justify-between items-center px-6 py-4 border-b">
+                <h3 id="folder-access-modal-title" class="text-lg font-semibold text-gray-800">Nowe przypisanie folderu</h3>
+                <button id="folder-access-modal-close" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="folder-access-form" class="px-6 py-4 space-y-4">
+                <input type="hidden" name="id" value="">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Użytkownik *</label>
+                    <select name="userId" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" id="folder-access-user-select">
+                        <option value="">Wybierz użytkownika...</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Folder KI *</label>
+                    <input type="text" name="folderName" required list="folder-suggestions" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Wpisz lub wybierz folder...">
+                    <datalist id="folder-suggestions"></datalist>
+                    <p class="mt-1 text-xs text-gray-500">Wpisz nazwę folderu dokładnie jak na QNAP lub wybierz z listy</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Notatki</label>
+                    <textarea name="notes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Opcjonalne uwagi..."></textarea>
+                </div>
+                <div id="folder-access-active-field" class="hidden">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" name="isActive" class="h-4 w-4 text-blue-600 border-gray-300 rounded" checked>
+                        <span class="text-sm text-gray-700">Aktywne przypisanie</span>
+                    </label>
+                </div>
+            </form>
+            <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3 rounded-b-xl">
+                <button type="button" id="folder-access-cancel-btn" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Anuluj</button>
+                <button type="submit" form="folder-access-form" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Zapisz</button>
+            </div>
+        </div>
     </div>
 
     <!-- Modal formularza produktu -->
@@ -667,25 +1028,26 @@
         .sort-icon { margin-left: 4px; opacity: 0.5; }
         .sort-icon.active { opacity: 1; }
 
-        /* Print Preview */
-        .print-document { background: white; padding: 15px; max-width: 210mm; margin: 0 auto; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.3; }
-        .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; border-bottom: 1px solid #1f2937; padding-bottom: 8px; }
-        .print-company { font-size: 16px; font-weight: bold; color: #1f2937; }
-        .print-title { font-size: 14px; font-weight: bold; color: #1f2937; margin-top: 2px; }
-        .print-meta { font-size: 10px; color: #6b7280; text-align: right; }
-        .print-section { margin-bottom: 10px; }
-        .print-section-title { font-size: 11px; font-weight: bold; color: #1f2937; margin-bottom: 6px; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; }
-        .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
-        .print-field { font-size: 10px; }
-        .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 2px; }
+        /* Print Preview - orientacja pozioma */
+        @media print { @page { size: A4 landscape; margin: 10mm; } }
+        .print-document { background: white; padding: 10px; max-width: 100%; margin: 0 auto; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.2; }
+        .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px; border-bottom: 1px solid #1f2937; padding-bottom: 6px; }
+        .print-company { font-size: 14px; font-weight: bold; color: #1f2937; }
+        .print-title { font-size: 12px; font-weight: bold; color: #1f2937; margin-top: 2px; }
+        .print-meta { font-size: 9px; color: #6b7280; text-align: right; }
+        .print-section { margin-bottom: 8px; }
+        .print-section-title { font-size: 10px; font-weight: bold; color: #1f2937; margin-bottom: 4px; border-bottom: 1px solid #d1d5db; padding-bottom: 2px; }
+        .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; }
+        .print-field { font-size: 9px; }
+        .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 1px; }
         .print-field-value { color: #1f2937; font-weight: 500; }
-        .print-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px; }
+        .print-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 8px; }
         .print-table thead { background: #f3f4f6; border-bottom: 1px solid #d1d5db; }
-        .print-table th { padding: 4px 6px; text-align: left; font-weight: 600; color: #1f2937; }
-        .print-table td { padding: 4px 6px; border-bottom: 1px solid #e5e7eb; color: #374151; }
+        .print-table th { padding: 3px 4px; text-align: left; font-weight: 600; color: #1f2937; font-size: 8px; }
+        .print-table td { padding: 3px 4px; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 8px; }
         .print-table tbody tr:last-child td { border-bottom: none; }
-        .print-total { text-align: right; font-size: 11px; font-weight: bold; color: #1f2937; margin-top: 8px; padding-top: 6px; border-top: 1px solid #d1d5db; }
-        .print-footer { margin-top: 15px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-size: 9px; color: #6b7280; text-align: center; }
+        .print-total { text-align: right; font-size: 10px; font-weight: bold; color: #1f2937; margin-top: 6px; padding-top: 4px; border-top: 1px solid #d1d5db; }
+        .print-footer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8px; color: #6b7280; text-align: center; }
 
         /* Status select */
         .order-status-select { appearance: none; cursor: pointer; }

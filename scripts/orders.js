@@ -245,26 +245,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     <meta charset="UTF-8">
                     <title>Wydruk zamówienia</title>
                     <style>
+                        @page { size: A4 landscape; margin: 10mm; }
                         * { margin: 0; padding: 0; }
-                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; line-height: 1.3; }
-                        .print-document { background: white; padding: 15px; max-width: 210mm; margin: 0 auto; }
-                        .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; border-bottom: 1px solid #1f2937; padding-bottom: 8px; }
-                        .print-company { font-size: 16px; font-weight: bold; color: #1f2937; }
-                        .print-title { font-size: 14px; font-weight: bold; color: #1f2937; margin-top: 2px; }
-                        .print-meta { font-size: 10px; color: #6b7280; text-align: right; }
-                        .print-section { margin-bottom: 10px; }
-                        .print-section-title { font-size: 11px; font-weight: bold; color: #1f2937; margin-bottom: 6px; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; }
-                        .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
-                        .print-field { font-size: 10px; }
-                        .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 2px; }
+                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 8px; line-height: 1.2; font-size: 9px; }
+                        .print-document { background: white; padding: 10px; max-width: 100%; margin: 0 auto; }
+                        .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px; border-bottom: 1px solid #1f2937; padding-bottom: 6px; }
+                        .print-company { font-size: 14px; font-weight: bold; color: #1f2937; }
+                        .print-title { font-size: 12px; font-weight: bold; color: #1f2937; margin-top: 2px; }
+                        .print-meta { font-size: 9px; color: #6b7280; text-align: right; }
+                        .print-section { margin-bottom: 8px; }
+                        .print-section-title { font-size: 10px; font-weight: bold; color: #1f2937; margin-bottom: 4px; border-bottom: 1px solid #d1d5db; padding-bottom: 2px; }
+                        .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; }
+                        .print-field { font-size: 9px; }
+                        .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 1px; }
                         .print-field-value { color: #1f2937; font-weight: 500; }
-                        .print-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px; }
+                        .print-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 9px; }
                         .print-table thead { background: #f3f4f6; border-bottom: 1px solid #d1d5db; }
-                        .print-table th { padding: 4px 6px; text-align: left; font-weight: 600; color: #1f2937; }
-                        .print-table td { padding: 4px 6px; border-bottom: 1px solid #e5e7eb; color: #374151; }
+                        .print-table th { padding: 3px 4px; text-align: left; font-weight: 600; color: #1f2937; font-size: 8px; }
+                        .print-table td { padding: 3px 4px; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 8px; }
                         .print-table tbody tr:last-child td { border-bottom: none; }
-                        .print-total { text-align: right; font-size: 11px; font-weight: bold; color: #1f2937; margin-top: 8px; padding-top: 6px; border-top: 1px solid #d1d5db; }
-                        .print-footer { margin-top: 15px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-size: 9px; color: #6b7280; text-align: center; }
+                        .print-total { text-align: right; font-size: 10px; font-weight: bold; color: #1f2937; margin-top: 6px; padding-top: 4px; border-top: 1px solid #d1d5db; }
+                        .print-footer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8px; color: #6b7280; text-align: center; }
                     </style>
                 </head>
                 <body>
@@ -663,7 +664,7 @@ document.addEventListener('DOMContentLoaded', () => {
             detailsRow.id = `details-${order.id}`;
             detailsRow.className = 'bg-indigo-50 border-t-2 border-indigo-200 details-row';
 
-            const orderItems = fullOrder.OrderItem || [];
+            const orderItems = fullOrder.items || fullOrder.OrderItem || [];
             const showSourceBadge = hasMixedSources(orderItems);
             
             const itemsHtml = orderItems.map(item => {
@@ -672,14 +673,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
                 const sourceBadge = getSourceBadge(item.source, showSourceBadge);
                 const locationDisplay = item.locationName || '-';
+                const notesDisplay = item.productionNotes || '';
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
-                    <td class="p-3 text-sm font-medium text-gray-800">${productLabel}</td>
-                    <td class="p-3 text-sm text-gray-700">${item.selectedProjects || '-'}</td>
-                    <td class="p-3 text-sm text-center text-gray-700">${item.quantity}</td>
-                    <td class="p-3 text-sm text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
-                    <td class="p-3 text-sm text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td class="p-3 text-sm text-gray-700">${sourceBadge}${locationDisplay}</td>
+                    <td class="p-2 text-xs font-medium text-gray-800">${productLabel}</td>
+                    <td class="p-2 text-xs text-gray-700">${item.selectedProjects || '-'}</td>
+                    <td class="p-2 text-xs text-center text-gray-700">${item.quantity}</td>
+                    <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
+                    <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
+                    <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplay}</td>
+                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplay}</td>
                 </tr>
                 `;
             }).join('');
@@ -730,16 +733,17 @@ document.addEventListener('DOMContentLoaded', () => {
                             <table class="w-full text-xs">
                                 <thead class="bg-indigo-100 border-b border-indigo-200">
                                     <tr>
-                                        <th class="p-2 text-left font-semibold text-gray-800">Produkt</th>
-                                        <th class="p-2 text-left font-semibold text-gray-800">Projekty</th>
-                                        <th class="p-2 text-center font-semibold text-gray-800">Ilość</th>
-                                        <th class="p-2 text-right font-semibold text-gray-800">Cena j.</th>
-                                        <th class="p-2 text-right font-semibold text-gray-800">Wartość</th>
-                                        <th class="p-2 text-left font-semibold text-gray-800">Lokalizacja</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs">Produkt</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs">Projekty</th>
+                                        <th class="p-2 text-center font-semibold text-gray-800 text-xs" style="width:8%">Ilość</th>
+                                        <th class="p-2 text-right font-semibold text-gray-800 text-xs" style="width:10%">Cena j.</th>
+                                        <th class="p-2 text-right font-semibold text-gray-800 text-xs" style="width:12%">Wartość</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:12%">Lokalizacja</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:20%">Uwagi</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${itemsHtml || '<tr><td colspan="6" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}
+                                    ${itemsHtml || '<tr><td colspan="7" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
@@ -766,9 +770,21 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <i class="fas fa-save"></i> Zapisz
                                     </button>
                                 ` : ''}
-                                <button onclick="printOrder('${fullOrder.id}')" class="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 transition-colors font-medium whitespace-nowrap">
-                                    <i class="fas fa-print"></i> Drukuj
-                                </button>
+                                <div class="relative inline-block">
+                                    <button onclick="togglePrintMenu('${fullOrder.id}')" class="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 transition-colors font-medium whitespace-nowrap">
+                                        <i class="fas fa-print"></i> Drukuj <i class="fas fa-chevron-down text-xs ml-1"></i>
+                                    </button>
+                                    <div id="print-menu-${fullOrder.id}" class="hidden absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                                        <button onclick="printOrder('${fullOrder.id}', 'full')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
+                                            <i class="fas fa-file-invoice text-blue-600 mr-2"></i>
+                                            Zamówienie (z cenami)
+                                        </button>
+                                        <button onclick="printOrder('${fullOrder.id}', 'production')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
+                                            <i class="fas fa-industry text-orange-600 mr-2"></i>
+                                            Zlecenie Produkcyjne
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         
@@ -889,7 +905,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Print Preview
-    async function printOrder(orderId) {
+    function togglePrintMenu(orderId) {
+        const menu = document.getElementById(`print-menu-${orderId}`);
+        // Zamknij wszystkie inne menu
+        document.querySelectorAll('[id^="print-menu-"]').forEach(m => {
+            if (m.id !== `print-menu-${orderId}`) {
+                m.classList.add('hidden');
+            }
+        });
+        // Przełącz aktualne menu
+        menu.classList.toggle('hidden');
+    }
+
+    // Zamknij menu po kliknięciu poza nim
+    document.addEventListener('click', function(event) {
+        if (!event.target.closest('.relative.inline-block')) {
+            document.querySelectorAll('[id^="print-menu-"]').forEach(menu => {
+                menu.classList.add('hidden');
+            });
+        }
+    });
+
+    async function printOrder(orderId, mode = 'full') {
         try {
             const response = await fetch(`/api/orders/${orderId}`, {
                 credentials: 'include'
@@ -902,94 +939,141 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             const order = result.data;
 
+            // Ustawienia trybu druku
+            const isProductionOrder = mode === 'production';
+            const includePrices = !isProductionOrder;
+            const documentTitle = isProductionOrder ? 'ZLECENIE PRODUKCYJNE' : 'ZAMÓWIENIE';
+
             // Generuj HTML do wydruku
-            const printOrderItems = order.OrderItem || [];
+            const printOrderItems = order.items || order.OrderItem || [];
             const printShowSourceBadge = hasMixedSources(printOrderItems);
             
-            const itemsHtml = printOrderItems.map(item => {
-                const identifier = item.Product?.identifier || '-';
-                const index = item.Product?.index || '-';
-                const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
-                const sourcePrefix = printShowSourceBadge && item.source ? `[${SOURCE_LABELS[item.source] || item.source}] ` : '';
-                const locationDisplay = item.locationName || '-';
+            // Grupowanie według ścieżek produkcyjnych dla zlecenia produkcyjnego
+            let groupedItems;
+            if (isProductionOrder) {
+                groupedItems = {};
+                console.log('DEBUG: Production order mode - grouping items by production path');
+                console.log('DEBUG: Order items:', printOrderItems);
+                
+                printOrderItems.forEach(item => {
+                    const path = item.Product?.productionPath || 'Standardowa';
+                    console.log(`DEBUG: Item ${item.Product?.identifier} has path: ${path}`);
+                    if (!groupedItems[path]) groupedItems[path] = [];
+                    groupedItems[path].push(item);
+                });
+                
+                console.log('DEBUG: Grouped items:', groupedItems);
+            } else {
+                groupedItems = { 'Wszystkie pozycje': printOrderItems };
+            }
+
+            // Funkcja generująca HTML dla grupy produktów
+            const generateGroupHtml = (items, productionPath = null, groupIndex = 0) => {
+                const itemsHtml = items.map(item => {
+                    const identifier = item.Product?.identifier || '-';
+                    const index = item.Product?.index || '-';
+                    const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
+                    const sourcePrefix = printShowSourceBadge && item.source ? `[${SOURCE_LABELS[item.source] || item.source}] ` : '';
+                    const locationDisplay = item.locationName || '-';
+                    const notesDisplay = item.productionNotes || '';
+                    
+                    const priceColumns = includePrices ? `
+                        <td style="text-align: right; font-size: 9px;">${(item.unitPrice || 0).toFixed(2)} zł</td>
+                        <td style="text-align: right; font-size: 9px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>` : '';
+                    
+                    const notesColumn = isProductionOrder ? `
+                        <td style="font-size: 8px; font-style: italic; color: #666; font-weight: bold;">${notesDisplay || 'Brak'}</td>` : '';
+                    
+                    return `
+                    <tr>
+                        <td style="font-size: 9px;">${productLabel}</td>
+                        <td style="font-size: 9px;">${item.selectedProjects || '-'}</td>
+                        <td style="text-align: center; font-size: 9px;">${item.quantity}</td>
+                        ${priceColumns}
+                        <td style="font-size: 9px;">${sourcePrefix}${locationDisplay}</td>
+                        ${notesColumn}
+                    </tr>
+                    `;
+                }).join('');
+
+                const pathTitle = productionPath ? ` - ${productionPath}` : '';
+                const orderNumberSuffix = productionPath ? `/${groupIndex + 1}` : '';
+                
                 return `
-                <tr>
-                    <td>${productLabel}</td>
-                    <td>${item.selectedProjects || '-'}</td>
-                    <td style="text-align: center;">${item.quantity}</td>
-                    <td style="text-align: right;">${(item.unitPrice || 0).toFixed(2)} zł</td>
-                    <td style="text-align: right;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td>${sourcePrefix}${locationDisplay}</td>
-                </tr>
+                    <div class="print-document" style="${groupIndex > 0 ? 'page-break-before: always;' : ''}">
+                        <div class="print-header">
+                            <div>
+                                <div class="print-company">ZAMÓWIENIA</div>
+                                <div class="print-title">${documentTitle}${pathTitle} ${order.orderNumber}${orderNumberSuffix}</div>
+                            </div>
+                            <div class="print-meta">
+                                <div>Data: ${createdDate}</div>
+                                <div>Status: ${STATUS_LABELS[order.status] || order.status}</div>
+                            </div>
+                        </div>
+
+                        <div class="print-section">
+                            <div class="print-grid">
+                                <div class="print-field">
+                                    <div class="print-field-label">Klient</div>
+                                    <div class="print-field-value">${order.Customer?.name || '-'}</div>
+                                </div>
+                                <div class="print-field">
+                                    <div class="print-field-label">Handlowiec</div>
+                                    <div class="print-field-value">${order.User?.name || order.User?.shortCode || '-'}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="print-section">
+                            <div class="print-section-title">Pozycje</div>
+                            <table class="print-table">
+                                <thead>
+                                    <tr>
+                                        <th style="font-size: 9px;">Produkt</th>
+                                        <th style="font-size: 9px;">Projekty</th>
+                                        <th style="text-align: center; font-size: 9px;">Ilość</th>
+                                        ${includePrices ? '<th style="text-align: right; font-size: 9px;">Cena j.</th><th style="text-align: right; font-size: 9px;">Wartość</th>' : ''}
+                                        <th style="font-size: 9px;">Lokalizacja</th>
+                                        ${isProductionOrder ? '<th style="font-size: 9px;">Uwagi produkcyjne</th>' : '<th style="font-size: 9px;">Uwagi</th>'}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${itemsHtml || `<tr><td colspan="${includePrices ? 7 : 5}" style="text-align: center; color: #999;">Brak pozycji</td></tr>`}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        ${includePrices ? `
+                        <div class="print-total">
+                            Razem: ${(items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0)).toFixed(2)} zł
+                        </div>` : ''}
+
+                        ${order.notes ? `
+                            <div class="print-section" style="margin-top: 8px;">
+                                <div class="print-section-title">Notatki</div>
+                                <div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${order.notes}</div>
+                            </div>
+                        ` : ''}
+
+                        <div class="print-footer">
+                            <div>Wydruk z systemu zarządzania zamówieniami | ${new Date().toLocaleString('pl-PL')}</div>
+                        </div>
+                    </div>
                 `;
-            }).join('');
+            };
 
             const createdDate = new Date(order.createdAt).toLocaleString('pl-PL', {
                 year: 'numeric', month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit'
             });
 
-            const printHtml = `
-                <div class="print-document">
-                    <div class="print-header">
-                        <div>
-                            <div class="print-company">ZAMÓWIENIA</div>
-                            <div class="print-title">Zamówienie ${order.orderNumber}</div>
-                        </div>
-                        <div class="print-meta">
-                            <div>Data: ${createdDate}</div>
-                            <div>Status: ${STATUS_LABELS[order.status] || order.status}</div>
-                        </div>
-                    </div>
-
-                    <div class="print-section">
-                        <div class="print-grid">
-                            <div class="print-field">
-                                <div class="print-field-label">Klient</div>
-                                <div class="print-field-value">${order.Customer?.name || '-'}</div>
-                            </div>
-                            <div class="print-field">
-                                <div class="print-field-label">Handlowiec</div>
-                                <div class="print-field-value">${order.User?.name || order.User?.shortCode || '-'}</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="print-section">
-                        <div class="print-section-title">Pozycje</div>
-                        <table class="print-table">
-                            <thead>
-                                <tr>
-                                    <th>Produkt</th>
-                                    <th>Projekty</th>
-                                    <th style="text-align: center;">Ilość</th>
-                                    <th style="text-align: right;">Cena j.</th>
-                                    <th style="text-align: right;">Wartość</th>
-                                    <th>Lokalizacja</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${itemsHtml || '<tr><td colspan="6" style="text-align: center; color: #999;">Brak pozycji</td></tr>'}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="print-total">
-                        Razem: ${(order.total || 0).toFixed(2)} zł
-                    </div>
-
-                    ${order.notes ? `
-                        <div class="print-section" style="margin-top: 8px;">
-                            <div class="print-section-title">Notatki</div>
-                            <div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${order.notes}</div>
-                        </div>
-                    ` : ''}
-
-                    <div class="print-footer">
-                        <div>Wydruk z systemu zarządzania zamówieniami | ${new Date().toLocaleString('pl-PL')}</div>
-                    </div>
-                </div>
-            `;
+            // Generuj HTML dla wszystkich grup
+            const printHtml = Object.entries(groupedItems)
+                .map(([productionPath, items], index) => 
+                    generateGroupHtml(items, isProductionOrder ? productionPath : null, index)
+                )
+                .join('');
 
             printPreviewContent.innerHTML = printHtml;
             printPreviewModal.classList.remove('hidden');
@@ -1109,7 +1193,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </button>
             ` : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusColors[fullOrder.status]}">${statusLabels[fullOrder.status]}</span>`;
 
-            const itemsHtml = (fullOrder.OrderItem || []).map(item => `
+            const itemsHtml = (fullOrder.items || fullOrder.OrderItem || []).map(item => `
                 <tr class="border-b">
                     <td class="p-3">${item.Product?.identifier || item.Product?.name || '-'}</td>
                     <td class="p-3">${item.selectedProjects || '-'}</td>
@@ -1427,6 +1511,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Eksport funkcji na window dla onclick w HTML
     window.printOrder = printOrder;
+    window.togglePrintMenu = togglePrintMenu;
     window.saveOrderNotes = saveOrderNotes;
     window.editOrderStatus = editOrderStatus;
 
