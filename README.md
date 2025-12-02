@@ -13,6 +13,13 @@ Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
 
 ---
 
+### Moduł mapowania produktów (galeria)
+
+- **Opis techniczny** – sekcje `5.5` i `6.6` w `docs/SPEC.md`.
+- **Instrukcja dla admina** – sekcja `8.4. Mapowanie produktów (galeria)` w `docs/USER_MANUAL.md`.
+
+---
+
 ## 1. Wymagania
 
 - Node.js 16+ (wraz z `npm`).

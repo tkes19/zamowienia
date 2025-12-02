@@ -203,19 +203,16 @@ async function getCurrentUserRole() {
 }
 
 async function loadGalleryCities() {
-  console.log('[DEBUG] loadGalleryCities() called, galleryCitySelect:', galleryCitySelect);
   if (!galleryCitySelect) {
     console.error('[ERROR] galleryCitySelect is null!');
     return;
   }
   try {
-    console.log('[DEBUG] Fetching cities from:', `${GALLERY_API_BASE}/cities`);
     galleryCitySelect.disabled = true;
     galleryCitySelect.innerHTML = '<option value="">Ładowanie…</option>';
     
     // Pobierz miasta z filtrowaniem po przypisaniach użytkownika
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/cities`);
-    console.log('[DEBUG] Cities loaded, count:', data.cities?.length, 'assigned:', data.assignedCities?.length);
     
     let visibleCities = Array.isArray(data.cities)
       ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
@@ -224,7 +221,6 @@ async function loadGalleryCities() {
     // Sprawdź rolę użytkownika, aby zdecydować o filtrowaniu
     const currentUserRole = await getCurrentUserRole();
     const isGuest = currentUserRole === 'GUEST' || !currentUserRole;
-    console.log('[DEBUG] Current user role:', currentUserRole);
     
     let userAssignedCities = [];
     
@@ -232,7 +228,6 @@ async function loadGalleryCities() {
     if (['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(currentUserRole)) {
       // Nie filtruj - pokaż wszystkie miejscowości
       userAssignedCities = data.assignedCities || [];
-      console.log('[DEBUG] User can see all cities (ADMIN/SALES_DEPT/GRAPHICS):', visibleCities.length);
       
       // Dla GRAPHICS ustaw tryb read-only (nie mogą składać zamówień)
       if (currentUserRole === 'GRAPHICS') {
@@ -245,7 +240,6 @@ async function loadGalleryCities() {
       userAssignedCities = data.assignedCities;
       const assignedCities = new Set(data.assignedCities);
       visibleCities = visibleCities.filter(city => assignedCities.has(city));
-      console.log('[DEBUG] Cities filtered by user access (SALES_REP/CLIENT):', visibleCities.length);
     } else if (isGuest) {
       // Gość widzi wszystkie miasta w trybie tylko do odczytu
       document.body.classList.add('read-only-mode');
@@ -382,11 +376,44 @@ async function loadGalleryProductsForObject(salesperson, object) {
     clientsModeFilesCache = galleryFilesCache;
     clientsModeProducts = galleryProducts;
 
-    const baseOptions = ['<option value="">Wybierz produkt</option>',
-      ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
-    ];
+    const projects = Array.isArray(data.projects) ? data.projects : [];
+    const usedSlugs = new Set();
+    const productOptions = ['<option value="">Wybierz produkt</option>'];
 
-    let productOptions = [...baseOptions];
+    // Najpierw opcje oparte na mapowaniu projektów → produktów z bazy
+    projects.forEach((project) => {
+      const slug = typeof project?.slug === 'string' ? project.slug.trim() : '';
+      if (!slug) return;
+      usedSlugs.add(slug);
+      const displayName = project.displayName || formatGalleryProductLabel(slug);
+      const mappedProducts = Array.isArray(project.products) ? project.products : [];
+
+      if (mappedProducts.length) {
+        mappedProducts.forEach((prod) => {
+          const id = prod.id || prod.productId || '';
+          const identifier = prod.identifier || prod.index || displayName;
+          const label = displayName ? `${identifier} (${displayName})` : identifier;
+          productOptions.push(
+            `<option value="${slug}" data-project-slug="${slug}" data-product-id="${id}" data-product-identifier="${identifier}" data-product-index="${prod.index || ''}">${label}</option>`
+          );
+        });
+      } else {
+        const label = displayName;
+        productOptions.push(
+          `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+        );
+      }
+    });
+
+    // Slugi z galerii bez mapowania w bazie – pokaż je jak dotychczas
+    const unmappedSlugs = galleryProducts.filter((slug) => typeof slug === 'string' && !usedSlugs.has(slug));
+    unmappedSlugs.forEach((slug) => {
+      const label = formatGalleryProductLabel(slug);
+      productOptions.push(
+        `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+      );
+    });
+
     let selectedSlug = '';
     let lockedMissingInObject = false;
 
@@ -396,7 +423,9 @@ async function loadGalleryProductsForObject(salesperson, object) {
       } else {
         lockedMissingInObject = true;
         const missingLabel = `${formatGalleryProductLabel(lockedSlug)} — brak w tym obiekcie`;
-        productOptions.push(`<option value="${lockedSlug}">${missingLabel}</option>`);
+        productOptions.push(
+          `<option value="${lockedSlug}" data-project-slug="${lockedSlug}">${missingLabel}</option>`
+        );
         selectedSlug = lockedSlug;
       }
     }
@@ -460,11 +489,44 @@ async function loadGalleryProducts(city) {
     cityModeFilesCache = galleryFilesCache;
     cityModeProducts = galleryProducts;
 
-    const baseOptions = ['<option value="">Wybierz produkt</option>',
-      ...galleryProducts.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
-    ];
+    const projects = Array.isArray(data.projects) ? data.projects : [];
+    const usedSlugs = new Set();
+    const productOptions = ['<option value="">Wybierz produkt</option>'];
 
-    let productOptions = [...baseOptions];
+    // Opcje na podstawie mapowania projektów na produkty z bazy
+    projects.forEach((project) => {
+      const slug = typeof project?.slug === 'string' ? project.slug.trim() : '';
+      if (!slug) return;
+      usedSlugs.add(slug);
+      const displayName = project.displayName || formatGalleryProductLabel(slug);
+      const mappedProducts = Array.isArray(project.products) ? project.products : [];
+
+      if (mappedProducts.length) {
+        mappedProducts.forEach((prod) => {
+          const id = prod.id || prod.productId || '';
+          const identifier = prod.identifier || prod.index || displayName;
+          const label = displayName ? `${identifier} (${displayName})` : identifier;
+          productOptions.push(
+            `<option value="${slug}" data-project-slug="${slug}" data-product-id="${id}" data-product-identifier="${identifier}" data-product-index="${prod.index || ''}">${label}</option>`
+          );
+        });
+      } else {
+        const label = displayName;
+        productOptions.push(
+          `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+        );
+      }
+    });
+
+    // Slugi z galerii bez mapowania w bazie – zachowaj stare zachowanie
+    const unmappedSlugs = galleryProducts.filter((slug) => typeof slug === 'string' && !usedSlugs.has(slug));
+    unmappedSlugs.forEach((slug) => {
+      const label = formatGalleryProductLabel(slug);
+      productOptions.push(
+        `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+      );
+    });
+
     let selectedSlug = '';
     let lockedMissingInCity = false;
 
@@ -474,7 +536,9 @@ async function loadGalleryProducts(city) {
       } else {
         lockedMissingInCity = true;
         const missingLabel = `${formatGalleryProductLabel(lockedSlug)} — brak w tej miejscowości`;
-        productOptions.push(`<option value="${lockedSlug}">${missingLabel}</option>`);
+        productOptions.push(
+          `<option value="${lockedSlug}" data-project-slug="${lockedSlug}">${missingLabel}</option>`
+        );
         selectedSlug = lockedSlug;
       }
     }
@@ -572,8 +636,48 @@ function applyGallerySelectionFromSlug(slug) {
   renderGalleryPreview();
 }
 
+function findGallerySlugForProducts(products) {
+  if (!galleryProductSelect || !Array.isArray(products) || !products.length) return '';
+
+  const options = Array.from(galleryProductSelect.options || []);
+  if (!options.length) return '';
+
+  for (const product of products) {
+    if (!product) continue;
+
+    const id = String(product._id || product.id || '').trim();
+    const identifier = (product.name || '').trim();
+    const index = (product.pc_id || '').trim();
+
+    const match = options.find((opt) => {
+      const optId = (opt.dataset.productId || '').trim();
+      const optIdentifier = (opt.dataset.productIdentifier || '').trim();
+      const optIndex = (opt.dataset.productIndex || '').trim();
+
+      if (id && optId && optId === id) return true;
+      if (identifier && optIdentifier && optIdentifier === identifier) return true;
+      if (index && optIndex && optIndex === index) return true;
+
+      return false;
+    });
+
+    if (match && match.value) {
+      return match.value;
+    }
+  }
+
+  return '';
+}
+
 function syncGalleryWithSearch(query, products) {
   if (!galleryProductSelect || !galleryProducts.length) return;
+
+  // Najpierw spróbuj dopasować po konkretnych produktach z wyników wyszukiwania
+  const slugFromProducts = findGallerySlugForProducts(products || []);
+  if (slugFromProducts) {
+    applyGallerySelectionFromSlug(slugFromProducts);
+    return;
+  }
 
   let matchingSlugs = findGallerySlugsForQuery(query);
 
@@ -922,37 +1026,63 @@ async function handleGalleryProductChangeFromSelect() {
   }
 
   try {
-    const label = formatGalleryProductLabel(slug);
-    const searchTerms = tokenizeQuery(label);
-    if (!searchTerms.length) {
-      return;
-    }
-
     setStatus('Ładowanie wybranego produktu...', 'info');
     resetResultsPlaceholder('Trwa pobieranie danych...');
+    const selectedOption = galleryProductSelect.selectedOptions[0];
+    const targetProductId = (selectedOption?.dataset.productId || '').trim();
+    const targetIdentifier = (selectedOption?.dataset.productIdentifier || '').trim();
+    const targetIndex = (selectedOption?.dataset.productIndex || '').trim();
 
-    let products = await fetchProducts(label);
+    let matching = [];
 
-    if (!products.length && searchTerms.length > 1) {
-      products = await fetchProducts();
+    // Jeśli mamy pełne mapowanie (produkt z bazy przypisany do projektu) – użyj precyzyjnego dopasowania
+    if (targetProductId || targetIdentifier || targetIndex) {
+      let products = await fetchProducts();
+
+      matching = products.filter((product) => {
+        if (!product) return false;
+
+        const id = String(product._id || product.id || '').trim();
+        const identifier = (product.name || '').trim();
+        const index = (product.pc_id || '').trim();
+
+        if (targetProductId && id && id === targetProductId) return true;
+        if (targetIdentifier && identifier && identifier === targetIdentifier) return true;
+        if (targetIndex && index && index === targetIndex) return true;
+
+        return false;
+      });
+    } else {
+      // Brak mapowania produktu do projektu – wróć do starej logiki: szukaj po labelu z sluga
+      const label = formatGalleryProductLabel(slug);
+      const searchTerms = tokenizeQuery(label);
+      if (!searchTerms.length) {
+        return;
+      }
+
+      let products = await fetchProducts(label);
+
+      if (!products.length && searchTerms.length > 1) {
+        products = await fetchProducts();
+      }
+
+      matching = products.filter((product) => {
+        if (!product) return false;
+
+        const nameTokens = getFieldTokens(product.name);
+        const idTokens = getFieldTokens(product.pc_id);
+
+        if (matchesTermsInField(product.name, searchTerms, { tokens: nameTokens })) {
+          return true;
+        }
+
+        if (matchesTermsInField(product.pc_id, searchTerms, { tokens: idTokens })) {
+          return true;
+        }
+
+        return false;
+      });
     }
-
-    const matching = products.filter((product) => {
-      if (!product) return false;
-
-      const nameTokens = getFieldTokens(product.name);
-      const idTokens = getFieldTokens(product.pc_id);
-
-      if (matchesTermsInField(product.name, searchTerms, { tokens: nameTokens })) {
-        return true;
-      }
-
-      if (matchesTermsInField(product.pc_id, searchTerms, { tokens: idTokens })) {
-        return true;
-      }
-
-      return false;
-    });
 
     if (!matching.length) {
       setStatus('Nie znaleziono produktu powiązanego z wybranym projektem.', 'info');
@@ -1393,8 +1523,6 @@ function renderFavoritesBar() {
   const typeFilter = isKIMode ? 'ki_object' : 'city';
   const filteredFavorites = userFavorites.filter(f => f.type === typeFilter);
   
-  console.log('[DEBUG] renderFavoritesBar - mode:', currentFormMode, 'typeFilter:', typeFilter, 'found:', filteredFavorites.length);
-  
   if (filteredFavorites.length === 0) {
     favoritesBar.classList.remove('has-favorites');
     favoritesBarItems.innerHTML = '';
@@ -1678,8 +1806,13 @@ function filterProductsByProjectAvailability(products) {
 
   return products.filter((product) => {
     if (!product) return false;
-    const slugsForProduct = findGallerySlugsByName(product.name);
-    const hasProject = slugsForProduct.length > 0;
+    const slugFromMapping = findGallerySlugForProducts([product]);
+    let hasProject = Boolean(slugFromMapping);
+
+    if (!hasProject) {
+      const slugsForProduct = findGallerySlugsByName(product.name);
+      hasProject = slugsForProduct.length > 0;
+    }
     return projectFilterMode === 'with' ? hasProject : !hasProject;
   });
 }
@@ -1904,11 +2037,13 @@ function renderResults(products) {
       showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${preview}`, 'success');
     };
 
-    // Flaga: czy pole ILOŚĆ było faktycznie edytowane (input)
-    let qtyInputDirty = false;
+    // Flagi: które pole było faktycznie edytowane przez użytkownika
+    let qtyInputDirty = false;        // pole ILOŚĆ
+    let qtyPerProjectDirty = false;   // pole ILOŚCI NA PROJEKT
 
     qtyInput.addEventListener('input', () => {
       qtyInputDirty = true;
+      qtyPerProjectDirty = false; // przełączamy się na tryb "suma jako źródło"
       qtyPerProjectInput.value = '';
       hideQtyPreview();
     });
@@ -1929,8 +2064,9 @@ function renderResults(products) {
       buildPerProjectListFromTotal();
     });
 
-    // Pisanie w B czyści A, a na blur liczymy sumę z listy / trybu "po X"
+    // Pisanie w B czyści A, zapamiętujemy że to projekty są źródłem
     qtyPerProjectInput.addEventListener('input', () => {
+      qtyPerProjectDirty = true;
       qtyInput.value = '';
       hideQtyPreview();
     });
@@ -1955,22 +2091,40 @@ function renderResults(products) {
         return;
       }
 
-      // Jeśli wpisano ilości na projekty, oblicz rozkład
+      // Jeśli w polu B jest coś wpisane
       if (qtyPerProjectValue) {
         const normalizedProjects = sanitizeProjectsValue(projectsValue);
-        const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, qtyPerProjectValue);
-        
-        if (!result.success) {
-          alert(result.error);
-          qtyPerProjectInput.focus();
-          return;
+
+        // Przypadek 1: użytkownik ręcznie edytował pole B -> źródło to projekty
+        if (qtyPerProjectDirty) {
+          const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, qtyPerProjectValue);
+          
+          if (!result.success) {
+            alert(result.error);
+            qtyPerProjectInput.focus();
+            return;
+          }
+
+          result.quantityInputPerProject = qtyPerProjectValue;
+          result.quantitySource = 'perProject';
+          addToCartWithQuantityBreakdown(product, result, itemNotesValue);
         }
+        // Przypadek 2: pole B zostało automatycznie wyliczone z A -> źródło to suma
+        else {
+          const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, '');
 
-        // Dodaj oryginalną wartość wpisaną przez użytkownika
-        result.quantityInputPerProject = qtyPerProjectValue;
+          if (!result.success) {
+            alert(result.error);
+            return;
+          }
 
-        // Dodaj do koszyka z obliczonym rozkładem i uwagami
-        addToCartWithQuantityBreakdown(product, result, itemNotesValue);
+          // Zapisz listę ilości na projekty do wyświetlenia
+          result.quantityInputPerProject = result.perProjectQuantities
+            .map(p => p.qty)
+            .join(',');
+          result.quantitySource = 'total';
+          addToCartWithQuantityBreakdown(product, result, itemNotesValue);
+        }
       } else {
         // Zwykłe dodanie bez rozkładu
         const quantity = Number.isFinite(qtyTotalValue) && qtyTotalValue > 0 ? qtyTotalValue : 1;
@@ -2892,15 +3046,10 @@ function initialize() {
   const showAllToggle = document.getElementById('show-all-cities-toggle');
   if (showAllToggle) {
     showAllToggle.addEventListener('click', () => {
-      console.log('[DEBUG] Toggle clicked, current state:', showAllToggle.dataset.showingAll);
-      console.log('[DEBUG] All cities stored:', window._allCitiesForToggle?.length);
-      console.log('[DEBUG] User cities stored:', window._userAssignedCities?.length);
-      
       const showingAll = showAllToggle.dataset.showingAll === 'true';
       
       if (showingAll) {
         // Pokaż tylko przypisane
-        console.log('[DEBUG] Showing user assigned cities only');
         const options = ['<option value="">Wybierz miejscowość</option>',
           ...(window._userAssignedCities || []).map((city) => `<option value="${city}">${city}</option>`),
         ];
@@ -2909,7 +3058,6 @@ function initialize() {
         showAllToggle.dataset.showingAll = 'false';
       } else {
         // Pokaż wszystkie
-        console.log('[DEBUG] Showing all cities');
         const options = ['<option value="">Wybierz miejscowość</option>',
           ...(window._allCitiesForToggle || []).map((city) => `<option value="${city}">${city}</option>`),
         ];
@@ -2956,7 +3104,6 @@ function initialize() {
       // Jeśli checkbox blokady jest włączony, zaktualizuj lastLockedProductSlug na nowo wybrany produkt
       if (galleryLockCheckbox?.checked && slug) {
         lastLockedProductSlug = slug;
-        console.log('[DEBUG] Product changed with lock enabled, updated lastLockedProductSlug:', slug);
       }
       
       renderGalleryPreview();
@@ -2971,11 +3118,9 @@ function initialize() {
         // Gdy checkbox jest włączany, zapamiętaj aktualnie wybrany produkt
         const currentSlug = galleryProductSelect?.value || '';
         lastLockedProductSlug = currentSlug;
-        console.log('[DEBUG] Lock enabled, saved lastLockedProductSlug:', currentSlug);
       } else {
         // Gdy checkbox jest wyłączany, wyczyść lastLockedProductSlug
         lastLockedProductSlug = '';
-        console.log('[DEBUG] Lock disabled, cleared lastLockedProductSlug');
       }
     });
   }
@@ -2987,11 +3132,7 @@ function initialize() {
   
   // Inicjalizacja modułu szablonów
   initTemplatesModule();
-  
-  // Inicjalizacja danych galerii
-  console.log('[DEBUG] initialize() - currentFormMode:', currentFormMode);
   if (currentFormMode === 'projekty-miejscowosci') {
-    console.log('[DEBUG] Loading cities for PM mode...');
     loadGalleryCities();
     isCityModeInitialized = true;
   } else if (currentFormMode === 'klienci-indywidualni') {
@@ -3134,8 +3275,6 @@ async function checkAuthAndInitialize() {
     if (response.ok) {
       const userData = await response.json();
       currentUser = userData;
-      console.log('[DEBUG] User authenticated:', currentUser);
-      console.log('[DEBUG] User role:', currentUser.role);
 
       // Usuń tryb gościa – pokaż pełny widok
       document.body.classList.remove('hide-guest');
@@ -4059,20 +4198,18 @@ async function loadUserFavorites() {
     const result = await response.json();
     
     if (result.status === 'success') {
-      // Backend zwraca dane w polu 'data', mapuj na format frontendu
       userFavorites = (result.data || []).map(f => ({
         id: f.id,
         type: f.type,
-        item_id: f.itemId,
+        itemId: f.item_id,
         name: f.displayName
       }));
-      console.log('[DEBUG] User favorites loaded:', userFavorites);
       updateFavoritesUI();
     } else {
-      console.error('[ERROR] Failed to load favorites:', result.message);
+      console.error('Błąd pobierania ulubionych:', result.message);
     }
   } catch (error) {
-    console.error('[ERROR] Error loading favorites:', error);
+    console.error('Błąd pobierania ulubionych:', error);
   } finally {
     favoritesLoading = false;
   }
@@ -4093,7 +4230,6 @@ async function addToFavorites(type, itemId, name) {
       return;
     }
     
-    console.log('[DEBUG] addToFavorites - type:', type, 'itemId:', itemId, 'name:', name);
     
     const response = await fetch('/api/favorites', {
       method: 'POST',
@@ -4145,12 +4281,9 @@ async function removeFromFavorites(favoriteIdOrType, itemId = null) {
     } else {
       // Wywołanie z favoriteId - znajdź type i itemId
       favoriteId = favoriteIdOrType;
-      console.log('[DEBUG] Looking for favorite with id:', favoriteId, 'type:', typeof favoriteId);
-      console.log('[DEBUG] Available favorites:', userFavorites.map(f => ({ id: f.id, type: typeof f.id })));
       // Konwertuj favoriteId na number, ponieważ HTML zwraca string
       const favoriteIdNum = parseInt(favoriteId, 10);
       const favorite = userFavorites.find(f => f.id === favoriteIdNum);
-      console.log('[DEBUG] Found favorite:', favorite);
       if (!favorite) {
         console.error('[ERROR] Favorite not found:', favoriteId);
         return;

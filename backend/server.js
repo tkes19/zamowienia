@@ -968,6 +968,147 @@ async function proxyGalleryRequest(req, res, targetUrl, contextLabel) {
     }
 }
 
+async function enrichGalleryProductsData(galleryData) {
+    if (!supabase || !galleryData || typeof galleryData !== 'object') {
+        return galleryData || {};
+    }
+
+    try {
+        const slugSet = new Set();
+
+        if (Array.isArray(galleryData.products)) {
+            galleryData.products.forEach((slug) => {
+                if (typeof slug === 'string') {
+                    const trimmed = slug.trim();
+                    if (trimmed) slugSet.add(trimmed);
+                }
+            });
+        }
+
+        if (Array.isArray(galleryData.files)) {
+            galleryData.files.forEach((file) => {
+                const slug = typeof (file && file.product) === 'string' ? file.product.trim() : '';
+                if (slug) slugSet.add(slug);
+            });
+        }
+
+        const slugs = Array.from(slugSet);
+        if (!slugs.length) {
+            return { ...galleryData, projects: [] };
+        }
+
+        // 1. Upewnij się, że wszystkie slugi istnieją w GalleryProject
+        const { data: existingProjects, error: existingError } = await supabase
+            .from('GalleryProject')
+            .select('id, slug, displayName')
+            .in('slug', slugs);
+
+        if (existingError) {
+            console.error('Błąd pobierania istniejących projektów galerii:', existingError);
+        }
+
+        const existingSlugs = new Set((existingProjects || []).map((p) => p.slug));
+        const missingSlugs = slugs.filter((slug) => !existingSlugs.has(slug));
+
+        if (missingSlugs.length) {
+            const nowIso = new Date().toISOString();
+            const toInsert = missingSlugs.map((slug) => ({
+                slug,
+                displayName: slug.replace(/_/g, ' ').toUpperCase(),
+                createdAt: nowIso,
+            }));
+
+            const { error: insertError } = await supabase
+                .from('GalleryProject')
+                .insert(toInsert);
+
+            if (insertError) {
+                // Unikalność po slugu – możliwe kolizje przy równoległych żądaniach, ale nie blokujemy działania.
+                console.error('Błąd tworzenia nowych projektów galerii:', insertError);
+            }
+        }
+
+        // 2. Pobierz projekty wraz z powiązaniami do produktów
+        const { data: projectRows, error: projectsError } = await supabase
+            .from('GalleryProject')
+            .select(`
+                id,
+                slug,
+                displayName,
+                GalleryProjectProduct:GalleryProjectProduct(
+                    productId
+                )
+            `)
+            .in('slug', slugs);
+
+        if (projectsError) {
+            console.error('Błąd pobierania mapowania projektów z Supabase:', projectsError);
+            return { ...galleryData, projects: [] };
+        }
+
+        // 3. Zbierz wszystkie ID produktów powiązanych z projektami
+        const productIdSet = new Set();
+        (projectRows || []).forEach((row) => {
+            (row.GalleryProjectProduct || []).forEach((rel) => {
+                if (rel.productId) {
+                    productIdSet.add(rel.productId);
+                }
+            });
+        });
+
+        let productsById = {};
+        if (productIdSet.size) {
+            const { data: products, error: productsError } = await supabase
+                .from('Product')
+                .select('id, identifier, index')
+                .in('id', Array.from(productIdSet));
+
+            if (productsError) {
+                console.error('Błąd pobierania produktów dla projektów galerii:', productsError);
+            } else if (Array.isArray(products)) {
+                productsById = Object.fromEntries(products.map((p) => [p.id, p]));
+            }
+        }
+
+        const projects = Array.isArray(projectRows)
+            ? projectRows
+                .map((row) => {
+                    const relations = Array.isArray(row.GalleryProjectProduct)
+                        ? row.GalleryProjectProduct
+                        : [];
+
+                    const products = relations
+                        .map((rel) => {
+                            const prod = productsById[rel.productId];
+                            if (!prod) return null;
+                            return {
+                                id: prod.id,
+                                identifier: prod.identifier || null,
+                                index: prod.index || null,
+                            };
+                        })
+                        .filter(Boolean);
+
+                    if (!products.length) {
+                        return null;
+                    }
+
+                    return {
+                        slug: row.slug,
+                        displayName: row.displayName,
+                        products,
+                    };
+                })
+                .filter(Boolean)
+            : [];
+
+        return { ...galleryData, projects };
+    } catch (error) {
+        console.error('Błąd wzbogacania danych produktów galerii o mapowanie projektów:', error);
+        return { ...galleryData, projects: [] };
+    }
+}
+
 // Lista miejscowości - z filtrowaniem po przypisaniach użytkownika
 app.get('/api/gallery/cities', async (req, res) => {
     const cookies = parseCookies(req);
@@ -1160,7 +1301,41 @@ app.get('/api/gallery/products/:city', async (req, res) => {
     console.log('Pobieranie produktów dla miasta:', city);
     const targetUrl = `${GALLERY_BASE}/list_products.php?city=${encodeURIComponent(city)}`;
     console.log('URL do QNAP:', targetUrl);
-    await proxyGalleryRequest(req, res, targetUrl, `products/${city}`);
+
+    try {
+        const response = await fetch(targetUrl);
+        const status = response.status;
+
+        let data;
+        try {
+            data = await response.json();
+        } catch (parseError) {
+            console.error('Błąd parsowania JSON z list_products.php:', parseError);
+            return res.status(502).json({
+                error: 'Invalid JSON from gallery backend',
+                context: `products/${city}`,
+            });
+        }
+
+        if (data && Array.isArray(data.files)) {
+            data.files = data.files.map((file) => {
+                if (file && typeof file.url === 'string' && file.url.includes('192.168.0.30')) {
+                    file.url = file.url.replace('http://192.168.0.30:81', 'http://rezon.myqnapcloud.com:81');
+                }
+                return file;
+            });
+        }
+
+        const enriched = await enrichGalleryProductsData(data);
+        return res.status(status).json(enriched);
+    } catch (error) {
+        console.error('Błąd pobierania produktów dla miasta z galerii:', error);
+        return res.status(502).json({
+            error: 'Gallery proxy error',
+            context: `products/${city}`,
+            details: error.message,
+        });
+    }
 });
 
 // Lista produktów dla obiektu (handlowiec + obiekt)
@@ -1172,7 +1347,41 @@ app.get('/api/gallery/products-object', async (req, res) => {
     console.log('Pobieranie produktów dla obiektu:', salesperson, object);
     const url = `${GALLERY_BASE}/list_products_object.php?salesperson=${encodeURIComponent(salesperson)}&object=${encodeURIComponent(object)}`;
     console.log('URL do QNAP:', url);
-    await proxyGalleryRequest(req, res, url, `products/${salesperson}/${object}`);
+
+    try {
+        const response = await fetch(url);
+        const status = response.status;
+
+        let data;
+        try {
+            data = await response.json();
+        } catch (parseError) {
+            console.error('Błąd parsowania JSON z list_products_object.php:', parseError);
+            return res.status(502).json({
+                error: 'Invalid JSON from gallery backend',
+                context: `products/${salesperson}/${object}`,
+            });
+        }
+
+        if (data && Array.isArray(data.files)) {
+            data.files = data.files.map((file) => {
+                if (file && typeof file.url === 'string' && file.url.includes('192.168.0.30')) {
+                    file.url = file.url.replace('http://192.168.0.30:81', 'http://rezon.myqnapcloud.com:81');
+                }
+                return file;
+            });
+        }
+
+        const enriched = await enrichGalleryProductsData(data);
+        return res.status(status).json(enriched);
+    } catch (error) {
+        console.error('Błąd pobierania produktów dla obiektu z galerii:', error);
+        return res.status(502).json({
+            error: 'Gallery proxy error',
+            context: `products/${salesperson}/${object}`,
+            details: error.message,
+        });
+    }
 });
 
 // Proxy dla obrazków z galerii – żeby uniknąć mixed content (HTTPS → HTTP)
@@ -2731,6 +2940,323 @@ app.delete('/api/favorites/:type/:itemId', async (req, res) => {
         return res.json({ status: 'success', message: 'Usunięto z ulubionych' });
     } catch (err) {
         console.error('Wyjątek w DELETE /api/favorites:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// -----------------------------
+// API - Mapowanie produktów (GalleryProject, GalleryProjectProduct)
+// -----------------------------
+
+// Lista projektów galerii wraz z licznikami produktów
+app.get('/api/admin/gallery-projects', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { search } = req.query || {};
+
+    try {
+        let query = supabase
+            .from('GalleryProject')
+            .select(`
+                id,
+                slug,
+                displayName,
+                createdAt,
+                GalleryProjectProduct:GalleryProjectProduct(productId)
+            `)
+            .order('displayName', { ascending: true });
+
+        if (search && typeof search === 'string' && search.trim()) {
+            const term = `%${search.trim()}%`;
+            query = query.or(`displayName.ilike.${term},slug.ilike.${term}`);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Błąd pobierania projektów galerii:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać projektów galerii', details: error.message });
+        }
+
+        const projects = (data || []).map((row) => ({
+            id: row.id,
+            slug: row.slug,
+            displayName: row.displayName,
+            createdAt: row.createdAt,
+            productCount: Array.isArray(row.GalleryProjectProduct) ? row.GalleryProjectProduct.length : 0,
+        }));
+
+        return res.json({
+            status: 'success',
+            data: projects,
+            count: projects.length,
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/gallery-projects:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Utworzenie nowego projektu galerii
+app.post('/api/admin/gallery-projects', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { slug, displayName } = req.body || {};
+
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return res.status(400).json({ status: 'error', message: 'Slug jest wymagany' });
+    }
+
+    const normalizedSlug = slug.trim();
+    const name = (displayName && displayName.trim()) || normalizedSlug.replace(/_/g, ' ').toUpperCase();
+
+    try {
+        const { data, error } = await supabase
+            .from('GalleryProject')
+            .insert({
+                slug: normalizedSlug,
+                displayName: name,
+                createdAt: new Date().toISOString(),
+            })
+            .select('*')
+            .single();
+
+        if (error) {
+            if (error.code === '23505') {
+                return res.status(409).json({ status: 'error', message: 'Projekt o takim slugu już istnieje' });
+            }
+            console.error('Błąd tworzenia projektu galerii:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć projektu galerii', details: error.message });
+        }
+
+        return res.status(201).json({ status: 'success', data, message: 'Projekt galerii utworzony' });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/admin/gallery-projects:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Aktualizacja projektu galerii
+app.patch('/api/admin/gallery-projects/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+    const { slug, displayName } = req.body || {};
+
+    if (!id) {
+        return res.status(400).json({ status: 'error', message: 'Brak id projektu' });
+    }
+
+    const updateData = {};
+    if (slug !== undefined) {
+        if (!slug || !slug.trim()) {
+            return res.status(400).json({ status: 'error', message: 'Slug nie może być pusty' });
+        }
+        updateData.slug = slug.trim();
+    }
+    if (displayName !== undefined) {
+        updateData.displayName = displayName.trim();
+    }
+
+    if (!Object.keys(updateData).length) {
+        return res.status(400).json({ status: 'error', message: 'Brak danych do aktualizacji' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('GalleryProject')
+            .update(updateData)
+            .eq('id', id)
+            .select('*')
+            .single();
+
+        if (error) {
+            if (error.code === '23505') {
+                return res.status(409).json({ status: 'error', message: 'Projekt o takim slugu już istnieje' });
+            }
+            console.error('Błąd aktualizacji projektu galerii:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować projektu galerii', details: error.message });
+        }
+
+        return res.json({ status: 'success', data, message: 'Projekt galerii zaktualizowany' });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/admin/gallery-projects/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Usunięcie projektu galerii (wraz z powiązaniami)
+app.delete('/api/admin/gallery-projects/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('GalleryProject')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Błąd usuwania projektu galerii:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć projektu galerii', details: error.message });
+        }
+
+        return res.json({ status: 'success', message: 'Projekt galerii został usunięty' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/admin/gallery-projects/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Lista produktów przypisanych do projektu
+app.get('/api/admin/gallery-projects/:id/products', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const { data, error } = await supabase
+            .from('GalleryProjectProduct')
+            .select('productId')
+            .eq('projectId', id);
+
+        if (error) {
+            console.error('Błąd pobierania produktów projektu galerii:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać produktów projektu galerii', details: error.message });
+        }
+
+        // Pobierz szczegóły produktów osobno (unikamy problemów z relacjami)
+        const productIds = (data || []).map((row) => row.productId).filter(Boolean);
+        let items = [];
+
+        if (productIds.length) {
+            const { data: products, error: productsError } = await supabase
+                .from('Product')
+                .select('id, identifier, index')
+                .in('id', productIds);
+
+            if (productsError) {
+                console.error('Błąd pobierania szczegółów produktów:', productsError);
+            } else {
+                items = (products || []).map((p) => ({
+                    productId: p.id,
+                    identifier: p.identifier || null,
+                    index: p.index || null,
+                }));
+            }
+        }
+
+        return res.json({ status: 'success', data: items });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/gallery-projects/:id/products:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Przypisanie produktu do projektu galerii
+app.post('/api/admin/gallery-projects/:id/products', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+    const { productId } = req.body || {};
+
+    if (!productId) {
+        return res.status(400).json({ status: 'error', message: 'productId jest wymagane' });
+    }
+
+    try {
+        // Upewnij się, że projekt istnieje
+        const { data: project, error: projectError } = await supabase
+            .from('GalleryProject')
+            .select('id')
+            .eq('id', id)
+            .single();
+
+        if (projectError || !project) {
+            return res.status(404).json({ status: 'error', message: 'Projekt galerii nie istnieje' });
+        }
+
+        // Upewnij się, że produkt istnieje
+        const { data: product, error: productError } = await supabase
+            .from('Product')
+            .select('id, identifier, index')
+            .eq('id', productId)
+            .single();
+
+        if (productError || !product) {
+            return res.status(404).json({ status: 'error', message: 'Produkt nie istnieje' });
+        }
+
+        const { data, error } = await supabase
+            .from('GalleryProjectProduct')
+            .insert({
+                projectId: project.id,
+                productId: product.id,
+                createdAt: new Date().toISOString(),
+            })
+            .select('projectId, productId')
+            .single();
+
+        if (error) {
+            if (error.code === '23505') {
+                return res.status(409).json({ status: 'error', message: 'Produkt jest już przypisany do tego projektu' });
+            }
+            console.error('Błąd przypisywania produktu do projektu galerii:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się przypisać produktu do projektu', details: error.message });
+        }
+
+        return res.status(201).json({
+            status: 'success',
+            data: {
+                projectId: data.projectId,
+                productId: data.productId,
+                identifier: product.identifier,
+                index: product.index,
+            },
+            message: 'Produkt przypisany do projektu',
+        });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/admin/gallery-projects/:id/products:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Usunięcie przypisania produktu do projektu galerii
+app.delete('/api/admin/gallery-projects/:id/products/:productId', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id, productId } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('GalleryProjectProduct')
+            .delete()
+            .eq('projectId', id)
+            .eq('productId', productId);
+
+        if (error) {
+            console.error('Błąd usuwania przypisania produktu do projektu:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć przypisania produktu', details: error.message });
+        }
+
+        return res.json({ status: 'success', message: 'Przypisanie produktu zostało usunięte' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/admin/gallery-projects/:id/products/:productId:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
     }
 });
