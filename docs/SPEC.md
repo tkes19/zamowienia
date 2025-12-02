@@ -32,9 +32,11 @@ ZAMÓWIENIA/
 │   ├── app.js                 # Główna logika frontendu
 │   └── orders.js              # Moduł zamówień
 ├── docs/                      # Dokumentacja
-│   ├── SPEC.md                # Ten plik
-│   ├── USER_MANUAL.md         # Podręcznik użytkownika
-│   └── SPEC_FOLDER_ACCESS.md  # Specyfikacja folderów KI
+│   ├── SPEC.md                 # Ten plik
+│   ├── USER_MANUAL.md          # Podręcznik użytkownika
+│   ├── SPEC_FOLDER_ACCESS.md   # Specyfikacja folderów KI
+│   ├── SPEC_PRODUCTION_PANEL.md # Specyfikacja Panelu Produkcyjnego
+│   └── GLOSSARY_PRODUCTION.md   # Słownik terminologii produkcyjnej
 ├── index.html                 # Formularz zamówień
 ├── orders.html                # Widok zamówień
 ├── clients.html               # Panel klientów
@@ -105,6 +107,33 @@ Product (id, identifier, index, name, category, price, imageUrl)
 Inventory (id, productId, stock, stockReserved, stockOrdered, reorderPoint)
 Customer (id, name, email, phone, address, city, salesRepId)
 ```
+
+---
+
+### 5.4. Produkcja i grafika (wysoki poziom)
+
+Szczegółowy model danych Panelu Produkcyjnego opisany jest w
+`docs/SPEC_PRODUCTION_PANEL.md` (sekcje 2–3 oraz 9). Dla spójności architektury
+warto znać główne tabele:
+
+```sql
+-- Zlecenia produkcyjne
+ProductionOrder (id, orderNumber, sourceOrderId, productId, quantity, status, ...)
+
+-- Operacje produkcyjne
+ProductionOperation (id, productionOrderId, operationNumber, operationType, status, ...)
+
+-- Zadania grafiki
+GraphicTask (
+  id, orderId, orderItemId, status, priority, dueDate, assignedTo,
+  galleryContext, filesLocation, projectNumbers, checklist,
+  approvalRequired, approvalStatus, createdBy, createdAt, updatedAt
+)
+```
+
+Rozszerzenia tabeli `Order` i (opcjonalnie) `OrderItem` pod moduł grafiki
+opisane są w `docs/SPEC_PRODUCTION_PANEL.md` (sekcja 9.2) i będą wdrażane w
+ramach wersji v2.x systemu.
 
 ---
 

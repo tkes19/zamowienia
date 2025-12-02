@@ -75,6 +75,35 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 - [ ] Historia zmian w UI admina
 - [ ] Powiadomienia email przy zmianie statusu
 
+#### 🏭 Panel Produkcyjny (v2.0.0)
+- [ ] **Faza 1: Fundamenty produkcyjne**
+  - [ ] Migracja bazodanowa: ProductionRoom, WorkCenter, WorkStation, ProductionPath, ProductionOrder, ProductionOperation
+  - [ ] Backend API: zarządzanie pokojami, gniazdami, stanowiskami, ścieżkami
+  - [ ] Integracja: automatyczne zamowienie → zlecenie produkcyjne
+  - [ ] Podstawowy routing w panelu admina
+
+- [ ] **Faza 2: Panel operatora**
+  - [ ] Kafelkowy interfejs (wzorzec Prodio)
+  - [ ] WebSocket: real-time updates statusów
+  - [ ] Proste formularze: start/pause/complete (max 3 kliknięcia)
+  - [ ] Kolorowe statusy i duże przyciski
+
+- [ ] **Faza 3: Admin produkcji**
+  - [ ] Rozszerzenie panelu admina o zakładkę "Produkcja"
+  - [ ] Zarządzanie pokojami produkcyjnymi
+  - [ ] Zarządzanie gniazdami produkcyjnymi
+  - [ ] Zarządzanie stanowiskami roboczymi i maszynami
+  - [ ] Tworzenie ścieżek produkcyjnych (wzorzec Katany)
+  - [ ] System szacowania czasów produkcyjnych
+  - [ ] Szablony czasów operacji i kalibracja
+  - [ ] Moduł grafiki / Panel pracy grafika (zadania `GraphicTask`, scenariusze akceptacji projektów; szczegóły w `docs/SPEC_PRODUCTION_PANEL.md` §9)
+
+- [ ] **Faza 4: Harmonogram i optymalizacja**
+  - [ ] Drag & drop harmonogram zadań
+  - [ ] Automatyczne planowanie i priorytetyzacja
+  - [ ] Testy użyteczności z operatorami
+  - [ ] Dokumentacja i materiały szkoleniowe
+
 #### Magazyn (przyszłość)
 - [ ] Widok stanów magazynowych
 - [ ] Logika rezerwacji (`stockReserved`)
@@ -116,7 +145,20 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 - Optymalizacje wydajności
 - Eksport/import danych
 
-### v2.0.0 (Planowane) – Q2/Q3 2026
+### v2.0.0 (Planowane) – Q2 2026
+- **Panel Produkcyjny** – kompletny system zarządzania produkcją
+  - Kafelkowy interfejs operatora (wzorzec Prodio)
+  - Real-time monitoring i WebSocket
+  - Zarządzanie pokojami, gniazdami i stanowiskami
+  - Ścieżki produkcyjne i harmonogramowanie
+  - Integracja z zamówieniami
+
+### v2.1.0 (Planowane) – Q3 2026
+- Testy automatyczne
+- Optymalizacje wydajności
+- Eksport/import danych
+
+### v2.2.0 (Planowane) – Q4 2026
 - System raportów
 - Integracje zewnętrzne
 - Zaawansowany magazyn
@@ -135,8 +177,9 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 - `docs/SPEC.md` – specyfikacja techniczna
 - `docs/USER_MANUAL.md` – podręcznik użytkownika
 - `docs/SPEC_FOLDER_ACCESS.md` – szczegóły modułu KI
+- `docs/SPEC_PRODUCTION_PANEL.md` – szczegóły panelu produkcyjnego
 
 ---
 
-**Wersja dokumentu:** 2.0  
-**Data aktualizacji:** 2025-11-30
+**Wersja dokumentu:** 3.0  
+**Data aktualizacji:** 2025-12-01

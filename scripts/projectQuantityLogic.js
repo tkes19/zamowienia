@@ -221,45 +221,6 @@ function formatResult(result) {
     return `✓ Łącznie sztuk: ${result.totalQuantity}\n${projectsStr}`;
 }
 
-// ============ TESTY ============
-
-console.log('=== TEST 1: Tryb łączna ilość ===');
-let res1 = computePerProjectQuantities('1,2,3', '200', '');
-console.log(formatResult(res1));
-console.log(JSON.stringify(res1, null, 2));
-
-console.log('\n=== TEST 2: Tryb po X na projekt ===');
-let res2 = computePerProjectQuantities('1-5', '', 'po 30');
-console.log(formatResult(res2));
-console.log(JSON.stringify(res2, null, 2));
-
-console.log('\n=== TEST 3: Tryb indywidualne ===');
-let res3 = computePerProjectQuantities('4,5,6', '', '20,30,40');
-console.log(formatResult(res3));
-console.log(JSON.stringify(res3, null, 2));
-
-console.log('\n=== TEST 4: Oba pola, spójne ===');
-let res4 = computePerProjectQuantities('1-5', '150', 'po 30');
-console.log(formatResult(res4));
-console.log(JSON.stringify(res4, null, 2));
-
-console.log('\n=== TEST 5: Oba pola, NIESPÓJNE ===');
-let res5 = computePerProjectQuantities('1-5', '200', 'po 30');
-console.log(formatResult(res5));
-
-console.log('\n=== TEST 6: Zakresy mieszane ===');
-let res6 = computePerProjectQuantities('1-3,5,7-9', '100', '');
-console.log(formatResult(res6));
-console.log(JSON.stringify(res6, null, 2));
-
-console.log('\n=== TEST 7: Błąd - liczba ilości != liczba projektów ===');
-let res7 = computePerProjectQuantities('1,2,3', '', '20,30');
-console.log(formatResult(res7));
-
-console.log('\n=== TEST 8: Oba pola puste ===');
-let res8 = computePerProjectQuantities('1,2,3', '', '');
-console.log(formatResult(res8));
-
 // Eksport dla modułów ES6
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { computePerProjectQuantities, parseProjects, formatResult };

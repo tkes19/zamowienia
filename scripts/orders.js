@@ -665,7 +665,7 @@ document.addEventListener('DOMContentLoaded', () => {
             detailsRow.className = 'bg-indigo-50 border-t-2 border-indigo-200 details-row';
 
             const orderItems = fullOrder.items || fullOrder.OrderItem || [];
-            const showSourceBadge = hasMixedSources(orderItems);
+            const showSourceBadge = true; // zawsze pokazuj źródło (PM/KI)
             
             const itemsHtml = orderItems.map(item => {
                 const identifier = item.Product?.identifier || '-';
@@ -674,11 +674,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sourceBadge = getSourceBadge(item.source, showSourceBadge);
                 const locationDisplay = item.locationName || '-';
                 const notesDisplay = item.productionNotes || '';
+                
+                // Formatuj projekty z ilościami
+                let projectsDisplay = item.selectedProjects || '-';
+                if (item.projectQuantities) {
+                    try {
+                        const pq = typeof item.projectQuantities === 'string' 
+                            ? JSON.parse(item.projectQuantities) 
+                            : item.projectQuantities;
+                        if (Array.isArray(pq) && pq.length > 0) {
+                            projectsDisplay = pq.map(p => `${p.projectNo}: ${p.qty}`).join(', ');
+                        }
+                    } catch (e) { /* ignore parse errors */ }
+                }
+                
+                // Oznaczenie źródła prawdy
+                const isPerProjectSource = item.quantitySource === 'perProject';
+                const qtyClass = isPerProjectSource ? '' : 'font-bold text-blue-700 underline';
+                const projectsClass = isPerProjectSource ? 'font-bold text-blue-700 underline' : '';
+                
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
                     <td class="p-2 text-xs font-medium text-gray-800">${productLabel}</td>
-                    <td class="p-2 text-xs text-gray-700">${item.selectedProjects || '-'}</td>
-                    <td class="p-2 text-xs text-center text-gray-700">${item.quantity}</td>
+                    <td class="p-2 text-xs text-gray-700 ${projectsClass}">${projectsDisplay}</td>
+                    <td class="p-2 text-xs text-center text-gray-700 ${qtyClass}">${item.quantity}</td>
                     <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplay}</td>
@@ -946,7 +965,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Generuj HTML do wydruku
             const printOrderItems = order.items || order.OrderItem || [];
-            const printShowSourceBadge = hasMixedSources(printOrderItems);
+            const printShowSourceBadge = true; // zawsze pokazuj źródło (PM/KI) na wydruku
             
             // Grupowanie według ścieżek produkcyjnych dla zlecenia produkcyjnego
             let groupedItems;
@@ -977,6 +996,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     const locationDisplay = item.locationName || '-';
                     const notesDisplay = item.productionNotes || '';
                     
+                    // Formatuj projekty z ilościami
+                    let projectsDisplay = item.selectedProjects || '-';
+                    if (item.projectQuantities) {
+                        try {
+                            const pq = typeof item.projectQuantities === 'string' 
+                                ? JSON.parse(item.projectQuantities) 
+                                : item.projectQuantities;
+                            if (Array.isArray(pq) && pq.length > 0) {
+                                projectsDisplay = pq.map(p => `${p.projectNo}: ${p.qty}`).join(', ');
+                            }
+                        } catch (e) { /* ignore parse errors */ }
+                    }
+                    
+                    // Oznaczenie źródła prawdy na wydruku
+                    const isPerProjectSource = item.quantitySource === 'perProject';
+                    const qtyStyle = isPerProjectSource ? '' : 'font-weight: bold; text-decoration: underline; color: #1d4ed8;';
+                    const projectsStyle = isPerProjectSource ? 'font-weight: bold; text-decoration: underline; color: #1d4ed8;' : '';
+                    
                     const priceColumns = includePrices ? `
                         <td style="text-align: right; font-size: 9px;">${(item.unitPrice || 0).toFixed(2)} zł</td>
                         <td style="text-align: right; font-size: 9px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>` : '';
@@ -987,8 +1024,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     return `
                     <tr>
                         <td style="font-size: 9px;">${productLabel}</td>
-                        <td style="font-size: 9px;">${item.selectedProjects || '-'}</td>
-                        <td style="text-align: center; font-size: 9px;">${item.quantity}</td>
+                        <td style="font-size: 9px; ${projectsStyle}">${projectsDisplay}</td>
+                        <td style="text-align: center; font-size: 9px; ${qtyStyle}">${item.quantity}</td>
                         ${priceColumns}
                         <td style="font-size: 9px;">${sourcePrefix}${locationDisplay}</td>
                         ${notesColumn}
@@ -1193,16 +1230,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 </button>
             ` : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusColors[fullOrder.status]}">${statusLabels[fullOrder.status]}</span>`;
 
-            const itemsHtml = (fullOrder.items || fullOrder.OrderItem || []).map(item => `
+            const itemsHtml = (fullOrder.items || fullOrder.OrderItem || []).map(item => {
+                // Formatuj projekty z ilościami
+                let projectsDisplay = item.selectedProjects || '-';
+                if (item.projectQuantities) {
+                    try {
+                        const pq = typeof item.projectQuantities === 'string' 
+                            ? JSON.parse(item.projectQuantities) 
+                            : item.projectQuantities;
+                        if (Array.isArray(pq) && pq.length > 0) {
+                            projectsDisplay = pq.map(p => `${p.projectNo}: ${p.qty}`).join(', ');
+                        }
+                    } catch (e) { /* ignore parse errors */ }
+                }
+                
+                return `
                 <tr class="border-b">
                     <td class="p-3">${item.Product?.identifier || item.Product?.name || '-'}</td>
-                    <td class="p-3">${item.selectedProjects || '-'}</td>
+                    <td class="p-3">${projectsDisplay}</td>
                     <td class="p-3 text-center">${item.quantity}</td>
                     <td class="p-3 text-right">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-3 text-right font-semibold">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
                     <td class="p-3">${item.locationName || '-'}</td>
                 </tr>
-            `).join('');
+            `}).join('');
 
             orderDetailsContent.innerHTML = `
                 <div class="space-y-6">

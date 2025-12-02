@@ -276,6 +276,7 @@ app.get('/api/orders/:id', async (req, res) => {
                     unitPrice,
                     selectedProjects,
                     projectQuantities,
+                    quantitySource,
                     totalQuantity,
                     source,
                     locationName,
@@ -3232,6 +3233,7 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
             unitPrice: parseFloat(item.unitPrice),
             selectedProjects: item.selectedProjects || null,
             projectQuantities: item.projectQuantities || null,
+            quantitySource: item.quantitySource || 'total',  // Źródło prawdy: 'total' lub 'perProject'
             totalQuantity: item.totalQuantity || item.quantity,
             source: item.source || 'MIEJSCOWOSCI',
             locationName: item.locationName || null,
@@ -4175,6 +4177,7 @@ app.get('/api/orders/:id', async (req, res) => {
                 unitPrice,
                 selectedProjects,
                 projectQuantities,
+                quantitySource,
                 totalQuantity,
                 source,
                 locationName,

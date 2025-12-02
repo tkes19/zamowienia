@@ -11,9 +11,14 @@
 7. [Magazyn (WAREHOUSE)](#7-magazyn-warehouse)
 8. [Administrator (ADMIN)](#8-administrator-admin)
 9. [Workflow zamówień](#9-workflow-zamówień)
-10. [Przypisywanie miejscowości](#10-przypisywanie-miejscowości)
-11. [Ulubione miejscowości](#11-ulubione-miejscowości)
-12. [FAQ](#12-faq)
+10. [Panel Produkcyjny](#10-panel-produkcyjny)
+    - [Operator Produkcji](#101-operator-produkcji)
+    - [Kierownik Produkcji](#102-kierownik-produkcji)
+    - [Administrator Produkcji](#103-administrator-produkcji)
+    - [Dział Graficzny / Panel grafika](#104-dział-graficzny--panel-grafika)
+11. [Przypisywanie miejscowości](#11-przypisywanie-miejscowości)
+12. [Ulubione miejscowości](#12-ulubione-miejscowości)
+13. [FAQ](#13-faq)
 
 ---
 
@@ -44,20 +49,24 @@ System zamówień służy do obsługi sprzedaży pamiątek i gadżetów w firmie
 | `ADMIN` | Administrator – pełny dostęp |
 | `SALES_REP` | Handlowiec terenowy |
 | `SALES_DEPT` | Dział sprzedaży (biuro) |
-| `PRODUCTION` | Dział produkcji |
+| `PRODUCTION_MANAGER` | Kierownik produkcji – zarządzanie produkcją |
+| `OPERATOR` | Operator produkcyjny – realizacja zadań |
+| `PRODUCTION` | Dział produkcji (legacy) |
 | `WAREHOUSE` | Magazyn / wysyłka |
 | `GRAPHICS` | Dział graficzny |
 | `CLIENT` | Klient zewnętrzny |
 
 ### 2.2. Uprawnienia do widoków
 
-| Rola | Formularz | Moi klienci | Zamówienia | Panel admina |
-|------|-----------|-------------|------------|--------------|
-| ADMIN | Pełny | Wszyscy | Wszystkie | Pełny |
-| SALES_REP | Pełny | Tylko swoi | Tylko swoje | Brak |
-| SALES_DEPT | Podgląd | Wszyscy | Wszystkie | Częściowy |
-| PRODUCTION | Podgląd | Brak | W produkcji | Brak |
-| WAREHOUSE | Podgląd | Brak | Gotowe/wysłane | Brak |
+| Rola | Formularz | Moi klienci | Zamówienia | Panel admina | Panel produkcyjny |
+|------|-----------|-------------|------------|--------------|------------------|
+| ADMIN | Pełny | Wszyscy | Wszystkie | Pełny | Pełny |
+| SALES_REP | Pełny | Tylko swoi | Tylko swoje | Brak | Brak |
+| SALES_DEPT | Podgląd | Wszyscy | Wszystkie | Częściowy | Podgląd |
+| PRODUCTION_MANAGER | Podgląd | Brak | W produkcji | Częściowy | Pełny |
+| OPERATOR | Brak | Brak | Swoje zadania | Brak | Pełny |
+| PRODUCTION | Podgląd | Brak | W produkcji | Brak | Podgląd |
+| WAREHOUSE | Podgląd | Brak | Gotowe/wysłane | Brak | Podgląd |
 
 ### 2.3. Uprawnienia do zamówień
 
@@ -66,6 +75,8 @@ System zamówień służy do obsługi sprzedaży pamiątek i gadżetów w firmie
 | ADMIN | Tak | Wszystkie | Wszystkie | Tak |
 | SALES_REP | Tak | Własne | PENDING→CANCELLED | Tylko PENDING |
 | SALES_DEPT | Nie | Wszystkie | Wiele przejść | Tak |
+| PRODUCTION_MANAGER | Nie | W produkcji | IN_PRODUCTION→READY | Nie |
+| OPERATOR | Nie | Swoje zadania | Krok po kroku | Nie |
 | PRODUCTION | Nie | Swoje etapy | IN_PRODUCTION→READY | Nie |
 | WAREHOUSE | Nie | READY/SHIPPED | READY→SHIPPED | Nie |
 
@@ -246,7 +257,279 @@ SALES_DEPT potwierdza → DELIVERED
 
 ---
 
-## 10. Przypisywanie miejscowości
+## 10. Panel Produkcyjny
+
+Panel produkcyjny to nowoczesny system zarządzania produkcją (MES), który umożliwia śledzenie i kontrolowanie całego procesu produkcyjnego w czasie rzeczywistym. System integruje się z zamówieniami, automatycznie przekształcając je w zlecenia produkcyjne.
+
+### 10.1. Operator Produkcji
+
+#### 10.1.1. Zakres odpowiedzialności
+- Realizacja zadań produkcyjnych przypisanych do maszyny
+- Śledzenie postępu pracy i zgłaszanie problemów
+- Dokładne raportowanie ilości wyprodukowanych sztuk
+- Przestrzeganie ścieżek produkcyjnych i standardów jakości
+
+#### 10.1.2. Logowanie i interfejs
+1. Zaloguj się systemem używając swoich danych
+2. Przejdź do **Panel Produkcyjny** (dostępny w menu dla ról OPERATOR)
+3. System wyświetla kafelkowy widok zadań:
+   - **Zielone kafelki** – zadania aktywne
+   - **Niebieskie kafelki** – zadania oczekujące
+   - **Szare kafelki** – zadania zakończone
+
+#### 10.1.3. Podstawowy workflow
+
+**Rozpoczęcie zadania:**
+1. Znajdź kafelek z zadaniem (numer zlecenia, produkt, ilość)
+2. Sprawdź szczegóły: aktualny krok, wymagane materiały
+3. Kliknij przycisk **"▶️ Rozpocznij"**
+4. System rozpoczyna pomiar czasu i aktualizuje status
+
+**Praca nad zadaniem:**
+- Postęp jest widoczny na pasku postępu
+- System automatycznie aktualizuje statusy w czasie rzeczywistym
+- Możesz zgłosić problem przyciskiem **"⚠️ Zgłoś problem"**
+
+**Zakończenie zadania:**
+1. Po wykonaniu pracy kliknij **"✅ Zakończ"**
+2. Wpisz rzeczywistą ilość wyprodukowanych sztuk
+3. Dodaj uwagi dotyczące jakości (opcjonalnie)
+4. System automatycznie przejdzie do następnego kroku lub zadania
+
+#### 10.1.4. Obsługa problemów
+
+**Brak materiału:**
+1. Kliknij **"⚠️ Brak materiału"**
+2. Wybierz brakujący materiał z listy
+3. System wstrzyma zadanie i powiadomi kierownika
+
+**Awaria maszyny:**
+1. Kliknij **"🔧 Awaria maszyny"**
+2. Opisz problem krótko
+3. System oznaczy maszynę jako niedostępną
+
+**Inne problemy:**
+1. Kliknij **"❓ Inny problem"**
+2. Wpisz szczegółowy opis
+3. Dołącz zdjęcie jeśli to możliwe
+
+#### 10.1.5. Przerwy techniczne
+- Kliknij **"Przerwa techniczna"** w nagłówku
+- System wstrzyma wszystkie aktywne zadania
+- Powrót do pracy po kliknięciu **"Wznów pracę"**
+
+### 10.2. Kierownik Produkcji
+
+#### 10.2.1. Zakres odpowiedzialności
+- Planowanie i harmonogramowanie produkcji
+- Zarządzanie pokojami i maszynami produkcyjnymi
+- Tworzenie i aktualizacja ścieżek produkcyjnych
+- Monitorowanie efektywności i rozwiązywanie problemów
+- Raportowanie wyników produkcyjnych
+
+#### 10.2.2. Dostępne funkcje
+
+**Panel Produkcyjny:**
+- Podgląd wszystkich aktywnych zleceń
+- Real-time monitoring postępu prac
+- Filtrowanie po pokojach, maszynach, statusach
+- Eksport raportów dziennych
+
+**Panel Administratora → Produkcja:**
+- Zarządzanie pokojami produkcyjnymi
+- Konfiguracja maszyn i ich statusów
+- Tworzenie ścieżek produkcyjnych
+- Przypisywanie operatorów do maszyn
+
+#### 10.2.3. Planowanie produkcji
+
+**Tworzenie zlecenia z zamówienia:**
+1. Przejdź do **Zamówienia** → wybierz zamówienie
+2. Kliknij **"Utwórz zlecenie produkcyjne"**
+3. System automatycznie przypisze ścieżkę produkcyjną
+4. Sprawdź i dostosuj harmonogram
+5. Potwierdź utworzenie zlecenia
+
+**Harmonogramowanie zadań:**
+1. W panelu produkcji wybierz widok **"Harmonogram"**
+2. Przeciągnij zadania między maszynami (drag & drop)
+3. Ustaw priorytety i terminy
+4. System automatycznie przeliczy czasy realizacji
+
+#### 10.2.4. Zarządzanie zasobami
+
+**Pokoje produkcyjne:**
+1. Panel Admin → Produkcja → **"📍 Pokoje"**
+2. Dodaj nowy pokój: nazwa, kod, powierzchnia, opis
+3. Przypisz nadzorowcę pokoju
+4. Aktywuj/deaktywuj pokój
+
+**Maszyny:**
+1. Panel Admin → Produkcja → **"🛠️ Maszyny"**
+2. Dodaj maszynę: nazwa, typ, producent, model
+3. Przypisz do pokoju produkcyjnego
+4. Ustaw harmonogram konserwacji
+5. Zdefiniuj możliwości (materiały, maksymalny rozmiar)
+
+**Ścieżki produkcyjne:**
+1. Panel Admin → Produkcja → **"🗺️ Ścieżki"**
+2. Wybierz produkt i utwórz ścieżkę
+3. Dodaj kolejne kroki:
+   - Operacja (np. grawerowanie, cięcie)
+   - Maszyna lub pokój
+   - Szacowany czas
+4. Zapisz i aktywuj ścieżkę
+
+#### 10.2.5. Monitoring i raportowanie
+
+**Podgląd w czasie rzeczywistym:**
+- Statusy wszystkich maszyn i zadań
+- Postęp prac na poszczególnych etapach
+- Wydajność operatorów
+- Wykrywanie wąskich gardeł
+
+**Raporty dzienne:**
+1. Panel Produkcyjny → **"Raporty"**
+2. Wybierz okres i typ raportu
+3. Generuj PDF lub Excel
+4. Dostępne raporty:
+   - Produkcja dzienna
+   - Wydajność maszyn
+   - Czasy realizacji zleceń
+   - Jakość produkcji
+
+### 10.3. Administrator Produkcji
+
+#### 10.3.1. Zakres odpowiedzialności
+- Pełna konfiguracja systemu produkcyjnego
+- Zarządzanie użytkownikami i uprawnieniami produkcyjnymi
+- Integracja systemu produkcyjnego z zamówieniami
+- Optymalizacja procesów i rozwiązywanie problemów technicznych
+- Archiwizacja danych i backup
+
+#### 10.3.2. Konfiguracja systemu
+
+**Użytkownicy produkcyjni:**
+1. Panel Admin → **"Użytkownicy"**
+2. Dodaj użytkownika z rolą **OPERATOR** lub **PRODUCTION_MANAGER**
+3. Przypisz do odpowiednich pokojów/maszyn
+4. Ustaw uprawnienia dostępu
+
+**Integracja z zamówieniami:**
+1. Panel Admin → **"Ustawienia"** → **"Produkcja"**
+2. Skonfiguruj automatyczne tworzenie zleceń
+3. Ustaw reguły przypisywania ścieżek
+4. Włącz powiadomienia o problemach
+
+**Parametry systemowe:**
+- Częstotliwość aktualizacji WebSocket
+- Progi alertów (np. opóźnienia > 30 minut)
+- Formaty numerów zleceń produkcyjnych
+- Zasady archiwizacji danych
+
+#### 10.3.3. Zaawansowane funkcje
+
+**Szablony ścieżek:**
+- Tworzenie szablonów dla typowych produktów
+- Klonowanie ścieżek dla podobnych produktów
+- Wersjonowanie ścieżek produkcyjnych
+
+**Automatyzacja:**
+- Przypisywanie zadań do dostępnych maszyn
+- Automatyczne powiadamianie o problemach
+- Generowanie sugerowanych harmonogramów
+
+**Integracje zewnętrzne:**
+- Systemy ERP (planowanie zasobów)
+- Systemy magazynowe (stan materiałów)
+- Systemy jakości (kontrola jakości)
+
+#### 10.3.4. Rozwiązywanie problemów
+
+**Diagnostyka systemu:**
+- Logi operacji produkcyjnych
+- Statystyki wydajności API
+- Status połączeń WebSocket
+- Monitorowanie obciążenia serwera
+
+**Typowe problemy:**
+1. **Brak synchronizacji statusów** – sprawdź WebSocket
+2. **Złe przypisanie zadań** – weryfikuj ścieżki produkcyjne
+3. **Operator nie widzi zadań** – sprawdź uprawnienia
+4. **Maszyna niedostępna** – zaktualizuj status w adminie
+
+---
+
+### 10.4. Dział Graficzny / Panel grafika
+
+#### 10.4.1. Zakres odpowiedzialności
+
+- Przyjmowanie zadań graficznych wynikających z zamówień.
+- Przygotowanie plików produkcyjnych (projekty PM/KI/PI/Ph).
+- Dopisanie numerów projektów i ścieżek plików dla produkcji.
+- Współpraca z handlowcem przy akceptacji projektów (jeśli jest wymagana).
+
+Panel grafika nie zastępuje programów typu Corel/Illustrator – jest
+"tablicą zadań" i miejscem na ustalenia między sprzedażą a produkcją.
+
+#### 10.4.2. Typy zleceń z punktu widzenia handlowca
+
+W systemie przewidziane są dwa główne typy zleceń związanych z grafiką:
+
+- **Produkty + projekty** – standardowe zamówienie produktów, w którym
+  część pozycji ma gotowe projekty, a część wymaga pracy działu graficznego.
+- **Tylko projekty** – osobne zamówienie na przygotowanie projektów, bez
+  natychmiastowego uruchamiania produkcji.
+
+Informacja o typie zlecenia i tym, czy projekty wymagają akceptacji,
+jest widoczna zarówno dla handlowca, jak i grafika.
+
+#### 10.4.3. Jak wygląda praca grafika w Panelu grafika
+
+1. Grafik widzi listę/kafelki **zadań graficznych** powiązanych z
+   zamówieniami (numer zamówienia, klient/miejscowość, produkt, ilość,
+   priorytet, planowana data wysyłki).
+2. Dla każdego zadania widoczny jest **status** (np. do zrobienia,
+   w trakcie, oczekuje na akceptację, gotowe do produkcji, do poprawy).
+3. W szczegółach zadania grafik może:
+   - podejrzeć uwagi z zamówienia,
+   - podlinkować odpowiednie projekty z galerii / QNAP,
+   - wpisać ścieżkę do plików produkcyjnych,
+   - odznaczyć checklistę (sprawdzone dane klienta, ilości, format,
+     warstwy i nazewnictwo plików).
+4. Po przygotowaniu plików grafik oznacza zadanie jako:
+   - **Gotowe do produkcji** – gdy akceptacja nie jest wymagana,
+   - **Oczekuje na akceptację** – gdy handlowiec/klient ma obejrzeć
+     projekt przed startem produkcji.
+
+W przypadku odrzucenia projektu przez handlowca zadanie wraca do kolumny
+"do poprawy" z komentarzem.
+
+#### 10.4.4. Rola handlowca w procesie akceptacji projektów
+
+Przy składaniu zamówienia handlowiec może zdecydować, czy chce **oglądać i
+zatwierdzać projekty**, czy wystarczy dokładny opis w zamówieniu.
+
+- Jeśli akceptacja **nie jest wymagana**:
+  - grafik po przygotowaniu plików oznacza zadania jako "gotowe do
+    produkcji";
+  - po zakończeniu wszystkich zadań grafika zamówienie może trafić od razu
+    do produkcji.
+- Jeśli akceptacja **jest wymagana**:
+  - po przygotowaniu projektu grafik ustawia status "oczekuje na
+    akceptację" i podaje ścieżkę do plików;
+  - handlowiec w szczegółach zamówienia widzi sekcję **"Projekty"** z
+    listą zadań, miniaturami/linkami i przyciskami **Zatwierdź** /
+    **Do poprawy**;
+  - po zatwierdzeniu wszystkich projektów zamówienie może być przekazane
+    do produkcji.
+
+Szczegółowe aspekty techniczne (tabele, API) opisane są w
+`docs/SPEC_PRODUCTION_PANEL.md`, sekcja 9.
+
+---
+
+## 11. Przypisywanie miejscowości
 
 ### 10.1. Dla administratora
 

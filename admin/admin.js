@@ -1430,7 +1430,7 @@ document.addEventListener('DOMContentLoaded', () => {
             detailsRow.className = 'bg-indigo-50 border-t-2 border-indigo-200 details-row';
 
             const orderItems = fullOrder.items || fullOrder.OrderItem || [];
-            const showSourceBadge = hasMixedSources(orderItems);
+            const showSourceBadge = true; // zawsze pokazuj źródło (PM/KI)
             
             const itemsHtml = orderItems.map(item => {
                 const identifier = item.Product?.identifier || '-';
@@ -1439,10 +1439,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sourceBadge = getSourceBadge(item.source, showSourceBadge);
                 const locationDisplay = item.locationName || '-';
                 const notesDisplay = item.productionNotes || '';
+                
+                // Formatuj projekty z ilościami
+                let projectsDisplay = item.selectedProjects || '-';
+                if (item.projectQuantities) {
+                    try {
+                        const pq = typeof item.projectQuantities === 'string' 
+                            ? JSON.parse(item.projectQuantities) 
+                            : item.projectQuantities;
+                        if (Array.isArray(pq) && pq.length > 0) {
+                            projectsDisplay = pq.map(p => `${p.projectNo}: ${p.qty}`).join(', ');
+                        }
+                    } catch (e) { /* ignore parse errors */ }
+                }
+                
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
                     <td class="p-2 text-xs font-medium text-gray-800">${productLabel}</td>
-                    <td class="p-2 text-xs text-gray-700">${item.selectedProjects || '-'}</td>
+                    <td class="p-2 text-xs text-gray-700">${projectsDisplay}</td>
                     <td class="p-2 text-xs text-center text-gray-700">${item.quantity}</td>
                     <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
@@ -1594,7 +1608,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const order = result.data;
 
             const printOrderItems = order.items || order.OrderItem || [];
-            const printShowSourceBadge = hasMixedSources(printOrderItems);
+            const printShowSourceBadge = true; // zawsze pokazuj źródło (PM/KI) na wydruku
             
             const itemsHtml = printOrderItems.map(item => {
                 const identifier = item.Product?.identifier || '-';
@@ -1603,7 +1617,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sourcePrefix = printShowSourceBadge && item.source ? `[${SOURCE_LABELS[item.source] || item.source}] ` : '';
                 const locationDisplay = item.locationName || '-';
                 const notesDisplay = item.productionNotes || '';
-                return `<tr><td style="font-size:8px;">${productLabel}</td><td style="font-size:8px;">${item.selectedProjects || '-'}</td><td style="text-align:center;font-size:8px;">${item.quantity}</td><td style="text-align:right;font-size:8px;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align:right;font-size:8px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td style="font-size:8px;">${sourcePrefix}${locationDisplay}</td><td style="font-size:7px;font-style:italic;color:#666;">${notesDisplay}</td></tr>`;
+                
+                // Formatuj projekty z ilościami
+                let projectsDisplay = item.selectedProjects || '-';
+                if (item.projectQuantities) {
+                    try {
+                        const pq = typeof item.projectQuantities === 'string' 
+                            ? JSON.parse(item.projectQuantities) 
+                            : item.projectQuantities;
+                        if (Array.isArray(pq) && pq.length > 0) {
+                            projectsDisplay = pq.map(p => `${p.projectNo}: ${p.qty}`).join(', ');
+                        }
+                    } catch (e) { /* ignore parse errors */ }
+                }
+                
+                return `<tr><td style="font-size:8px;">${productLabel}</td><td style="font-size:8px;">${projectsDisplay}</td><td style="text-align:center;font-size:8px;">${item.quantity}</td><td style="text-align:right;font-size:8px;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align:right;font-size:8px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td style="font-size:8px;">${sourcePrefix}${locationDisplay}</td><td style="font-size:7px;font-style:italic;color:#666;">${notesDisplay}</td></tr>`;
             }).join('');
 
             const createdDate = new Date(order.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -1695,11 +1723,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 const identifier = item.Product?.identifier || '-';
                 const productIndex = item.Product?.index || '-';
                 const productLabel = (productIndex && productIndex !== '-' && productIndex !== identifier) ? `${identifier} (${productIndex})` : identifier;
+                
+                // Formatuj projekty z ilościami
+                let projectsDisplay = item.selectedProjects || '-';
+                if (item.projectQuantities) {
+                    try {
+                        const pq = typeof item.projectQuantities === 'string' 
+                            ? JSON.parse(item.projectQuantities) 
+                            : item.projectQuantities;
+                        if (Array.isArray(pq) && pq.length > 0) {
+                            projectsDisplay = pq.map(p => `${p.projectNo}: ${p.qty}`).join(', ');
+                        }
+                    } catch (e) { /* ignore parse errors */ }
+                }
+                
                 return `
                 <tr class="border-b">
                     <td class="p-2">${itemIndex + 1}</td>
                     <td class="p-2">${productLabel}</td>
-                    <td class="p-2">${item.selectedProjects || '-'}</td>
+                    <td class="p-2">${projectsDisplay}</td>
                     <td class="p-2 text-center">${item.quantity}</td>
                     <td class="p-2 text-right">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-2 text-right">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
