@@ -298,7 +298,6 @@
             <span class="favorites-bar__label">⭐ Ulubione:</span>
             <div id="favorites-bar-items"></div>
           </div>
-          
           <div class="gallery-controls">
             <div id="gallery-controls-city">
               <label class="field field--gallery city-field-with-favorite">
@@ -344,6 +343,17 @@
                   <input type="checkbox" id="gallery-lock-product" />
                   <span class="gallery-lock__text">Nie zmieniaj wybranego produktu przy zmianie miejscowości ani trybu</span>
                 </label>
+                <span class="product-sort-controls">
+                  <span class="product-sort-controls__label">Sortowanie:</span>
+                  <label class="product-sort-controls__item">
+                    <input type="checkbox" id="sort-new-first" />
+                    <span>Nowości</span>
+                  </label>
+                  <label class="product-sort-controls__item">
+                    <input type="checkbox" id="sort-available-first" />
+                    <span>Dostępne</span>
+                  </label>
+                </span>
               </span>
               <select id="gallery-product" class="field__input" aria-label="Wybierz produkt" disabled>
                 <option value="">Wybierz miejscowość</option>

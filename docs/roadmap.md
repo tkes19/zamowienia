@@ -74,6 +74,7 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 - [ ] Statystyki wykorzystania przypisań
 - [ ] Historia zmian w UI admina
 - [ ] Powiadomienia email przy zmianie statusu
+ - [x] Mapowanie projektów galerii na produkty (rodziny produktów + panel admina) ✅ 2025-12-02
 
 #### 🏭 Panel Produkcyjny (v2.0.0)
 - [ ] **Faza 1: Fundamenty produkcyjne**
@@ -181,5 +182,5 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
 ---
 
-**Wersja dokumentu:** 3.0  
-**Data aktualizacji:** 2025-12-01
+**Wersja dokumentu:** 3.1  
+**Data aktualizacji:** 2025-12-02

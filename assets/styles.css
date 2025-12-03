@@ -650,6 +650,43 @@ header h1 {
   user-select: none;
 }
 
+/* Dodatkowe, dyskretne kontrolki sortowania produktów w galerii */
+.product-sort-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.product-sort-controls__label {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+
+.product-sort-controls__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.product-sort-controls__item input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+}
+
+@media (max-width: 720px) {
+  .field__label--inline .product-sort-controls {
+    margin-left: 0;
+    margin-top: 0.25rem;
+    flex-wrap: wrap;
+  }
+}
+
 .gallery-preview {
   display: flex;
   flex-direction: column;

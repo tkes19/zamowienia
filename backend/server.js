@@ -1060,7 +1060,18 @@ async function enrichGalleryProductsData(galleryData) {
         if (productIdSet.size) {
             const { data: products, error: productsError } = await supabase
                 .from('Product')
-                .select('id, identifier, index')
+                .select(`
+                    id,
+                    identifier,
+                    index,
+                    new,
+                    availability,
+                    isActive,
+                    Inventory (
+                        stock,
+                        location
+                    )
+                `)
                 .in('id', Array.from(productIdSet));
 
             if (productsError) {
@@ -1081,10 +1092,22 @@ async function enrichGalleryProductsData(galleryData) {
                         .map((rel) => {
                             const prod = productsById[rel.productId];
                             if (!prod) return null;
+
+                            // Flagi wykorzystywane do sortowania listy produktów w galerii
+                            const isNew = prod.new === true;
+
+                            // Dostępność: produkt aktywny i ma dodatni stan magazynowy w lokalizacji MAIN
+                            const invArray = Array.isArray(prod.Inventory) ? prod.Inventory : [];
+                            const mainInventory = invArray.find((inv) => inv.location === 'MAIN') || null;
+                            const stock = Number(mainInventory?.stock || 0);
+                            const isAvailable = (prod.isActive !== false) && stock > 0;
+
                             return {
                                 id: prod.id,
                                 identifier: prod.identifier || null,
                                 index: prod.index || null,
+                                new: isNew,
+                                available: isAvailable,
                             };
                         })
                         .filter(Boolean);

@@ -66,6 +66,8 @@ const galleryLockCheckbox = document.getElementById('gallery-lock-product');
 const orderCustomerNameEl = document.getElementById('order-customer-name');
 const orderCustomerSearchInput = document.getElementById('order-customer-search');
 const orderCustomerSelectEl = document.getElementById('order-customer-select');
+const sortNewFirstCheckbox = document.getElementById('sort-new-first');
+const sortAvailableFirstCheckbox = document.getElementById('sort-available-first');
 
 // Elementy UI szablonów
 const saveTemplateBtn = document.getElementById('save-template-btn');
@@ -184,6 +186,146 @@ async function fetchGalleryJSON(url) {
 
 function formatGalleryProductLabel(slug = '') {
   return slug.replace(/_/g, ' ').toUpperCase();
+}
+
+async function sortGalleryProductOptions(selectEl) {
+  if (!selectEl) return;
+
+  const options = Array.from(selectEl.options || []);
+  if (options.length <= 1) return;
+
+  const currentValue = selectEl.value;
+  const [firstOption, ...rest] = options;
+
+  const newFirst = !!(typeof sortNewFirstCheckbox !== 'undefined' && sortNewFirstCheckbox && sortNewFirstCheckbox.checked);
+  const availableFirst = !!(typeof sortAvailableFirstCheckbox !== 'undefined' && sortAvailableFirstCheckbox && sortAvailableFirstCheckbox.checked);
+
+  const isLocked = !!(typeof galleryLockCheckbox !== 'undefined' && galleryLockCheckbox && galleryLockCheckbox.checked);
+
+  await ensureMasterProductsLoaded();
+
+  const getFlagsForOption = (opt) => {
+    // 1) Spróbuj dopasować po ID produktu z bazy
+    if (Array.isArray(masterProductsCache) && masterProductsCache.length) {
+      const productIdAttr = opt.getAttribute('data-product-id');
+      if (productIdAttr) {
+        const productById = masterProductsCache.find((p) => String(p._id) === String(productIdAttr));
+        if (productById) {
+          const isNew = !!productById.new;
+          const isAvailable = (productById.isActive !== false) && Number(productById.stock || 0) > 0;
+          return { isNew, isAvailable };
+        }
+      }
+
+      // 2) Spróbuj dopasować po identyfikatorze / indeksie
+      const identifierAttr = opt.getAttribute('data-product-identifier') || '';
+      const indexAttr = opt.getAttribute('data-product-index') || '';
+      const idNorm = normalizeForMatching(identifierAttr || indexAttr);
+      if (idNorm) {
+        const productByCode = masterProductsCache.find((p) => {
+          const nameNorm = normalizeForMatching(p.name);
+          const pcIdNorm = normalizeForMatching(p.pc_id);
+          return (nameNorm && nameNorm === idNorm) || (pcIdNorm && pcIdNorm === idNorm);
+        });
+        if (productByCode) {
+          const isNew = !!productByCode.new;
+          const isAvailable = (productByCode.isActive !== false) && Number(productByCode.stock || 0) > 0;
+          return { isNew, isAvailable };
+        }
+      }
+    }
+
+    // 3) Fallback na flagi zapisane w atrybutach data-*, jeżeli są dostępne
+    const hasDataFlags = opt.hasAttribute('data-product-new') || opt.hasAttribute('data-product-available');
+    if (hasDataFlags) {
+      const isNew = (opt.getAttribute('data-product-new') || 'false') === 'true';
+      const isAvailable = (opt.getAttribute('data-product-available') || 'false') === 'true';
+      return { isNew, isAvailable };
+    }
+
+    // 4) Ostateczny fallback – dopasowanie po samej etykiecie opcji
+    const label = (opt.text || '').trim();
+    const { isNew, isAvailable } = getMasterFlagsForLabel(label);
+    return { isNew, isAvailable };
+  };
+
+  const computePriority = (isNew, isAvailable) => {
+    if (newFirst && availableFirst) {
+      if (isNew && isAvailable) return 0;            // Nowy + dostępny
+      if (isNew && !isAvailable) return 1;          // Tylko nowy
+      if (!isNew && isAvailable) return 2;          // Tylko dostępny
+      return 3;                                     // Reszta
+    }
+
+    if (newFirst && isNew) return 0;
+    if (availableFirst && isAvailable) return 0;
+
+    return 1;
+  };
+
+  rest.sort((a, b) => {
+    const { isNew: aNew, isAvailable: aAvail } = getFlagsForOption(a);
+    const { isNew: bNew, isAvailable: bAvail } = getFlagsForOption(b);
+
+    const aPri = computePriority(aNew, aAvail);
+    const bPri = computePriority(bNew, bAvail);
+
+    if (aPri !== bPri) return aPri - bPri;
+
+    return (a.text || '').localeCompare(b.text || '', 'pl', { sensitivity: 'accent' });
+  });
+
+  if (newFirst || availableFirst) {
+    try {
+      const sample = rest.slice(0, 10).map((opt) => {
+        const { isNew, isAvailable } = getFlagsForOption(opt);
+        return {
+          text: opt.text || '',
+          value: opt.value,
+          new: String(isNew),
+          available: String(isAvailable),
+        };
+      });
+      console.log('[DEBUG] sortGalleryProductOptions', { newFirst, availableFirst, isLocked, sample });
+    } catch (e) {
+      // Ignoruj ewentualne błędy logowania
+    }
+  }
+
+  selectEl.innerHTML = '';
+  selectEl.append(firstOption, ...rest);
+
+  // Jeśli blokada produktu jest włączona, nie zmieniaj aktualnego wyboru
+  if (isLocked) {
+    if (currentValue) {
+      selectEl.value = currentValue;
+    }
+    return;
+  }
+
+  // Gdy aktywne są checkboxy sortowania, ustaw jako wybrany pierwszy element o najwyższym priorytecie
+  if (newFirst || availableFirst) {
+    let firstPriorityZeroValue = null;
+
+    for (const opt of rest) {
+      const { isNew, isAvailable } = getFlagsForOption(opt);
+      const pri = computePriority(isNew, isAvailable);
+      if (pri === 0) {
+        firstPriorityZeroValue = opt.value;
+        break;
+      }
+    }
+
+    if (firstPriorityZeroValue) {
+      selectEl.value = firstPriorityZeroValue;
+    } else if (currentValue) {
+      // Brak produktów spełniających priorytet – zachowaj dotychczasowy wybór
+      selectEl.value = currentValue;
+    }
+  } else if (currentValue) {
+    // Bez aktywnych checkboxów – po prostu zachowaj dotychczasowy wybór
+    selectEl.value = currentValue;
+  }
 }
 
 // Funkcja pomocnicza do pobierania roli użytkownika
@@ -363,6 +505,8 @@ async function loadGalleryProductsForObject(salesperson, object) {
   }
 
   try {
+    await ensureMasterProductsLoaded();
+
     // Użyj lastLockedProductSlug jeśli checkbox jest zaznaczony
     const lockedSlug = galleryLockCheckbox?.checked ? lastLockedProductSlug : '';
     
@@ -393,14 +537,16 @@ async function loadGalleryProductsForObject(salesperson, object) {
           const id = prod.id || prod.productId || '';
           const identifier = prod.identifier || prod.index || displayName;
           const label = displayName ? `${identifier} (${displayName})` : identifier;
+          const isNew = prod.new === true;
+          const isAvailable = prod.available === true;
           productOptions.push(
-            `<option value="${slug}" data-project-slug="${slug}" data-product-id="${id}" data-product-identifier="${identifier}" data-product-index="${prod.index || ''}">${label}</option>`
+            `<option value="${slug}" data-project-slug="${slug}" data-product-id="${id}" data-product-identifier="${identifier}" data-product-index="${prod.index || ''}" data-product-new="${isNew ? 'true' : 'false'}" data-product-available="${isAvailable ? 'true' : 'false'}">${label}</option>`
           );
         });
       } else {
         const label = displayName;
         productOptions.push(
-          `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+          `<option value="${slug}" data-project-slug="${slug}" data-product-new="false" data-product-available="false">${label}</option>`
         );
       }
     });
@@ -409,8 +555,9 @@ async function loadGalleryProductsForObject(salesperson, object) {
     const unmappedSlugs = galleryProducts.filter((slug) => typeof slug === 'string' && !usedSlugs.has(slug));
     unmappedSlugs.forEach((slug) => {
       const label = formatGalleryProductLabel(slug);
+      const { isNew, isAvailable } = getMasterFlagsForLabel(label);
       productOptions.push(
-        `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+        `<option value="${slug}" data-project-slug="${slug}" data-product-new="${isNew ? 'true' : 'false'}" data-product-available="${isAvailable ? 'true' : 'false'}">${label}</option>`
       );
     });
 
@@ -431,6 +578,7 @@ async function loadGalleryProductsForObject(salesperson, object) {
     }
 
     galleryProductSelect.innerHTML = productOptions.join('');
+    sortGalleryProductOptions(galleryProductSelect);
     updateProjectFilterAvailability();
 
     setGalleryError(null);
@@ -506,14 +654,16 @@ async function loadGalleryProducts(city) {
           const id = prod.id || prod.productId || '';
           const identifier = prod.identifier || prod.index || displayName;
           const label = displayName ? `${identifier} (${displayName})` : identifier;
+          const isNew = prod.new === true;
+          const isAvailable = prod.available === true;
           productOptions.push(
-            `<option value="${slug}" data-project-slug="${slug}" data-product-id="${id}" data-product-identifier="${identifier}" data-product-index="${prod.index || ''}">${label}</option>`
+            `<option value="${slug}" data-project-slug="${slug}" data-product-id="${id}" data-product-identifier="${identifier}" data-product-index="${prod.index || ''}" data-product-new="${isNew ? 'true' : 'false'}" data-product-available="${isAvailable ? 'true' : 'false'}">${label}</option>`
           );
         });
       } else {
         const label = displayName;
         productOptions.push(
-          `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+          `<option value="${slug}" data-project-slug="${slug}" data-product-new="false" data-product-available="false">${label}</option>`
         );
       }
     });
@@ -522,8 +672,9 @@ async function loadGalleryProducts(city) {
     const unmappedSlugs = galleryProducts.filter((slug) => typeof slug === 'string' && !usedSlugs.has(slug));
     unmappedSlugs.forEach((slug) => {
       const label = formatGalleryProductLabel(slug);
+      const { isNew, isAvailable } = getMasterFlagsForLabel(label);
       productOptions.push(
-        `<option value="${slug}" data-project-slug="${slug}">${label}</option>`
+        `<option value="${slug}" data-project-slug="${slug}" data-product-new="${isNew ? 'true' : 'false'}" data-product-available="${isAvailable ? 'true' : 'false'}">${label}</option>`
       );
     });
 
@@ -544,6 +695,7 @@ async function loadGalleryProducts(city) {
     }
 
     galleryProductSelect.innerHTML = productOptions.join('');
+    sortGalleryProductOptions(galleryProductSelect);
     updateProjectFilterAvailability();
 
     setGalleryError(null);
@@ -608,14 +760,44 @@ function renderGalleryPreview() {
 }
 
 function findGallerySlugsForQuery(query) {
-  if (!galleryProducts.length || !query) return [];
+  if (!galleryProductSelect || !query) return [];
+
   const searchTerms = tokenizeQuery(query);
   if (!searchTerms.length) return [];
 
-  return galleryProducts.filter((slug) => {
-    const label = formatGalleryProductLabel(slug);
-    return matchesTermsInField(label, searchTerms);
+  const options = Array.from(galleryProductSelect.options || []).filter(
+    (opt) => opt.value // pomijamy placeholder "Wybierz produkt"
+  );
+
+  const matches = [];
+
+  for (const opt of options) {
+    const label = (opt.text || '').trim();
+    if (!label) continue;
+
+    if (matchesTermsInField(label, searchTerms)) {
+      const norm = normalizeForMatching(label);
+      const tokens = norm ? norm.split(' ').filter(Boolean) : [];
+      matches.push({
+        slug: opt.value,
+        label,
+        tokenCount: tokens.length || 999,
+        length: label.length,
+      });
+    }
+  }
+
+  if (!matches.length) return [];
+
+  // Preferuj najbardziej "konkretny" wynik – najmniej słów, potem najkrótszą etykietę
+  matches.sort((a, b) => {
+    if (a.tokenCount !== b.tokenCount) return a.tokenCount - b.tokenCount;
+    return a.length - b.length;
   });
+
+  // Zwracamy tylko najlepiej pasujący slug – dzięki temu zapytania typu "bre scy"
+  // wybiorą "BRELOK SCYZORYK", a nie dłuższe warianty z dodatkowymi słowami.
+  return [matches[0].slug];
 }
 
 function findGallerySlugsByName(name) {
@@ -1693,6 +1875,66 @@ async function fetchProducts(searchQuery) {
     : (json.data?.products || json.products || json.data || []);
 
   return Array.isArray(rawProducts) ? rawProducts : [];
+}
+
+let masterProductsCache = null;
+
+async function ensureMasterProductsLoaded() {
+  if (Array.isArray(masterProductsCache)) {
+    return masterProductsCache;
+  }
+  try {
+    const products = await fetchProducts();
+    masterProductsCache = Array.isArray(products) ? products : [];
+  } catch (error) {
+    console.error('Błąd ładowania pełnej listy produktów do sortowania galerii:', error);
+    masterProductsCache = [];
+  }
+  return masterProductsCache;
+}
+
+function getMasterFlagsForLabel(label) {
+  if (!Array.isArray(masterProductsCache) || !masterProductsCache.length) {
+    return { isNew: false, isAvailable: false };
+  }
+
+  const targetNorm = normalizeForMatching(label);
+  if (!targetNorm) {
+    return { isNew: false, isAvailable: false };
+  }
+
+  const targetTokens = targetNorm.split(' ').filter(Boolean);
+  let fallbackMatch = null;
+
+  for (const product of masterProductsCache) {
+    if (!product) continue;
+    const nameNorm = normalizeForMatching(product.name);
+    if (!nameNorm) continue;
+
+    // 1) Dokładne dopasowanie po znormalizowanej nazwie
+    if (nameNorm === targetNorm) {
+      const isNew = !!product.new;
+      const isAvailable = (product.isActive !== false) && Number(product.stock || 0) > 0;
+      return { isNew, isAvailable };
+    }
+
+    // 2) Luźniejsze dopasowanie – wszystkie tokeny nazwy produktu zawierają się w etykiecie
+    if (!fallbackMatch && targetTokens.length) {
+      const nameTokens = nameNorm.split(' ').filter(Boolean);
+      const allTokensInTarget = nameTokens.every((t) => targetTokens.includes(t));
+      if (allTokensInTarget) {
+        fallbackMatch = product;
+      }
+    }
+  }
+
+  if (fallbackMatch) {
+    const isNew = !!fallbackMatch.new;
+    const isAvailable = (fallbackMatch.isActive !== false) && Number(fallbackMatch.stock || 0) > 0;
+    return { isNew, isAvailable };
+  }
+
+  return { isNew: false, isAvailable: false };
 }
 
 async function searchProducts(event) {
@@ -3111,6 +3353,19 @@ function initialize() {
     });
   }
 
+  // Checkboxy sortowania listy produktów galerii
+  if (sortNewFirstCheckbox) {
+    sortNewFirstCheckbox.addEventListener('change', () => {
+      sortGalleryProductOptions(galleryProductSelect);
+    });
+  }
+
+  if (sortAvailableFirstCheckbox) {
+    sortAvailableFirstCheckbox.addEventListener('change', () => {
+      sortGalleryProductOptions(galleryProductSelect);
+    });
+  }
+
   // Listener dla checkboxa "pamiętaj produkt"
   if (galleryLockCheckbox) {
     galleryLockCheckbox.addEventListener('change', () => {
@@ -4201,7 +4456,8 @@ async function loadUserFavorites() {
       userFavorites = (result.data || []).map(f => ({
         id: f.id,
         type: f.type,
-        itemId: f.item_id,
+        // Normalizujemy nazwę pola na item_id, bo cała reszta kodu (isFavorite, renderFavoritesBar itd.) tego oczekuje
+        item_id: f.item_id || f.itemId,
         name: f.displayName
       }));
       updateFavoritesUI();
@@ -4253,8 +4509,9 @@ async function addToFavorites(type, itemId, name) {
       userFavorites.push({
         id: newFavorite.id,
         type: newFavorite.type,
-        item_id: newFavorite.itemId,
-        name: newFavorite.displayName
+        // Backend może zwrócić item_id albo itemId – obsłuż oba warianty, a w ostateczności użyj itemId przekazanego w żądaniu
+        item_id: newFavorite.item_id || newFavorite.itemId || itemId,
+        name: newFavorite.displayName || name
       });
       updateFavoritesUI();
       setStatus('Dodano do ulubionych', 'success');

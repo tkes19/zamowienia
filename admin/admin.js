@@ -1962,6 +1962,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadFolderAccess();
             } else if (viewName === 'city-access') {
                 loadCityAccess();
+            } else if (viewName === 'product-mapping') {
+                loadProductMappingProjects();
             }
         });
     });
@@ -3146,6 +3148,360 @@ document.addEventListener('DOMContentLoaded', () => {
             adminLoadingHistory.delete(orderId);
         }
     };
+    // ============================================
+    // MODUŁ: MAPOWANIE PRODUKTÓW (GalleryProject → Product)
+    // ============================================
+
+    let pmAllProjects = [];
+    let pmFilteredProjects = [];
+    let pmSelectedProjectId = null;
+    let pmAllDbProducts = [];
+
+    const pmProjectsList = document.getElementById('product-mapping-projects-list');
+    const pmSearch = document.getElementById('product-mapping-search');
+    const pmRefreshBtn = document.getElementById('refresh-product-mapping-btn');
+    const pmSelectedProjectName = document.getElementById('pm-selected-project-name');
+    const pmProjectDetails = document.getElementById('pm-project-details');
+    const pmAddProductBtn = document.getElementById('pm-add-product-btn');
+    const pmStatsProjects = document.getElementById('pm-stats-projects');
+    const pmStatsMapped = document.getElementById('pm-stats-mapped');
+    const pmStatsUnmapped = document.getElementById('pm-stats-unmapped');
+
+    // Modal elements
+    const pmModal = document.getElementById('pm-add-product-modal');
+    const pmModalClose = document.getElementById('pm-modal-close');
+    const pmModalCancel = document.getElementById('pm-modal-cancel');
+    const pmModalSave = document.getElementById('pm-modal-save');
+    const pmModalProjectName = document.getElementById('pm-modal-project-name');
+    const pmModalProjectId = document.getElementById('pm-modal-project-id');
+    const pmProductSelect = document.getElementById('pm-product-select');
+    const pmProductSearchInput = document.getElementById('pm-product-search-input');
+
+    // Event listeners
+    if (pmRefreshBtn) pmRefreshBtn.addEventListener('click', loadProductMappingProjects);
+    if (pmSearch) pmSearch.addEventListener('input', filterProductMappingProjects);
+    if (pmAddProductBtn) pmAddProductBtn.addEventListener('click', openProductMappingModal);
+    if (pmModalClose) pmModalClose.addEventListener('click', closeProductMappingModal);
+    if (pmModalCancel) pmModalCancel.addEventListener('click', closeProductMappingModal);
+    if (pmModalSave) pmModalSave.addEventListener('click', handleProductMappingSave);
+    if (pmProductSearchInput) pmProductSearchInput.addEventListener('input', filterProductMappingSelect);
+
+    async function loadProductMappingProjects() {
+        if (!pmProjectsList) return;
+
+        pmProjectsList.innerHTML = `
+            <div class="p-8 text-center text-gray-400">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p>Ładowanie projektów...</p>
+            </div>
+        `;
+
+        try {
+            const response = await fetch('/api/admin/gallery-projects');
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                pmAllProjects = result.data || [];
+                pmFilteredProjects = [...pmAllProjects];
+                renderProductMappingProjects();
+                updateProductMappingStats();
+            } else {
+                throw new Error(result.message || 'Błąd pobierania projektów');
+            }
+
+            // Pobierz też listę wszystkich produktów z bazy (do modala)
+            await loadAllDbProducts();
+
+        } catch (error) {
+            console.error('Błąd ładowania projektów mapowania:', error);
+            pmProjectsList.innerHTML = `
+                <div class="p-8 text-center text-red-500">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                    <p>Nie udało się załadować projektów</p>
+                    <p class="text-sm text-gray-500">${error.message}</p>
+                </div>
+            `;
+        }
+    }
+
+    async function loadAllDbProducts() {
+        try {
+            const response = await fetch('/api/admin/products-with-stock');
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                pmAllDbProducts = (result.data || []).filter(p => p.isActive !== false);
+                populateProductMappingSelect();
+            }
+        } catch (error) {
+            console.error('Błąd ładowania produktów:', error);
+        }
+    }
+
+    function populateProductMappingSelect(filter = '') {
+        if (!pmProductSelect) return;
+
+        const normalizedFilter = filter.toLowerCase().trim();
+        const filtered = normalizedFilter
+            ? pmAllDbProducts.filter(p =>
+                (p.identifier || '').toLowerCase().includes(normalizedFilter) ||
+                (p.index || '').toLowerCase().includes(normalizedFilter)
+            )
+            : pmAllDbProducts;
+
+        pmProductSelect.innerHTML = '<option value="">-- Wybierz produkt --</option>';
+        filtered.slice(0, 100).forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.identifier || '(brak identyfikatora)'} (${p.index || '-'})`;
+            pmProductSelect.appendChild(opt);
+        });
+
+        if (filtered.length > 100) {
+            const opt = document.createElement('option');
+            opt.disabled = true;
+            opt.textContent = `... i ${filtered.length - 100} więcej (użyj wyszukiwania)`;
+            pmProductSelect.appendChild(opt);
+        }
+    }
+
+    function filterProductMappingSelect() {
+        const filter = pmProductSearchInput?.value || '';
+        populateProductMappingSelect(filter);
+    }
+
+    function filterProductMappingProjects() {
+        const search = (pmSearch?.value || '').toLowerCase().trim();
+        if (!search) {
+            pmFilteredProjects = [...pmAllProjects];
+        } else {
+            pmFilteredProjects = pmAllProjects.filter(p =>
+                (p.displayName || '').toLowerCase().includes(search) ||
+                (p.slug || '').toLowerCase().includes(search)
+            );
+        }
+        renderProductMappingProjects();
+    }
+
+    function updateProductMappingStats() {
+        const total = pmAllProjects.length;
+        const mapped = pmAllProjects.filter(p => p.productCount > 0).length;
+        const unmapped = total - mapped;
+
+        if (pmStatsProjects) pmStatsProjects.textContent = total;
+        if (pmStatsMapped) pmStatsMapped.textContent = mapped;
+        if (pmStatsUnmapped) pmStatsUnmapped.textContent = unmapped;
+    }
+
+    function renderProductMappingProjects() {
+        if (!pmProjectsList) return;
+
+        if (pmFilteredProjects.length === 0) {
+            pmProjectsList.innerHTML = `
+                <div class="p-8 text-center text-gray-400">
+                    <i class="fas fa-folder-open text-4xl mb-3"></i>
+                    <p>Brak projektów do wyświetlenia</p>
+                </div>
+            `;
+            return;
+        }
+
+        pmProjectsList.innerHTML = pmFilteredProjects.map(p => {
+            const isSelected = p.id === pmSelectedProjectId;
+            const hasMappings = p.productCount > 0;
+            return `
+                <div class="pm-project-item flex items-center justify-between px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${isSelected ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}"
+                     data-project-id="${p.id}">
+                    <div class="flex-1 min-w-0">
+                        <div class="font-medium text-gray-800 truncate">${p.displayName || p.slug}</div>
+                        <div class="text-xs text-gray-500 truncate">${p.slug}</div>
+                    </div>
+                    <div class="ml-3 flex items-center gap-2">
+                        <span class="px-2 py-0.5 text-xs rounded-full ${hasMappings ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
+                            ${p.productCount} ${p.productCount === 1 ? 'produkt' : 'produktów'}
+                        </span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Event listeners for project items
+        pmProjectsList.querySelectorAll('.pm-project-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const projectId = item.dataset.projectId;
+                selectProductMappingProject(projectId);
+            });
+        });
+    }
+
+    async function selectProductMappingProject(projectId) {
+        pmSelectedProjectId = projectId;
+        renderProductMappingProjects(); // Re-render to show selection
+
+        const project = pmAllProjects.find(p => p.id === projectId);
+        if (!project) return;
+
+        if (pmSelectedProjectName) pmSelectedProjectName.textContent = project.displayName || project.slug;
+        if (pmAddProductBtn) pmAddProductBtn.classList.remove('hidden');
+
+        if (pmProjectDetails) {
+            pmProjectDetails.innerHTML = `
+                <div class="flex items-center justify-center py-8">
+                    <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                </div>
+            `;
+        }
+
+        try {
+            const response = await fetch(`/api/admin/gallery-projects/${projectId}/products`);
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                renderProjectProducts(result.data || [], project);
+            } else {
+                throw new Error(result.message || 'Błąd pobierania produktów');
+            }
+        } catch (error) {
+            console.error('Błąd ładowania produktów projektu:', error);
+            if (pmProjectDetails) {
+                pmProjectDetails.innerHTML = `
+                    <div class="text-center text-red-500 py-8">
+                        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                        <p>Nie udało się załadować produktów</p>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    function renderProjectProducts(products, project) {
+        if (!pmProjectDetails) return;
+
+        if (products.length === 0) {
+            pmProjectDetails.innerHTML = `
+                <div class="flex flex-col items-center justify-center h-48 text-gray-400">
+                    <i class="fas fa-box-open text-4xl mb-3"></i>
+                    <p>Brak przypisanych produktów</p>
+                    <p class="text-sm mt-1">Kliknij "Dodaj produkt", aby przypisać produkty do tego projektu</p>
+                </div>
+            `;
+            return;
+        }
+
+        pmProjectDetails.innerHTML = `
+            <table class="w-full text-left">
+                <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider">
+                    <tr>
+                        <th class="p-3">Identyfikator</th>
+                        <th class="p-3">Indeks</th>
+                        <th class="p-3 text-right">Akcje</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-sm">
+                    ${products.map(p => `
+                        <tr class="hover:bg-gray-50">
+                            <td class="p-3 font-medium text-gray-800">${p.identifier || '-'}</td>
+                            <td class="p-3 text-gray-600">${p.index || '-'}</td>
+                            <td class="p-3 text-right">
+                                <button class="pm-remove-product text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                                        data-product-id="${p.productId}" title="Usuń przypisanie">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+
+        // Event listeners for remove buttons
+        pmProjectDetails.querySelectorAll('.pm-remove-product').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const productId = btn.dataset.productId;
+                if (confirm('Czy na pewno chcesz usunąć to przypisanie?')) {
+                    await removeProductFromProject(project.id, productId);
+                }
+            });
+        });
+    }
+
+    async function removeProductFromProject(projectId, productId) {
+        try {
+            const response = await fetch(`/api/admin/gallery-projects/${projectId}/products/${productId}`, {
+                method: 'DELETE'
+            });
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Przypisanie usunięte', 'success');
+                // Odśwież dane
+                await loadProductMappingProjects();
+                if (pmSelectedProjectId === projectId) {
+                    selectProductMappingProject(projectId);
+                }
+            } else {
+                throw new Error(result.message || 'Błąd usuwania');
+            }
+        } catch (error) {
+            console.error('Błąd usuwania przypisania:', error);
+            showAdminToast('Nie udało się usunąć przypisania: ' + error.message, 'error');
+        }
+    }
+
+    function openProductMappingModal() {
+        if (!pmModal || !pmSelectedProjectId) return;
+
+        const project = pmAllProjects.find(p => p.id === pmSelectedProjectId);
+        if (!project) return;
+
+        if (pmModalProjectName) pmModalProjectName.value = project.displayName || project.slug;
+        if (pmModalProjectId) pmModalProjectId.value = project.id;
+        if (pmProductSelect) pmProductSelect.value = '';
+        if (pmProductSearchInput) pmProductSearchInput.value = '';
+        populateProductMappingSelect();
+
+        pmModal.classList.remove('hidden');
+    }
+
+    function closeProductMappingModal() {
+        if (pmModal) pmModal.classList.add('hidden');
+    }
+
+    async function handleProductMappingSave() {
+        const projectId = pmModalProjectId?.value;
+        const productId = pmProductSelect?.value;
+
+        if (!projectId || !productId) {
+            showAdminToast('Wybierz produkt do przypisania', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/admin/gallery-projects/${projectId}/products`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ productId })
+            });
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Produkt przypisany do projektu', 'success');
+                closeProductMappingModal();
+                // Odśwież dane
+                await loadProductMappingProjects();
+                if (pmSelectedProjectId === projectId) {
+                    selectProductMappingProject(projectId);
+                }
+            } else {
+                throw new Error(result.message || 'Błąd przypisywania');
+            }
+        } catch (error) {
+            console.error('Błąd przypisywania produktu:', error);
+            showAdminToast('Nie udało się przypisać produktu: ' + error.message, 'error');
+        }
+    }
+
 });
 
 // Funkcja sprawdzająca uprawnienia użytkownika i dostosowująca UI
@@ -3163,6 +3519,16 @@ async function checkUserPermissionsAndAdaptUI() {
             const usersLink = document.querySelector('[data-view="users"]');
             const productsLink = document.querySelector('[data-view="products"]');
             const ordersLink = document.querySelector('[data-view="orders"]');
+            const productMappingLink = document.querySelector('[data-view="product-mapping"]');
+            
+            // Mapowanie produktów - tylko ADMIN
+            if (productMappingLink) {
+                if (userRole === 'ADMIN') {
+                    productMappingLink.style.display = 'flex';
+                } else {
+                    productMappingLink.style.display = 'none';
+                }
+            }
             
             // Miejscowości PM - dostęp dla ADMIN, SALES_DEPT, GRAPHICS
             if (cityAccessLink) {

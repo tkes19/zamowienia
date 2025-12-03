@@ -285,3 +285,49 @@ Jeśli potrzebujesz pełnych instrukcji wdrożenia (Railway, Netlify, Fly.io), s
 - **Fly.io** – frontend i backend w jednym miejscu, brak usypiania w darmowym tierze.
 
 W każdej opcji pamiętaj o ustawieniu zmiennych środowiskowych (`PORT`, `SMTP_*`) i aktualizacji adresu API we frontendzie.
+
+---
+
+## 14. Ostatnie zmiany (2025‑12)
+
+- **Źródło prawdy dla ilości (`quantitySource`)**
+  - Każda pozycja zamówienia zapisuje, skąd pochodzi ilość:
+    - `total` – użytkownik wprowadził **łączną ilość** (pole "Ilość"),
+    - `perProject` – użytkownik wprowadził **ilości na projekty** (pole "Ilości na proj.").
+  - W koszyku i w widoku zamówień graficznie wyróżniamy pole, które jest źródłem:
+    - niebieska ramka + tło dla źródła w koszyku,
+    - pogrubienie + podkreślenie kolumny w szczegółach zamówienia i na wydruku.
+
+- **Logika pól "Ilość" vs "Ilości na proj."**
+  - System rozpoznaje 3 tryby:
+    - tylko suma (`mode = total`) – rozkład wyliczany automatycznie,
+    - "po X" (`mode = perProject`) – np. `po 20`,
+    - lista (`mode = individual`) – np. `10,20,30`.
+  - Dodano wewnętrzne flagi:
+    - `qtyInputDirty` – użytkownik faktycznie edytował pole "Ilość",
+    - `qtyPerProjectDirty` – użytkownik faktycznie edytował pole "Ilości na proj.".
+  - Automatyczne przeliczenia:
+    - wejście TAB‑em do pola **bez edycji** nie uruchamia żadnych przeliczeń,
+    - jeśli lista ilości została **tylko automatycznie wyliczona z sumy**, źródłem pozostaje suma,
+    - dopiero ręczna edycja "Ilości na proj." zmienia źródło na `perProject`.
+
+- **Spójne oznaczenie źródła pochodzenia produktu (PM/KI)**
+  - W szczegółach zamówienia i na wydrukach **zawsze** pokazujemy badge:
+    - `PM` (miejscowości) – niebieski,
+    - `KI` (katalog indywidualny / klienci indywidualni) – zielony,
+    - inne typy (imienne / hasła / okolicznościowe) mają własne kolory.
+  - Badge pojawia się niezależnie od tego, czy zamówienie ma mieszane źródła, czy nie.
+
+- **Mapowanie projektów galerii na produkty**
+  - Nowy moduł admina "Mapowanie produktów" oparty o tabele `GalleryProject` i `GalleryProjectProduct`.
+  - Endpointy `api/gallery/products/*` wzbogacają odpowiedź o strukturę:
+    - `projects[]` (slug, `displayName`, powiązane produkty z bazy: `productId`, `identifier`, `index`).
+  - Formularz zamówień:
+    - lista produktów z galerii korzysta w pierwszej kolejności z mapowania (identyfikatory produktów + nazwa projektu),
+    - wyszukiwarka wyników potrafi dopasować wybrany produkt do konkretnego projektu,
+    - filtr "z projektem / bez projektu" uwzględnia zarówno nazwy z galerii, jak i mapowanie w bazie.
+
+- **Zmiany techniczne**
+  - Dodano migrację `supabase/migrations/20251201_add_quantity_source.sql` z kolumną `OrderItem.quantitySource text DEFAULT 'total'`.
+  - Backend (`server.js`) zapisuje i odczytuje `projectQuantities` i `quantitySource` oraz zwraca te pola w `/api/orders` i `/api/orders/:id`.
+  - Wyciszono większość logów `[DEBUG]` w `scripts/app.js` i `admin/admin.js`.

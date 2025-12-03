@@ -86,7 +86,23 @@ UserFavorites (id, userId, type, itemId, displayName, metadata, createdAt)
 ```sql
 -- Zamówienia
 Order (id, orderNumber, customerId, userId, status, total, notes, createdAt, updatedAt)
-OrderItem (id, orderId, productId, quantity, unitPrice, selectedProjects, source, locationName)
+
+-- Pozycje zamówienia
+OrderItem (
+  id uuid PRIMARY KEY,
+  orderId uuid NOT NULL REFERENCES "Order"(id) ON DELETE CASCADE,
+  productId uuid NOT NULL REFERENCES Product(id),
+  quantity integer NOT NULL,            -- ilość używana w rozliczeniu
+  unitPrice numeric(10,2) NOT NULL,
+  selectedProjects text,                -- oryginalny zapis numerów projektów (np. '1,2,3')
+  projectQuantities jsonb,              -- lista obiektów { projectNo, qty }
+  quantitySource text NOT NULL DEFAULT 'total',  -- 'total' (suma) lub 'perProject' (ilości na projekt)
+  totalQuantity integer,                -- suma ilości po projektach (dla spójności)
+  source text,                          -- 'MIEJSCOWOSCI', 'KATALOG_INDYWIDUALNY', itp.
+  locationName text,                    -- miejscowość PM lub obiekt KI
+  customization jsonb,
+  productionNotes text
+)
 
 -- Historia statusów
 OrderStatusHistory (id, orderId, oldStatus, newStatus, changedBy, changedAt, notes)
@@ -107,8 +123,6 @@ Product (id, identifier, index, name, category, price, imageUrl)
 Inventory (id, productId, stock, stockReserved, stockOrdered, reorderPoint)
 Customer (id, name, email, phone, address, city, salesRepId)
 ```
-
----
 
 ### 5.4. Produkcja i grafika (wysoki poziom)
 
@@ -135,6 +149,34 @@ Rozszerzenia tabeli `Order` i (opcjonalnie) `OrderItem` pod moduł grafiki
 opisane są w `docs/SPEC_PRODUCTION_PANEL.md` (sekcja 9.2) i będą wdrażane w
 ramach wersji v2.x systemu.
 
+### 5.5. Projekty galerii i mapowanie produktów
+
+```sql
+GalleryProject (
+  id uuid PRIMARY KEY,
+  slug text NOT NULL UNIQUE,         -- techniczna nazwa projektu / pliku z galerii (np. 'KUBEK_GRAWER')
+  displayName text NOT NULL,        -- nazwa czytelna (np. 'KUBEK GRAWER')
+  createdAt timestamptz NOT NULL,
+  createdBy uuid REFERENCES "User"(id)
+)
+
+GalleryProjectProduct (
+  id uuid PRIMARY KEY,
+  projectId uuid NOT NULL REFERENCES GalleryProject(id) ON DELETE CASCADE,
+  productId uuid NOT NULL REFERENCES Product(id) ON DELETE CASCADE,
+  isPrimary boolean NOT NULL DEFAULT false,
+  createdAt timestamptz NOT NULL DEFAULT now(),
+  createdBy uuid REFERENCES "User"(id),
+  UNIQUE (projectId, productId)
+)
+```
+
+**Założenia:**
+- `GalleryProject` przechowuje globalną listę projektów / plików z galerii (niezależnie od miejscowości czy obiektu).
+- `slug` odpowiada polu `product` w plikach galerii (np. `files[].product`).
+- `GalleryProjectProduct` mapuje wiele produktów (`Product.id`) do jednego projektu (relacja N→1).
+- Mapowanie jest współdzielone przez wszystkie tryby formularza (PM, KI, w przyszłości PI/Ph).
+
 ---
 
 ## 6. API Endpoints
@@ -153,7 +195,7 @@ ramach wersji v2.x systemu.
 | Endpoint | Metoda | Opis | Role |
 |----------|--------|------|------|
 | `/api/orders` | GET | Lista zamówień | Wszystkie |
-| `/api/orders/:id` | GET | Szczegóły zamówienia | Wszystkie |
+| `/api/orders/:id` | GET | Szczegóły zamówienia (z pozycjami) | Wszystkie |
 | `/api/orders` | POST | Nowe zamówienie | SALES_REP, SALES_DEPT, ADMIN |
 | `/api/orders/:id` | PATCH | Edycja notatek | SALES_DEPT, ADMIN |
 | `/api/orders/:id/status` | PATCH | Zmiana statusu | Zależne od roli |
@@ -185,6 +227,42 @@ ramach wersji v2.x systemu.
 | `/api/favorites` | GET | Lista ulubionych (zwraca `data`) |
 | `/api/favorites` | POST | Dodaj (wymaga: type, itemId, displayName) |
 | `/api/favorites/:type/:itemId` | DELETE | Usuń z ulubionych |
+
+### 6.6. Mapowanie projektów galerii na produkty
+
+Moduł admina do utrzymywania powiązań między projektami galerii (plikami) a produktami
+z tabeli `Product`. Wykorzystywany przez formularz zamówień (lista produktów w galerii)
+oraz w przyszłości przez panel produkcyjny.
+
+| Endpoint | Metoda | Opis | Role |
+|----------|--------|------|------|
+| `/api/admin/gallery-projects` | GET | Lista projektów galerii (`GalleryProject`) z licznikami produktów | ADMIN |
+| `/api/admin/gallery-projects` | POST | Utworzenie nowego projektu (slug + displayName) | ADMIN |
+| `/api/admin/gallery-projects/:id` | PATCH | Aktualizacja nazwy / slug projektu | ADMIN |
+| `/api/admin/gallery-projects/:id` | DELETE | Usunięcie projektu (wraz z powiązaniami) | ADMIN |
+| `/api/admin/gallery-projects/:id/products` | GET | Lista przypiętych produktów (`GalleryProjectProduct`) | ADMIN |
+| `/api/admin/gallery-projects/:id/products` | POST | Przypisanie produktu do projektu (productId) | ADMIN |
+| `/api/admin/gallery-projects/:id/products/:productId` | DELETE | Usunięcie przypisania produktu | ADMIN |
+
+**Uwagi implementacyjne:**
+
+- Endpointy `/api/orders` i `/api/orders/:id` zwracają dla każdej pozycji (`items[]` / `OrderItem[]`) m.in.:
+  - `selectedProjects` – oryginalny zapis numerów projektów,
+  - `projectQuantities` – JSON z listą `{ projectNo, qty }`,
+  - `quantitySource` – `'total'` lub `'perProject'`,
+  - `totalQuantity` – suma ilości po projektach,
+  - `source` – pochodzenie produktu (`MIEJSCOWOSCI`, `KATALOG_INDYWIDUALNY`, itp.),
+  - `locationName` – nazwa miejscowości PM lub obiektu KI.
+
+- Endpointy `/api/gallery/products/:city` oraz `/api/gallery/products-object` pozostają kompatybilne wstecznie,
+  ale ich odpowiedź jest rozszerzona o strukturę `projects[]` zawierającą:
+  - dane projektu (`slug`, `displayName`),
+  - listę powiązanych produktów (`productId`, `identifier`, `index`).
+
+- Formularz zamówień wykorzystuje `projects[].products` do budowy listy 2 (select "Produkt") z etykietą
+  opartą o `identifier` (Identyfikator) oraz dopiskiem nazwy projektu. Produkty bez mapowania nadal są
+  dostępne na liście na podstawie danych z galerii.
+
 
 ---
 
@@ -290,5 +368,5 @@ SMTP_PASS=...
 
 ---
 
-**Wersja dokumentu:** 2.0  
-**Data aktualizacji:** 2025-11-30
+**Wersja dokumentu:** 2.1  
+**Data aktualizacji:** 2025-12-02

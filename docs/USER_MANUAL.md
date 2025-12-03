@@ -120,9 +120,22 @@ Po zalogowaniu w nagłówku widać:
    - Widzisz tylko swoich klientów
 
 3. **Dodawanie produktów:**
-   - Wybierz produkty z galerii
-   - Określ projekty i ilości (Nr projektów + Ilości na proj.)
-   - Dodaj uwagi produkcyjne do pozycji (opcjonalnie)
+   - Wybierz produkty z galerii (lista zależy od trybu: PM lub KI)
+   - Określ projekty i ilości:
+     - **Nr projektów** – numeracja projektów, np. `1,2,3` lub `1-5,7`,
+     - **Ilości na proj.** – jedno z:
+       - `po 20` – ta sama ilość na każdy projekt,
+       - `10,20,30` – indywidualne ilości dla kolejnych projektów,
+       - puste – jeśli chcesz pracować tylko na łącznej ilości,
+     - **Ilość (łącznie)** – suma sztuk na wszystkie projekty (np. `60`).
+
+   System pilnuje **„źródła prawdy”** dla ilości:
+
+   - jeśli wpiszesz tylko **"Ilość"**, a pole "Ilości na proj." zostawisz puste,
+     rozkład na projekty zostanie wyliczony automatycznie, ale źródłem jest **Ilość**;
+   - jeśli wpiszesz lub zmienisz **"Ilości na proj."** (lista lub `po X`),
+     źródłem stają się **ilości na projekty**, a suma jest liczona z nich;
+   - przejście TAB‑em przez pole **bez zmiany wartości** nie przelicza ilości.
 
 4. **Uwagi do zamówienia:**
    - **Uwagi do pozycji** – pole w koszyku przy każdym produkcie (np. "druk dwustronny", "kolor złoty")
@@ -160,6 +173,20 @@ Jeśli masz przypisane miejscowości:
 - Widzisz wszystkie zamówienia
 - Filtry: status, handlowiec, data
 - Możesz zmieniać statusy zgodnie z uprawnieniami
+
+W szczegółach zamówienia (po rozwinięciu wiersza):
+
+- kolumna **„Projekty”** pokazuje projekty z ilościami, np. `1: 10, 2: 20, 3: 30`;
+- kolumna **„Ilość”** pokazuje łączną ilość (suma wszystkich projektów);
+- jedna z kolumn jest **pogrubiona i podkreślona na niebiesko**:
+  - jeśli handlowiec pracował na polu "Ilość" – wyróżniona jest kolumna "Ilość",
+  - jeśli pracował na polu "Ilości na proj." – wyróżniona jest kolumna "Projekty".
+
+Na wydruku obok lokalizacji widoczny jest skrót źródła:
+
+- `PM` – projekty miejscowości,
+- `KI` – katalog / klienci indywidualni,
+- inne typy (imienne, hasła, okolicznościowe) mają własne skróty i kolory.
 
 ### 5.3. Zmiana statusów
 
@@ -222,6 +249,78 @@ Dozwolone przejścia:
 - **Aktywacja/Dezaktywacja:** Przełącznik w kolumnie "Aktywny"
 - **Usuwanie:** Ikona kosza (tylko ADMIN)
 - **Filtrowanie:** Pola filtru dla użytkownika i miejscowości
+
+### 8.4. Mapowanie produktów (galeria)
+
+Moduł **"Mapowanie produktów"** służy do powiązania **projektów graficznych z galerii**
+(np. `KUBEK_GRAWER`) z **produktami z bazy** (tabela `Product`). Dzięki temu:
+
+- w formularzu zamówień na liście 2 pojawiają się **Identyfikatory produktów** z dopiskiem
+  nazwy projektu (np. `KUBEK_300 (KUBEK GRAWER)`),
+- wyszukiwarka (pole 1) potrafi zsynchronizować się z listą 2 i automatycznie
+  zaznaczać odpowiedni projekt,
+- handlowiec nie musi znać technicznych nazw plików z galerii.
+
+#### Jak wejść do modułu
+
+1. Zaloguj się jako **ADMIN**.
+2. Wejdź do **Panelu administratora**.
+3. W menu po lewej wybierz **"Mapowanie produktów"**.
+
+#### Widok "Mapowanie produktów"
+
+Widok jest podzielony na dwie główne kolumny:
+
+- **Projekty graficzne (lewa kolumna)**
+  - lista projektów galerii (np. `KUBEK_GRAWER`, `MAGNES_HDF`),
+  - przy każdym projekcie liczba przypisanych produktów,
+  - wyszukiwarka projektów (po slugu lub nazwie).
+- **Wybierz projekt (prawa kolumna)**
+  - po kliknięciu projektu z lewej strony widzisz listę przypisanych produktów
+    (`Identyfikator`, `Indeks`),
+  - przy każdym produkcie jest ikona kosza do usunięcia przypisania.
+
+Na górze widoku są **statystyki**:
+
+- liczba wszystkich projektów,
+- ile projektów ma przypisane produkty,
+- ile projektów nie ma żadnych przypisań.
+
+#### Efekt dla handlowców
+
+- Na liście produktów w galerii (lista 2) w pierwszej kolejności pojawiają się projekty
+  z pełnym mapowaniem na produkty z bazy – w formie `IDENTYFIKATOR (NAZWA PROJEKTU)`.
+- Wyszukiwarka wyników potrafi dopasować wybrany produkt do właściwego projektu i
+  automatycznie zaznaczyć odpowiedni rekord na liście.
+- Filtr "z projektem / bez projektu" bierze pod uwagę zarówno nazwy z galerii,
+  jak i mapowanie w bazie. Produkty bez mapowania zachowują dotychczasowe zachowanie
+  – są listowane na podstawie danych z galerii.
+
+#### Przypisywanie produktu do projektu
+
+1. Wybierz projekt z listy po lewej (np. `KUBEK_GRAWER`).
+2. Kliknij przycisk **"Dodaj produkt"** w prawej kolumnie.
+3. W oknie dialogowym:
+   - sprawdź nazwę projektu (pole tylko do odczytu),
+   - w polu **"Szukaj produktu"** wpisz fragment **Identyfikatora** lub **Indeksu**, 
+   - z listy wybierz konkretny produkt (`IDENTYFIKATOR (INDEX)`).
+4. Kliknij **"Przypisz"**.
+
+Po zapisaniu:
+
+- projekt pojawi się w galerii z listą produktów (lista 2 w formularzu zamówień),
+- na liście 2 obok projektu będzie widoczny Identyfikator produktu,
+- wyszukiwarka produktów (pole 1) będzie umiała **automatycznie zaznaczyć** ten projekt
+  po znalezieniu danego produktu.
+
+#### Usuwanie przypisań
+
+1. Wybierz projekt z listy po lewej.
+2. W tabeli produktów w prawej kolumnie kliknij ikonę kosza przy wybranym produkcie.
+3. Potwierdź usunięcie.
+
+Usunięcie przypisania **nie kasuje produktu ani projektu**, jedynie zrywa ich powiązanie
+dla potrzeb galerii i formularza zamówień.
 
 ---
 
@@ -562,28 +661,69 @@ Szczegółowe aspekty techniczne (tabele, API) opisane są w
 - **Usuwanie:** Kliknij ❌ na chipie lub ponownie gwiazdkę
 - **Szybki dostęp:** Kliknij chip w pasku ulubionych
 
+### 11.3. Ulubione obiekty (tryb "Klienci indywidualni")
+
+W trybie **Klienci indywidualni** możesz w podobny sposób zapisać swoje najczęściej używane obiekty (np. konkretne sklepy lub punkty sprzedaży):
+
+1. Wybierz handlowca i obiekt z list.
+2. Kliknij gwiazdkę ⭐ obok listy obiektów.
+3. Obiekt pojawi się w pasku ulubionych.
+4. Kliknięcie nazwy obiektu w pasku ulubionych od razu ustawi odpowiedniego handlowca i obiekt.
+
+Obowiązują te same zasady, co przy ulubionych miejscowościach:
+
+- Maksymalnie 12 ulubionych obiektów.
+- Usuwanie przez ❌ na chipie lub ponowne kliknięcie gwiazdki.
+
 ---
-12. Blokada wybranego produktu
-12.1. Opis funkcji
+12. Blokada wybranego produktu i sortowanie listy produktów
+
+12.1. Blokada wybranego produktu
+
 Funkcja blokady produktu pozwala zachować wybrany produkt przy zmianie miejscowości (w trybie PM) lub obiektu (w trybie KI). Jest szczególnie przydatna, gdy chcesz porównać ten sam produkt w różnych lokalizacjach.
 
-12.2. Jak korzystać
-Włączenie blokady
-Wybierz żądany produkt z listy
-Kliknij w pole wyboru "Nie zmieniaj wybranego produktu"
-System zapamięta aktualnie wybrany produkt
-Zmiana produktu przy włączonej blokadzie
-Wybierz nowy produkt z listy
-Nowy produkt zostanie automatycznie zapamiętany
-Przy następnej zmianie miejscowości/obiektu zostanie przywrócony nowy produkt
-Wyłączenie blokady
-Odznacz pole "Nie zmieniaj wybranego produktu"
-System przestanie pamiętać ostatni wybrany produkt
-12.3. Uwagi
-Funkcja działa zarówno w trybie "Projekty miejscowości" jak i "Klienci indywidualni"
-Po odświeżeniu strony ustawienia blokady są zachowywane
-Maksymalnie można zapamiętać jeden produkt na raz
-Jeśli zapamiętany produkt nie jest dostępny w nowo wybranym obiekcie/miejscowości, zostanie wyświetlony z informacją "brak w tym obiekcie"
+**Jak korzystać (blokada):**
+
+- Wybierz żądany produkt z listy „Produkt”.
+- Zaznacz pole wyboru **"Nie zmieniaj wybranego produktu przy zmianie miejscowości ani trybu"**.
+- System zapamięta aktualnie wybrany produkt (`lastLockedProductSlug`).
+- Przy kolejnych zmianach miejscowości/obiektu system będzie próbował wybrać ten sam produkt; jeśli w danej lokalizacji go nie ma, produkt pojawi się z dopiskiem „brak w tej miejscowości/obiekcie”.
+- Odznaczenie pola powoduje wyczyszczenie zapamiętanego produktu.
+
+Uwagi:
+
+- Funkcja działa zarówno w trybie **„Projekty miejscowości” (PM)**, jak i **„Klienci indywidualni” (KI)**.
+- Po odświeżeniu strony ostatnio zablokowany produkt nie jest trwale zapisywany w bazie (blokada działa w ramach bieżącej sesji).
+
+12.2. Sortowanie listy produktów (Nowości / Dostępne)
+
+Obok pola blokady produktu znajdują się dwa małe pola wyboru, które zmieniają kolejność listy „Produkt” w galerii:
+
+- **Nowości** – na górze listy pojawią się produkty oznaczone w systemie jako nowe (np. świeżo wprowadzone do oferty).
+- **Dostępne** – na górze listy pojawią się produkty, które są aktualnie dostępne na głównym magazynie (stan większy niż 0) i można je normalnie zamawiać.
+
+Zasada działania:
+
+- Domyślnie lista jest sortowana **alfabetycznie (A→Z)** wg widocznej nazwy produktu, z uwzględnieniem polskich liter.
+- Po zaznaczeniu **„Nowości”** wszystkie nowe produkty trafiają **nad** pozostałe, reszta pozostaje niżej.
+- Po zaznaczeniu **„Dostępne”** wszystkie produkty dostępne na magazynie trafiają **nad** te, których chwilowo brakuje.
+- Jeśli zaznaczysz **oba** pola:
+  - na samej górze będą produkty **nowe i dostępne**, 
+  - niżej produkty tylko nowe **albo** tylko dostępne,
+  - na samym dole produkty ani nowe, ani dostępne.
+- W każdej z tych grup produkty są dalej ułożone alfabetycznie (A→Z).
+
+Zmiana stanu tych pól działa **od razu** – lista produktów się przelicza, bez ponownego ładowania miasta/obiektu.
+
+Sortowanie działa zarówno w trybie **PM (miejscowości)**, jak i **KI (handlowiec/obiekt)** i dotyczy tylko listy w polu „Produkt” w galerii.
+
+12.3. Wyszukiwanie a dostępność produktu
+
+Pole wyszukiwania (na górze strony) pokazuje listę produktów, które możesz dodać do zamówienia.
+
+- W wynikach pojawiają się tylko produkty **aktywne** – takie, które są aktualnie w sprzedaży.
+- Czasem w galerii możesz zobaczyć projekt produktu (np. stary wzór), ale jeśli produkt został wycofany z oferty, **nie pojawi się na liście wyników** i nie będzie można go dodać do koszyka.
+- Jeśli podejrzewasz, że produkt powinien być dostępny do zamówienia, a go nie widzisz, skontaktuj się z działem handlowym lub administratorem systemu.
 ## 13. FAQ
 
 **Q: Nie widzę żadnych miejscowości**  
