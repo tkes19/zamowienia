@@ -327,15 +327,21 @@ function renderGalleryPreview() {
   showGalleryImage(fileToShow.url, label);
 }
 
+function filterGallerySlugsByTerms(terms, options) {
+  if (!galleryProducts.length || !terms || !terms.length) return [];
+
+  return galleryProducts.filter((slug) => {
+    const label = formatGalleryProductLabel(slug);
+    return matchesTermsInField(label, terms, options);
+  });
+}
+
 function findGallerySlugsForQuery(query) {
   if (!galleryProducts.length || !query) return [];
   const searchTerms = tokenizeQuery(query);
   if (!searchTerms.length) return [];
 
-  return galleryProducts.filter((slug) => {
-    const label = formatGalleryProductLabel(slug);
-    return matchesTermsInField(label, searchTerms);
-  });
+  return filterGallerySlugsByTerms(searchTerms);
 }
 
 function findGallerySlugsByName(name) {
@@ -343,10 +349,7 @@ function findGallerySlugsByName(name) {
   const nameTerms = tokenizeQuery(name);
   if (!nameTerms.length) return [];
 
-  return galleryProducts.filter((slug) => {
-    const label = formatGalleryProductLabel(slug);
-    return matchesTermsInField(label, nameTerms, { matchMode: 'any' });
-  });
+  return filterGallerySlugsByTerms(nameTerms, { matchMode: 'any' });
 }
 
 function applyGallerySelectionFromSlug(slug) {
@@ -395,6 +398,20 @@ function updateGalleryControlsVisibility() {
   galleryControlsSales.hidden = isCityMode;
 }
 
+function buildOptionsHtml(placeholderText, values) {
+  const options = [`<option value="">${placeholderText}</option>`,
+    ...values.map((name) => `<option value="${name}">${name}</option>`),
+  ];
+  return options.join('');
+}
+
+function buildProductOptionsHtml(placeholderText, slugs) {
+  const options = [`<option value="">${placeholderText}</option>`,
+    ...slugs.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
+  ];
+  return options.join('');
+}
+
 async function loadSalespeople() {
   if (!gallerySalespersonSelect) return;
 
@@ -414,11 +431,7 @@ async function loadSalespeople() {
       return;
     }
 
-    const options = ['<option value="">Wybierz handlowca</option>',
-      ...salesPeople.map((name) => `<option value="${name}">${name}</option>`),
-    ];
-
-    gallerySalespersonSelect.innerHTML = options.join('');
+    gallerySalespersonSelect.innerHTML = buildOptionsHtml('Wybierz handlowca', salesPeople);
     gallerySalespersonSelect.disabled = false;
 
     if (galleryObjectSelect) {
@@ -458,11 +471,7 @@ async function loadObjectsForSalesperson(salesperson) {
       return;
     }
 
-    const options = ['<option value="">Wybierz obiekt</option>',
-      ...objects.map((name) => `<option value="${name}">${name}</option>`),
-    ];
-
-    galleryObjectSelect.innerHTML = options.join('');
+    galleryObjectSelect.innerHTML = buildOptionsHtml('Wybierz obiekt', objects);
     galleryObjectSelect.disabled = false;
   } catch (error) {
     console.error('Nie udało się pobrać obiektów:', error);
@@ -509,10 +518,7 @@ function setFormMode(mode) {
       }
       
       if (productsToShow.length) {
-        const options = ['<option value="">Wybierz produkt</option>',
-          ...productsToShow.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
-        ];
-        galleryProductSelect.innerHTML = options.join('');
+        galleryProductSelect.innerHTML = buildProductOptionsHtml('Wybierz produkt', productsToShow);
         galleryProductSelect.disabled = false;
       } else {
         galleryProductSelect.innerHTML = '<option value="">Wybierz miejscowość</option>';
@@ -568,10 +574,7 @@ function setFormMode(mode) {
       }
       
       if (productsToShow.length) {
-        const options = ['<option value="">Wybierz produkt</option>',
-          ...productsToShow.map((slug) => `<option value="${slug}">${formatGalleryProductLabel(slug)}</option>`),
-        ];
-        galleryProductSelect.innerHTML = options.join('');
+        galleryProductSelect.innerHTML = buildProductOptionsHtml('Wybierz produkt', productsToShow);
         galleryProductSelect.disabled = false;
       } else {
         galleryProductSelect.disabled = true;
@@ -761,24 +764,19 @@ async function loadPdfFontData() {
 async function ensurePdfFonts(doc) {
   const fontData = await loadPdfFontData();
   const fontList = doc.getFontList?.() ?? {};
-  console.groupCollapsed('[PDF] Sprawdzanie czcionek');
-  console.log('[PDF] Wstępnie dostępne rodziny:', fontList);
   for (const { file, name, style } of PDF_FONTS) {
     const hasFamily = Object.prototype.hasOwnProperty.call(fontList, name);
     const hasStyle = hasFamily && Object.prototype.hasOwnProperty.call(fontList[name], style);
 
     if (hasStyle) {
-      console.log(`[PDF] Czcionka już dostępna: ${name} (${style})`);
       continue;
     }
 
     const data = fontData instanceof Map ? fontData.get(file) : undefined;
     if (typeof data === 'string' && data.length) {
-      console.log(`[PDF] Dodawanie czcionki ${name} (${style}) z pliku ${file}. Długość base64:`, data.length);
       doc.addFileToVFS(file, data);
       try {
         doc.addFont(file, name, style, 'Identity-H');
-        console.log(`[PDF] Dodano do VFS i zarejestrowano ${name}/${style} z kodowaniem Identity-H.`);
       } catch (error) {
         console.error(`[PDF] Błąd podczas rejestracji fontu ${name}/${style}:`, error);
       }
@@ -792,9 +790,6 @@ async function ensurePdfFonts(doc) {
     Object.prototype.hasOwnProperty.call(updatedFontList, name) &&
     Object.prototype.hasOwnProperty.call(updatedFontList[name], style)
   );
-  console.log('[PDF] Zaktualizowana lista czcionek:', updatedFontList);
-  console.log('[PDF] Czy wszystkie style dostępne?', allLoaded);
-  console.groupEnd();
   return allLoaded;
 }
 

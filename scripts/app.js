@@ -115,6 +115,16 @@ function arrayBufferToBase64(buffer) {
   return null;
 }
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function setHeaderLoginError(message) {
   const errorEl = document.getElementById('header-login-error');
   if (!errorEl) return;
@@ -286,7 +296,6 @@ async function sortGalleryProductOptions(selectEl) {
           available: String(isAvailable),
         };
       });
-      console.log('[DEBUG] sortGalleryProductOptions', { newFirst, availableFirst, isLocked, sample });
     } catch (e) {
       // Ignoruj ewentualne błędy logowania
     }
@@ -401,7 +410,10 @@ async function loadGalleryCities() {
           : [];
         
         const options = ['<option value="">Wybierz miejscowość (brak przypisanych)</option>',
-          ...allCitiesFiltered.map((city) => `<option value="${city}">${city} (podgląd)</option>`),
+          ...allCitiesFiltered.map((city) => {
+            const citySafe = escapeHtml(city);
+            return `<option value="${citySafe}">${citySafe} (podgląd)</option>`;
+          }),
         ];
         galleryCitySelect.innerHTML = options.join('');
         galleryCitySelect.disabled = false;
@@ -467,7 +479,10 @@ async function loadGalleryCities() {
     }
     
     const options = ['<option value="">Wybierz miejscowość</option>',
-      ...visibleCities.map((city) => `<option value="${city}">${city}</option>`),
+      ...visibleCities.map((city) => {
+        const citySafe = escapeHtml(city);
+        return `<option value="${citySafe}">${citySafe}</option>`;
+      }),
     ];
     
     galleryCitySelect.innerHTML = options.join('');
@@ -932,7 +947,10 @@ async function loadSalespeople() {
     }
 
     const options = ['<option value="">Wybierz handlowca</option>',
-      ...salesPeople.map((name) => `<option value="${name}">${name}</option>`),
+      ...salesPeople.map((name) => {
+        const safeName = escapeHtml(name || '');
+        return `<option value="${safeName}">${safeName}</option>`;
+      }),
     ];
 
     gallerySalespersonSelect.innerHTML = options.join('');
@@ -972,11 +990,12 @@ async function loadSalespeople() {
           folderInfo.className = 'bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4';
           parent.parentElement.insertBefore(folderInfo, parent);
         }
+        const onlyFolderSafe = escapeHtml(onlyFolder || '');
         folderInfo.innerHTML = `
           <div class="flex items-center gap-2">
             <i class="fas fa-folder text-blue-600"></i>
             <span class="text-sm font-medium text-blue-900">Przypisany folder:</span>
-            <span class="text-sm text-blue-700 font-semibold">${onlyFolder}</span>
+            <span class="text-sm text-blue-700 font-semibold">${onlyFolderSafe}</span>
           </div>
         `;
       }
@@ -1040,7 +1059,10 @@ async function loadObjectsForSalesperson(salesperson) {
     }
 
     const options = ['<option value="">Wybierz obiekt</option>',
-      ...objects.map((name) => `<option value="${name}">${name}</option>`),
+      ...objects.map((name) => {
+        const safeName = escapeHtml(name || '');
+        return `<option value="${safeName}">${safeName}</option>`;
+      }),
     ];
 
     galleryObjectSelect.innerHTML = options.join('');
@@ -1373,24 +1395,19 @@ async function loadPdfFontData() {
 async function ensurePdfFonts(doc) {
   const fontData = await loadPdfFontData();
   const fontList = doc.getFontList?.() ?? {};
-  console.groupCollapsed('[PDF] Sprawdzanie czcionek');
-  console.log('[PDF] Wstępnie dostępne rodziny:', fontList);
   for (const { file, name, style } of PDF_FONTS) {
     const hasFamily = Object.prototype.hasOwnProperty.call(fontList, name);
     const hasStyle = hasFamily && Object.prototype.hasOwnProperty.call(fontList[name], style);
 
     if (hasStyle) {
-      console.log(`[PDF] Czcionka już dostępna: ${name} (${style})`);
       continue;
     }
 
     const data = fontData instanceof Map ? fontData.get(file) : undefined;
     if (typeof data === 'string' && data.length) {
-      console.log(`[PDF] Dodawanie czcionki ${name} (${style}) z pliku ${file}. Długość base64:`, data.length);
       doc.addFileToVFS(file, data);
       try {
         doc.addFont(file, name, style, 'Identity-H');
-        console.log(`[PDF] Dodano do VFS i zarejestrowano ${name}/${style} z kodowaniem Identity-H.`);
       } catch (error) {
         console.error(`[PDF] Błąd podczas rejestracji fontu ${name}/${style}:`, error);
       }
@@ -1404,9 +1421,6 @@ async function ensurePdfFonts(doc) {
     Object.prototype.hasOwnProperty.call(updatedFontList, name) &&
     Object.prototype.hasOwnProperty.call(updatedFontList[name], style)
   );
-  console.log('[PDF] Zaktualizowana lista czcionek:', updatedFontList);
-  console.log('[PDF] Czy wszystkie style dostępne?', allLoaded);
-  console.groupEnd();
   return allLoaded;
 }
 
@@ -1442,23 +1456,18 @@ function setStatus(message, type = 'info', target = 'global') {
 
 async function submitOrder() {
   try {
-    console.log('[ORDER] submitOrder() wywołane');
-
     // Walidacja: użytkownik
     if (!currentUser) {
       console.warn('[ORDER] Brak currentUser');
       setStatus('Musisz być zalogowany, aby wysłać zamówienie.', 'error', 'cart');
       return;
     }
-    console.log('[ORDER] currentUser OK');
-
     // Walidacja: klient
     if (!currentCustomer || !currentCustomer.id) {
       console.warn('[ORDER] Brak currentCustomer.id');
       setStatus('Wybierz klienta przed wysłaniem zamówienia.', 'error', 'cart');
       return;
     }
-    console.log('[ORDER] currentCustomer OK, id:', currentCustomer.id);
 
     // Walidacja: koszyk
     if (!cart || cart.size === 0) {
@@ -1466,13 +1475,10 @@ async function submitOrder() {
       setStatus('Koszyk jest pusty. Dodaj produkty przed wysłaniem zamówienia.', 'error', 'cart');
       return;
     }
-    console.log('[ORDER] cart.size:', cart.size);
 
     // Budowanie listy items
     const items = [];
     for (const [key, item] of cart.entries()) {
-      console.log('[ORDER] Przetwarzam pozycję:', key, item);
-
       // Sprawdź product.pc_id
       if (!item.product || !item.product.pc_id) {
         console.warn('[ORDER] Brak product.pc_id, pomijam:', item);
@@ -1492,13 +1498,6 @@ async function submitOrder() {
         ? JSON.stringify(item.perProjectQuantities)
         : null;
 
-      console.log('[ORDER] Pozycja:', {
-        productCode: item.product.pc_id,
-        projects: selectedProjects,
-        perProjectQuantities: item.perProjectQuantities,
-        projectQuantitiesJSON: projectQuantities
-      });
-
       items.push({
         productCode: item.product.pc_id,
         quantity: qty,
@@ -1512,8 +1511,6 @@ async function submitOrder() {
         productionNotes: item.itemNotes || null  // Uwagi produkcyjne do pozycji
       });
     }
-
-    console.log('[ORDER] items zebrane:', items);
 
     if (items.length === 0) {
       console.warn('[ORDER] Brak pozycji do wysłania');
@@ -1533,9 +1530,6 @@ async function submitOrder() {
       items,
     };
 
-    console.log('[ORDER] Payload do wysłania:', payload);
-    console.log('[ORDER] Wysyłam POST /api/orders');
-
     const response = await fetch('/api/orders', {
       method: 'POST',
       headers: {
@@ -1544,11 +1538,7 @@ async function submitOrder() {
       credentials: 'include',
       body: JSON.stringify(payload),
     });
-
-    console.log('[ORDER] Response status:', response.status);
-
     const result = await response.json().catch(() => null);
-    console.log('[ORDER] Response body:', result);
 
     if (!response.ok) {
       const message = result?.message || 'Nie udało się wysłać zamówienia.';
@@ -1567,8 +1557,6 @@ async function submitOrder() {
       'success',
       'cart'
     );
-
-    console.log('[ORDER] Sukces! orderNumber:', orderNumber, 'total:', total);
 
     // Wyczyść koszyk i pole uwag ogólnych
     cart.clear();
@@ -1715,12 +1703,18 @@ function renderFavoritesBar() {
   
   favoritesBarItems.innerHTML = filteredFavorites.map(fav => {
     // Dla KI: item_id to "handlowiec/obiekt", wyświetlamy tylko nazwę obiektu
-    const displayName = fav.name || (isKIMode ? fav.item_id.split('/').pop() : fav.item_id);
+    const rawDisplayName = fav.name || (isKIMode ? (fav.item_id || '').split('/').pop() : fav.item_id);
+    const displayNameSafe = escapeHtml(rawDisplayName || '');
+    const itemIdSafe = escapeHtml(fav.item_id || '');
+    const typeSafe = escapeHtml(fav.type || '');
+    const favIdSafe = escapeHtml(String(fav.id));
+    const titleSafe = escapeHtml(`Kliknij aby wybrać ${rawDisplayName || ''}`);
+    const removeTitleSafe = escapeHtml('Usuń z ulubionych');
     return `
-    <span class="favorites-bar__item" data-item-id="${fav.item_id}" data-type="${fav.type}" title="Kliknij aby wybrać ${displayName}">
+    <span class="favorites-bar__item" data-item-id="${itemIdSafe}" data-type="${typeSafe}" title="${titleSafe}">
       <i class="fas fa-star"></i>
-      ${displayName}
-      <button class="favorites-bar__remove" data-favorite-id="${fav.id}" title="Usuń z ulubionych">×</button>
+      ${displayNameSafe}
+      <button class="favorites-bar__remove" data-favorite-id="${favIdSafe}" title="${removeTitleSafe}">×</button>
     </span>
   `;
   }).join('');
@@ -1789,9 +1783,10 @@ function renderFavoritesBar() {
 }
 
 function resetResultsPlaceholder(text = 'Brak wyników do wyświetlenia.') {
+  const safeText = escapeHtml(text);
   resultsBody.innerHTML = `
     <tr class="table__placeholder">
-      <td colspan="7">${text}</td>
+      <td colspan="7">${safeText}</td>
     </tr>
   `;
 }
@@ -2135,22 +2130,26 @@ function renderResults(products) {
   setSelectedResultsRow(null);
   products.forEach(product => {
     const row = document.createElement('tr');
+    const productNameSafe = escapeHtml(product.name ?? '-');
+    const productIdSafe = escapeHtml(product.pc_id || '');
+    const priceText = formatCurrency(product.price);
+    const priceSafe = escapeHtml(priceText);
     row.innerHTML = `
       <td class="product-identifiers">
-        <div class="product-name">${product.name ?? '-'}</div>
-        <div class="product-id">${product.pc_id || ''}</div>
+        <div class="product-name">${productNameSafe}</div>
+        <div class="product-id">${productIdSafe}</div>
       </td>
       <td class="projects-cell">
         <div class="projects-field">
           <label class="projects-field__label">Nr projektów</label>
-          <input type="text" class="projects-input" placeholder="1-5,7" inputmode="numeric" pattern="[0-9,\\-\\s]*" />
+          <input type="text" class="projects-input" placeholder="1-5,7" inputmode="numeric" pattern="[0-9,\-\s]*" />
         </div>
         <div class="projects-field">
           <label class="projects-field__label">Ilości na proj.</label>
           <input type="text" class="qty-per-project-input-results" placeholder="po 20" />
         </div>
       </td>
-      <td class="price-column">${formatCurrency(product.price)}</td>
+      <td class="price-column">${priceSafe}</td>
       <td class="stock-cell">${createBadge(product.stock, product.stock_optimal)}</td>
       <td class="qty-cell">
         <input type="number" class="qty-input" value="1" min="1" ${product.stock > 0 ? '' : 'disabled'} title="Łącznie szt." />
@@ -2211,19 +2210,27 @@ function renderResults(products) {
       const value = projectsInput.value.trim();
       if (!value) {
         projectsInput.value = '';
+        hideQtyPreview();
         return;
       }
 
       if (!isValidProjectInput(value)) {
-        alert('Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.');
+        showQtyPreview('❌ Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.', 'error');
         projectsInput.focus();
         return;
       }
 
       projectsInput.value = sanitizeProjectsValue(value);
+      hideQtyPreview();
     });
 
     // --- Funkcje pomocnicze dla dwukierunkowej logiki ---
+
+    const formatPerProjectPreview = (result) => {
+      return result.perProjectQuantities
+        .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
+        .join(' | ');
+    };
 
     // Na podstawie total + projektów zbuduj listę np. 16 -> 6,5,5
     const buildPerProjectListFromTotal = () => {
@@ -2244,9 +2251,7 @@ function renderResults(products) {
       const list = result.perProjectQuantities.map(p => p.qty).join(',');
       qtyPerProjectInput.value = list;
 
-      const preview = result.perProjectQuantities
-        .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
-        .join(' | ');
+      const preview = formatPerProjectPreview(result);
       showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${preview}`, 'success');
     };
 
@@ -2273,9 +2278,7 @@ function renderResults(products) {
       }
 
       qtyInput.value = result.totalQuantity;
-      const preview = result.perProjectQuantities
-        .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
-        .join(' | ');
+      const preview = formatPerProjectPreview(result);
       showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${preview}`, 'success');
     };
 
@@ -2328,7 +2331,7 @@ function renderResults(products) {
       const itemNotesValue = itemNotesInput.value.trim();
 
       if (projectsValue && !isValidProjectInput(projectsValue)) {
-        alert('Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.');
+        showQtyPreview('❌ Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.', 'error');
         projectsInput.focus();
         return;
       }
@@ -2342,7 +2345,7 @@ function renderResults(products) {
           const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, qtyPerProjectValue);
           
           if (!result.success) {
-            alert(result.error);
+            showQtyPreview(`❌ ${result.error}`, 'error');
             qtyPerProjectInput.focus();
             return;
           }
@@ -2356,7 +2359,7 @@ function renderResults(products) {
           const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, '');
 
           if (!result.success) {
-            alert(result.error);
+            showQtyPreview(`❌ ${result.error}`, 'error');
             return;
           }
 
@@ -2549,29 +2552,36 @@ function renderCart() {
     }
 
     // Klasy CSS dla oznaczenia źródła prawdy
-    console.log('[RENDER] quantitySource dla', product.name, '=', quantitySource);
     const qtySourceClass = quantitySource === 'perProject' ? 'qty-source-per-project' : 'qty-source-total';
     const qtyInputClass = quantitySource === 'total' ? 'qty-source-highlight' : '';
     const perProjectInputClass = quantitySource === 'perProject' ? 'qty-source-highlight' : '';
 
+    const productNameSafe = escapeHtml(product.name ?? '-');
+    const productIdSafe = escapeHtml(product.pc_id || '');
+    const projectsSafe = escapeHtml(projects || '');
+    const qtyPerProjectDisplaySafe = escapeHtml(qtyPerProjectDisplay || '');
+    const itemNotesSafe = escapeHtml(itemNotes || '');
+    const lineTotalText = formatCurrency(lineTotal);
+    const lineTotalSafe = escapeHtml(lineTotalText);
+
     // Główny wiersz
     rowsHtml.push(`
       <tr data-id="${id}" class="${qtySourceClass}">
-        <td class="product-identifiers" title="${product.name ?? '-'}">
-          <div class="product-name">${product.name ?? '-'}</div>
-          <div class="product-id">${product.pc_id || ''}</div>
+        <td class="product-identifiers" title="${productNameSafe}">
+          <div class="product-name">${productNameSafe}</div>
+          <div class="product-id">${productIdSafe}</div>
         </td>
         <td class="cart-projects-col">
-          <input type="text" class="projects-input" value="${projects}" placeholder="1-5,7" data-id="${id}" inputmode="numeric" pattern="[0-9,\\-\\s]*" title="Nr projektów" />
-          <input type="text" class="qty-per-project-input ${perProjectInputClass}" value="${qtyPerProjectDisplay}" placeholder="po 20" data-id="${id}" title="Ilości na projekty: po X lub lista 10,20,30" />
+          <input type="text" class="projects-input" value="${projectsSafe}" placeholder="1-5,7" data-id="${id}" inputmode="numeric" pattern="[0-9,\-\s]*" title="Nr projektów" />
+          <input type="text" class="qty-per-project-input ${perProjectInputClass}" value="${qtyPerProjectDisplaySafe}" placeholder="po 20" data-id="${id}" title="Ilości na projekty: po X lub lista 10,20,30" />
         </td>
         <td>
           <input type="number" class="qty-input ${qtyInputClass}" value="${quantity}" min="1" data-id="${id}" title="Łączna ilość" />
         </td>
         <td class="cart-notes-cell">
-          <textarea class="cart-notes-input" data-id="${id}" placeholder="Uwagi do pozycji..." title="Uwagi produkcyjne">${itemNotes}</textarea>
+          <textarea class="cart-notes-input" data-id="${id}" placeholder="Uwagi do pozycji..." title="Uwagi produkcyjne">${itemNotesSafe}</textarea>
         </td>
-        <td class="price-cell">${formatCurrency(lineTotal)}</td>
+        <td class="price-cell">${lineTotalSafe}</td>
         <td class="cart-actions-cell">
           <button type="button" class="btn btn--danger btn--sm remove-from-cart" data-id="${id}">Usuń</button>
         </td>
@@ -2669,7 +2679,7 @@ function renderCart() {
       }
 
       if (!isValidProjectInput(value)) {
-        alert('Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.');
+        setStatus('Podaj poprawny zakres numerów projektów: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.', 'error', 'cart');
         projectsInput.value = entry.projects ?? '';
         return;
       }
@@ -2780,7 +2790,7 @@ function renderCart() {
 
       // Sprawdź czy są projekty
       if (!projectsStr) {
-        alert('Wpisz najpierw numery projektów');
+        setStatus('Wpisz najpierw numery projektów w kolumnie "Nr projektów / Ilości na proj."', 'error', 'cart');
         qtyPerProjectInput.value = entry.quantityInputPerProject || '';
         return;
       }
@@ -2789,7 +2799,7 @@ function renderCart() {
       const result = computePerProjectQuantities(projectsStr, '', perProjectQtyStr);
 
       if (!result.success) {
-        alert(result.error);
+        setStatus(result.error, 'error', 'cart');
         qtyPerProjectInput.value = entry.quantityInputPerProject || '';
         return;
       }
@@ -2803,7 +2813,6 @@ function renderCart() {
         perProjectQuantities: result.perProjectQuantities,
         quantitySource: 'perProject'  // Edycja ilości na projekt = źródło to ilości
       };
-      console.log('[CART] Ustawiam quantitySource na perProject:', newEntry);
       cart.set(id, newEntry);
       
       renderCart();
@@ -3293,7 +3302,10 @@ function initialize() {
       if (showingAll) {
         // Pokaż tylko przypisane
         const options = ['<option value="">Wybierz miejscowość</option>',
-          ...(window._userAssignedCities || []).map((city) => `<option value="${city}">${city}</option>`),
+          ...(window._userAssignedCities || []).map((city) => {
+            const citySafe = escapeHtml(city || '');
+            return `<option value="${citySafe}">${citySafe}</option>`;
+          }),
         ];
         galleryCitySelect.innerHTML = options.join('');
         showAllToggle.textContent = 'pokaż wszystkie';
@@ -3301,7 +3313,10 @@ function initialize() {
       } else {
         // Pokaż wszystkie
         const options = ['<option value="">Wybierz miejscowość</option>',
-          ...(window._allCitiesForToggle || []).map((city) => `<option value="${city}">${city}</option>`),
+          ...(window._allCitiesForToggle || []).map((city) => {
+            const citySafe = escapeHtml(city || '');
+            return `<option value="${citySafe}">${citySafe}</option>`;
+          }),
         ];
         galleryCitySelect.innerHTML = options.join('');
         showAllToggle.textContent = 'tylko moje';
@@ -3471,7 +3486,9 @@ function renderOrderCustomerOptions() {
     const meta = [c.city, c.zipCode].filter(Boolean).join(' ');
     const salesRep = c.salesRepName ? ` (handlowiec: ${c.salesRepName})` : '';
     const label = meta ? `${c.name} (${meta})${salesRep}` : `${c.name}${salesRep}`;
-    options.push(`<option value="${c.id}">${label}</option>`);
+    const idSafe = escapeHtml(String(c.id));
+    const labelSafe = escapeHtml(label || '');
+    options.push(`<option value="${idSafe}">${labelSafe}</option>`);
   });
 
   orderCustomerSelectEl.innerHTML = options.join('');
@@ -3847,19 +3864,23 @@ function renderOrdersTable() {
     });
     
     const statusClass = `status-badge--${order.status.toLowerCase().replace(/_/g, '-')}`;
-    const statusLabel = order.status;
+    const statusLabelSafe = escapeHtml(order.status || '');
+    const orderNumberSafe = escapeHtml(order.orderNumber || '');
+    const dateSafe = escapeHtml(date || '');
+    const customerNameSafe = escapeHtml(order.Customer?.name || '-');
+    const userShortSafe = escapeHtml(order.User?.shortCode || '-');
     
     const userCell = (currentUserRole === 'ADMIN' || currentUserRole === 'SALES_DEPT') 
-      ? `<td>${order.User?.shortCode || '-'}</td>`
+      ? `<td>${userShortSafe}</td>`
       : '';
     
     return `
       <tr>
-        <td><strong>${order.orderNumber}</strong></td>
-        <td>${date}</td>
-        <td>${order.Customer?.name || '-'}</td>
+        <td><strong>${orderNumberSafe}</strong></td>
+        <td>${dateSafe}</td>
+        <td>${customerNameSafe}</td>
         ${userCell}
-        <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+        <td><span class="status-badge ${statusClass}">${statusLabelSafe}</span></td>
         <td class="price-column">${formatPrice(order.total)}</td>
         <td>
           <button class="btn btn--link btn--small" onclick="showOrderDetails('${order.id}')">
@@ -3892,44 +3913,63 @@ async function showOrderDetails(orderId) {
     
     const statusClass = `status-badge--${order.status.toLowerCase().replace(/_/g, '-')}`;
     
-    const itemsHtml = (order.items || []).map(item => `
-      <tr>
-        <td>${item.Product?.name || item.Product?.identifier || '-'}</td>
-        <td>${item.selectedProjects || '-'}</td>
-        <td>${item.quantity}</td>
-        <td class="price-column">${formatPrice(item.unitPrice)}</td>
-        <td class="price-column">${formatPrice(item.quantity * item.unitPrice)}</td>
-        <td>${item.locationName || '-'}</td>
-      </tr>
-    `).join('');
+    const itemsHtml = (order.items || []).map(item => {
+      const productName = item.Product?.name || item.Product?.identifier || '-';
+      const productNameSafe = escapeHtml(productName || '-');
+      const projectsSafe = escapeHtml(item.selectedProjects || '-');
+      const locationSafe = escapeHtml(item.locationName || '-');
+      const qtySafe = escapeHtml(String(item.quantity));
+      const unitPriceText = formatPrice(item.unitPrice);
+      const lineTotalText = formatPrice(item.quantity * item.unitPrice);
+      const unitPriceSafe = escapeHtml(unitPriceText);
+      const lineTotalSafe = escapeHtml(lineTotalText);
+      return `
+        <tr>
+          <td>${productNameSafe}</td>
+          <td>${projectsSafe}</td>
+          <td>${qtySafe}</td>
+          <td class="price-column">${unitPriceSafe}</td>
+          <td class="price-column">${lineTotalSafe}</td>
+          <td>${locationSafe}</td>
+        </tr>
+      `;
+    }).join('');
+    
+    const orderNumberSafe = escapeHtml(order.orderNumber || '');
+    const customerNameSafe = escapeHtml(order.Customer?.name || '-');
+    const userShortSafe = escapeHtml(order.User?.shortCode || '-');
+    const statusLabelSafe = escapeHtml(order.status || '');
+    const createdDateSafe = escapeHtml(new Date(order.createdAt).toLocaleDateString('pl-PL'));
+    const totalSafe = escapeHtml(formatPrice(order.total));
+    const notesSafe = order.notes ? escapeHtml(order.notes) : '';
     
     orderDetailsContent.innerHTML = `
       <div class="order-details-grid">
         <div class="order-detail-item">
           <div class="order-detail-item__label">Numer zamówienia</div>
-          <div class="order-detail-item__value">${order.orderNumber}</div>
+          <div class="order-detail-item__value">${orderNumberSafe}</div>
         </div>
         <div class="order-detail-item">
           <div class="order-detail-item__label">Klient</div>
-          <div class="order-detail-item__value">${order.Customer?.name || '-'}</div>
+          <div class="order-detail-item__value">${customerNameSafe}</div>
         </div>
         <div class="order-detail-item">
           <div class="order-detail-item__label">Handlowiec</div>
-          <div class="order-detail-item__value">${order.User?.shortCode || '-'}</div>
+          <div class="order-detail-item__value">${userShortSafe}</div>
         </div>
         <div class="order-detail-item">
           <div class="order-detail-item__label">Status</div>
           <div class="order-detail-item__value">
-            <span class="status-badge ${statusClass}">${order.status}</span>
+            <span class="status-badge ${statusClass}">${statusLabelSafe}</span>
           </div>
         </div>
         <div class="order-detail-item">
           <div class="order-detail-item__label">Data utworzenia</div>
-          <div class="order-detail-item__value">${new Date(order.createdAt).toLocaleDateString('pl-PL')}</div>
+          <div class="order-detail-item__value">${createdDateSafe}</div>
         </div>
         <div class="order-detail-item">
           <div class="order-detail-item__label">Suma</div>
-          <div class="order-detail-item__value">${formatPrice(order.total)}</div>
+          <div class="order-detail-item__value">${totalSafe}</div>
         </div>
       </div>
       
@@ -3952,7 +3992,7 @@ async function showOrderDetails(orderId) {
         </table>
       </div>
       
-      ${order.notes ? `<p><strong>Notatki:</strong> ${order.notes}</p>` : ''}
+      ${order.notes ? `<p><strong>Notatki:</strong> ${notesSafe}</p>` : ''}
     `;
   } catch (error) {
     console.error('Błąd pobierania szczegółów:', error);
@@ -4039,9 +4079,10 @@ function renderTemplatesList() {
       ? '<span class="template-badge template-badge--team">Zespołowy</span>'
       : '<span class="template-badge template-badge--private">Prywatny</span>';
     
+    const ownerNameSafe = escapeHtml(template.ownerName || '');
     const ownerBadge = template.isOwner 
       ? '<span class="template-badge template-badge--owner">Mój</span>'
-      : `<span class="template-badge template-badge--shared">${template.ownerName}</span>`;
+      : `<span class="template-badge template-badge--shared">${ownerNameSafe}</span>`;
 
     const favoriteIcon = template.isFavorite 
       ? '<i class="fas fa-star template-favorite-icon template-favorite-icon--active"></i>'
@@ -4050,44 +4091,49 @@ function renderTemplatesList() {
     const usageInfo = template.usage_count > 0 
       ? `Użyto ${template.usage_count}x`
       : 'Nieużywany';
+    const usageInfoSafe = escapeHtml(usageInfo);
 
-    const tags = Array.isArray(template.tags) && template.tags.length > 0
-      ? template.tags.map(tag => `<span class="template-tag">${tag}</span>`).join('')
+    const tagsHtml = Array.isArray(template.tags) && template.tags.length > 0
+      ? template.tags.map(tag => `<span class="template-tag">${escapeHtml(tag)}</span>`).join('')
       : '';
 
+    const idSafe = escapeHtml(String(template.id));
+    const nameSafe = escapeHtml(template.name || '');
+    const descriptionSafe = escapeHtml(template.description || '');
+
     return `
-      <div class="template-item" data-template-id="${template.id}">
+      <div class="template-item" data-template-id="${idSafe}">
         <div class="template-header">
           <div class="template-header-main">
-            <h4 class="template-name">${template.name}</h4>
+            <h4 class="template-name">${nameSafe}</h4>
             <div class="template-meta">
               ${visibilityBadge}
               ${ownerBadge}
-              <span class="template-usage">${usageInfo}</span>
+              <span class="template-usage">${usageInfoSafe}</span>
             </div>
           </div>
           <div class="template-header-actions">
-            <button class="btn btn--sm btn--primary template-use-btn" data-template-id="${template.id}">
+            <button class="btn btn--sm btn--primary template-use-btn" data-template-id="${idSafe}">
               <i class="fas fa-download"></i> Wczytaj
             </button>
-            <button class="btn btn--sm btn--secondary template-duplicate-btn" data-template-id="${template.id}">
+            <button class="btn btn--sm btn--secondary template-duplicate-btn" data-template-id="${idSafe}">
               <i class="fas fa-copy"></i> Duplikuj
             </button>
             ${template.isOwner ? `
-              <button class="btn btn--sm btn--secondary template-edit-btn" data-template-id="${template.id}">
+              <button class="btn btn--sm btn--secondary template-edit-btn" data-template-id="${idSafe}">
                 <i class="fas fa-edit"></i> Edytuj
               </button>
-              <button class="btn btn--sm btn--danger template-delete-btn" data-template-id="${template.id}">
+              <button class="btn btn--sm btn--danger template-delete-btn" data-template-id="${idSafe}">
                 <i class="fas fa-trash"></i> Usuń
               </button>
             ` : ''}
-            <button class="template-favorite-btn" data-template-id="${template.id}" data-is-favorite="${template.isFavorite}">
+            <button class="template-favorite-btn" data-template-id="${idSafe}" data-is-favorite="${template.isFavorite}">
               ${favoriteIcon}
             </button>
           </div>
         </div>
-        ${template.description ? `<p class="template-description">${template.description}</p>` : ''}
-        ${tags ? `<div class="template-tags">${tags}</div>` : ''}
+        ${template.description ? `<p class="template-description">${descriptionSafe}</p>` : ''}
+        ${tagsHtml ? `<div class="template-tags">${tagsHtml}</div>` : ''}
       </div>
     `;
   }).join('');

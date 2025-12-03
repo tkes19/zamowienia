@@ -23,6 +23,16 @@ document.addEventListener('DOMContentLoaded', () => {
     let allSalesReps = [];
     let currentSalesRepFilter = '';
 
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // Sprawdzenie autoryzacji i roli użytkownika
     async function checkAuth() {
         try {
@@ -96,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const options = ['<option value="">--- Wybierz handlowca ---</option>'];
         allSalesReps.forEach(rep => {
-            options.push(`<option value="${rep.id}">${rep.name}</option>`);
+            options.push(`<option value="${rep.id}">${escapeHtml(rep.name || '')}</option>`);
         });
 
         select.innerHTML = options.join('');
@@ -105,7 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (salesRepFilterSelect) {
             const filterOptions = ['<option value="">Wszyscy handlowcy</option>', '<option value="__none">Bez przypisanego</option>'];
             allSalesReps.forEach(rep => {
-                filterOptions.push(`<option value="${rep.id}">${rep.name}</option>`);
+                filterOptions.push(`<option value="${rep.id}">${escapeHtml(rep.name || '')}</option>`);
             });
             salesRepFilterSelect.innerHTML = filterOptions.join('');
         }
@@ -243,25 +253,25 @@ document.addEventListener('DOMContentLoaded', () => {
             const createdDate = client.createdAt ? new Date(client.createdAt).toLocaleDateString('pl-PL') : '-';
             
             const contactInfo = [
-                client.email ? `<div><i class="fas fa-envelope text-gray-400 mr-1"></i>${client.email}</div>` : '',
-                client.phone ? `<div><i class="fas fa-phone text-gray-400 mr-1"></i>${client.phone}</div>` : ''
+                client.email ? `<div><i class="fas fa-envelope text-gray-400 mr-1"></i>${escapeHtml(client.email)}</div>` : '',
+                client.phone ? `<div><i class="fas fa-phone text-gray-400 mr-1"></i>${escapeHtml(client.phone)}</div>` : ''
             ].filter(Boolean).join('');
 
             const addressInfo = [
                 client.address,
                 client.city && client.zipCode ? `${client.zipCode} ${client.city}` : client.city || client.zipCode,
                 client.country && client.country !== 'Poland' ? client.country : ''
-            ].filter(Boolean).join(', ');
+            ].filter(Boolean).map(escapeHtml).join(', ');
 
             // Wyświetl nazwę handlowca (dla ADMIN i SALES_DEPT)
             const salesRepDisplay = ['ADMIN', 'SALES_DEPT'].includes(currentUserRole)
-                ? (client.salesRepName ? `<span class="text-gray-900 font-medium">${client.salesRepName}</span>` : '<span class="text-gray-400">Brak przypisania</span>')
+                ? (client.salesRepName ? `<span class="text-gray-900 font-medium">${escapeHtml(client.salesRepName)}</span>` : '<span class="text-gray-400">Brak przypisania</span>')
                 : '';
 
             return `
                 <tr class="hover:bg-gray-50 transition-colors" data-client-id="${client.id}">
                     <td class="p-4">
-                        <div class="font-medium text-gray-900">${client.name}</div>
+                        <div class="font-medium text-gray-900">${escapeHtml(client.name || '')}</div>
                     </td>
                     <td class="p-4">
                         <div class="space-y-1 text-sm text-gray-600">
@@ -280,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </td>
                     <td class="p-4">
                         <div class="text-sm text-gray-600 max-w-xs truncate">
-                            ${client.notes || '<span class="text-gray-400">Brak uwag</span>'}
+                            ${client.notes ? escapeHtml(client.notes) : '<span class="text-gray-400">Brak uwag</span>'}
                         </div>
                     </td>
                     <td class="p-4 text-center text-sm text-gray-600">

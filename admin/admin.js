@@ -51,6 +51,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Konfiguracja
     const LOW_STOCK_THRESHOLD = 5;
 
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // Inicjalizacja
     fetchProducts();
 
@@ -116,7 +126,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateStats(allProducts);
                 
                 // Toast notification (mock)
-                console.log('Pobrano dane:', allProducts.length);
             } else {
                 showError(result.message || 'Nie udało się pobrać danych');
             }
@@ -202,26 +211,32 @@ document.addEventListener('DOMContentLoaded', () => {
             const imageUrl = product.imageUrl || (product.images ? product.images[0] : null);
             const isNew = product.new ? '<span class="ml-2 px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold uppercase tracking-wider rounded border border-purple-200">Nowość</span>' : '';
 
+            const mainLabel = product.identifier || product.name || '-';
+            const mainLabelSafe = escapeHtml(mainLabel);
+            const indexSafe = escapeHtml(product.index || '-');
+            const categoryLabelSafe = escapeHtml(formatCategory(product.category || 'Inne'));
+            const imageUrlSafe = imageUrl ? escapeHtml(imageUrl) : '';
+
             return `
                 <tr class="hover:bg-gray-50 transition-colors" data-product-id="${product.id}">
                     <td class="p-4">
                         <div class="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center border border-gray-200">
                             ${imageUrl 
-                                ? `<img src="${imageUrl}" alt="" class="w-full h-full object-cover">` 
+                                ? `<img src="${imageUrlSafe}" alt="" class="w-full h-full object-cover">` 
                                 : `<i class="fas fa-image text-gray-300 text-xl"></i>`
                             }
                         </div>
                     </td>
                     <td class="p-4">
                         <div class="font-medium text-gray-900 flex items-center flex-wrap gap-1">
-                            ${product.identifier || product.name || '-'}
+                            ${mainLabelSafe}
                             ${isNew}
                         </div>
-                        <div class="text-xs text-gray-500 font-mono mt-0.5">${product.index || '-'}</div>
+                        <div class="text-xs text-gray-500 font-mono mt-0.5">${indexSafe}</div>
                     </td>
                     <td class="p-4">
                         <span class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium">
-                            ${formatCategory(product.category || 'Inne')}
+                            ${categoryLabelSafe}
                         </span>
                     </td>
                     <td class="p-4 text-right font-mono">
@@ -591,12 +606,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function showError(message) {
+        const safeMessage = escapeHtml(message || 'Wystąpił błąd');
         tableBody.innerHTML = `
             <tr>
                 <td colspan="9" class="p-8 text-center text-red-500">
                     <div class="flex flex-col items-center gap-2">
                         <i class="fas fa-exclamation-circle text-2xl"></i>
-                        <span>${message}</span>
+                        <span>${safeMessage}</span>
                         <button onclick="location.reload()" class="mt-2 text-blue-600 underline text-sm">Spróbuj ponownie</button>
                     </div>
                 </td>
@@ -764,10 +780,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 filterUsers();
             } else {
                 console.error('Błąd pobierania użytkowników:', json.message);
+                const safeMessage = escapeHtml(json.message || 'Nie udało się pobrać użytkowników');
                 usersTableBody.innerHTML = `
                     <tr>
                         <td colspan="7" class="p-8 text-center text-red-600">
-                            Błąd: ${json.message || 'Nie udało się pobrać użytkowników'}
+                            Błąd: ${safeMessage}
                         </td>
                     </tr>
                 `;
@@ -827,15 +844,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const roleLabel = formatRole(user.role);
             const createdDate = user.createdAt ? new Date(user.createdAt).toLocaleDateString('pl-PL') : '-';
+            const nameSafe = escapeHtml(user.name || '-');
+            const emailSafe = escapeHtml(user.email || '');
+            const roleLabelSafe = escapeHtml(roleLabel);
+            const departmentSafe = escapeHtml(user.departmentName || '-');
 
             return `
                 <tr class="hover:bg-gray-50 transition-colors">
-                    <td class="p-4 font-medium text-gray-900">${user.name || '-'}</td>
-                    <td class="p-4 text-gray-600">${user.email}</td>
+                    <td class="p-4 font-medium text-gray-900">${nameSafe}</td>
+                    <td class="p-4 text-gray-600">${emailSafe}</td>
                     <td class="p-4">
-                        <span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">${roleLabel}</span>
+                        <span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">${roleLabelSafe}</span>
                     </td>
-                    <td class="p-4 text-gray-600">${user.departmentName || '-'}</td>
+                    <td class="p-4 text-gray-600">${departmentSafe}</td>
                     <td class="p-4 text-center">${statusBadge}</td>
                     <td class="p-4 text-center text-gray-600">${createdDate}</td>
                     <td class="p-4 text-right flex items-center justify-end gap-2">
@@ -1160,7 +1181,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' };
         const toast = document.createElement('div');
         toast.className = `admin-toast ${type}`;
-        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${escapeHtml(message)}</span>`;
         adminToastContainer.appendChild(toast);
         setTimeout(() => {
             toast.style.animation = 'toastOut 0.3s ease-out forwards';
@@ -1196,7 +1217,6 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (response.ok) {
                 const result = await response.json();
-                console.log('Role synced:', result.data.role);
                 return result.data.role;
             }
         } catch (error) {
@@ -1211,7 +1231,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Najpierw synchronizuj rolę
         currentUserRole = await syncUserRole();
-        console.log('DEBUG: User role after sync:', currentUserRole);
 
         try {
             ordersTableBody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-gray-500"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i> Ładowanie…</td></tr>';
@@ -1250,8 +1269,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) return;
             const result = await response.json();
             const users = result.data || [];
-            ordersUserFilter.innerHTML = '<option value="">Wszyscy handlowcy</option>' +
-                users.map(u => `<option value="${u.id}">${u.shortCode} - ${u.name}</option>`).join('');
+            const optionsHtml = users.map(u => {
+                const idSafe = escapeHtml(String(u.id));
+                const shortCodeSafe = escapeHtml(u.shortCode || '');
+                const nameSafe = escapeHtml(u.name || '');
+                return `<option value="${idSafe}">${shortCodeSafe} - ${nameSafe}</option>`;
+            }).join('');
+            ordersUserFilter.innerHTML = '<option value="">Wszyscy handlowcy</option>' + optionsHtml;
         } catch (error) {
             console.error('Błąd pobierania handlowców:', error);
         }
@@ -1355,16 +1379,25 @@ document.addEventListener('DOMContentLoaded', () => {
             const canSelectStatus = allowedTransitions.length > 0;
             const statusClass = STATUS_CLASSES[order.status] || 'bg-gray-100 text-gray-800';
             const statusLabel = STATUS_LABELS[order.status] || order.status;
+            const statusLabelSafe = escapeHtml(statusLabel);
+            const orderNumberSafe = escapeHtml(order.orderNumber || '');
+            const customerNameSafe = escapeHtml(order.Customer?.name || '-');
+            const userShortSafe = escapeHtml(order.User?.shortCode || '-');
 
             const statusContent = canSelectStatus
                 ? `<select class="order-status-select px-3 py-1 rounded-full text-xs font-semibold border border-transparent focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all ${statusClass}" data-order-id="${order.id}" data-original-status="${order.status}" onclick="event.stopPropagation()">
-                        ${[order.status, ...allowedTransitions].filter((s, i, arr) => arr.indexOf(s) === i).map(s => `<option value="${s}" ${s === order.status ? 'selected' : ''}>${STATUS_LABELS[s] || s}</option>`).join('')}
+                        ${[order.status, ...allowedTransitions]
+                            .filter((s, i, arr) => arr.indexOf(s) === i)
+                            .map(s => {
+                                const optionLabel = escapeHtml(STATUS_LABELS[s] || s);
+                                return `<option value="${s}" ${s === order.status ? 'selected' : ''}>${optionLabel}</option>`;
+                            }).join('')}
                    </select>`
-                : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabel}</span>`;
+                : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabelSafe}</span>`;
 
             const canDelete = currentUserRole === 'ADMIN';
             const deleteBtn = canDelete
-                ? `<button class="text-red-600 hover:text-red-800 p-1" data-action="delete" data-order-id="${order.id}" data-order-number="${order.orderNumber}" title="Usuń zamówienie"><i class="fas fa-trash"></i></button>`
+                ? `<button class="text-red-600 hover:text-red-800 p-1" data-action="delete" data-order-id="${order.id}" data-order-number="${orderNumberSafe}" title="Usuń zamówienie"><i class="fas fa-trash"></i></button>`
                 : '';
 
             const canEdit = currentUserRole === 'ADMIN';
@@ -1375,10 +1408,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return `
                 <tr class="hover:bg-gray-50 cursor-pointer order-row" data-order-id="${order.id}">
                     <td class="p-4 w-8"><i class="fas fa-chevron-right chevron-icon text-gray-400" data-order-id="${order.id}"></i></td>
-                    <td class="p-4 font-semibold text-blue-600">${order.orderNumber}</td>
+                    <td class="p-4 font-semibold text-blue-600">${orderNumberSafe}</td>
                     <td class="p-4">${date}</td>
-                    <td class="p-4">${order.Customer?.name || '-'}</td>
-                    <td class="p-4">${order.User?.shortCode || '-'}</td>
+                    <td class="p-4">${customerNameSafe}</td>
+                    <td class="p-4">${userShortSafe}</td>
                     <td class="p-4">${statusContent}</td>
                     <td class="p-4 text-right font-semibold">${(order.total || 0).toFixed(2)} zł</td>
                     <td class="p-4 text-right">
@@ -1452,28 +1485,40 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     } catch (e) { /* ignore parse errors */ }
                 }
+
+                const productLabelSafe = escapeHtml(productLabel);
+                const projectsDisplaySafe = escapeHtml(projectsDisplay);
+                const locationDisplaySafe = escapeHtml(locationDisplay);
+                const notesDisplaySafe = escapeHtml(notesDisplay);
                 
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
-                    <td class="p-2 text-xs font-medium text-gray-800">${productLabel}</td>
-                    <td class="p-2 text-xs text-gray-700">${projectsDisplay}</td>
+                    <td class="p-2 text-xs font-medium text-gray-800">${productLabelSafe}</td>
+                    <td class="p-2 text-xs text-gray-700">${projectsDisplaySafe}</td>
                     <td class="p-2 text-xs text-center text-gray-700">${item.quantity}</td>
                     <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td class="p-2 text-xs text-gray-700">${sourceBadge}${locationDisplay}</td>
-                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplay}</td>
+                    <td class="p-2 text-xs text-gray-700">${sourceBadge}${locationDisplaySafe}</td>
+                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplaySafe}</td>
                 </tr>`;
             }).join('');
 
             const canEditNotes = ['ADMIN', 'SALES_DEPT'].includes(currentUserRole);
             const createdDate = new Date(fullOrder.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
             const updatedDate = fullOrder.updatedAt ? new Date(fullOrder.updatedAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+            const creatorName = fullOrder.User ? (fullOrder.User.name || fullOrder.User.shortCode || '') : '';
+            const creatorNameSafe = creatorName ? escapeHtml(creatorName) : '';
+            const statusLabelFull = STATUS_LABELS[fullOrder.status] || fullOrder.status;
+            const statusLabelFullSafe = escapeHtml(statusLabelFull);
+            const notesText = fullOrder.notes || '';
+            const notesSafe = escapeHtml(notesText);
+            const notesDisplaySafe = notesText ? notesSafe : 'Brak notatek';
 
             const timelineHtml = `
                 <div class="flex items-center gap-4 text-xs text-gray-500 bg-gray-50 rounded-lg p-2">
-                    <div class="flex items-center gap-1"><i class="fas fa-plus-circle text-green-500"></i><span>Utworzono: <strong class="text-gray-700">${createdDate}</strong></span>${fullOrder.User ? `<span class="text-gray-400">przez ${fullOrder.User.name || fullOrder.User.shortCode}</span>` : ''}</div>
+                    <div class="flex items-center gap-1"><i class="fas fa-plus-circle text-green-500"></i><span>Utworzono: <strong class="text-gray-700">${createdDate}</strong></span>${fullOrder.User ? `<span class="text-gray-400">przez ${creatorNameSafe}</span>` : ''}</div>
                     ${updatedDate && updatedDate !== createdDate ? `<div class="flex items-center gap-1"><i class="fas fa-edit text-blue-500"></i><span>Aktualizacja: <strong class="text-gray-700">${updatedDate}</strong></span></div>` : ''}
-                    <div class="flex items-center gap-1"><i class="fas fa-tag text-gray-500"></i><span>Status: <strong class="text-gray-700">${STATUS_LABELS[fullOrder.status] || fullOrder.status}</strong></span></div>
+                    <div class="flex items-center gap-1"><i class="fas fa-tag text-gray-500"></i><span>Status: <strong class="text-gray-700">${statusLabelFullSafe}</strong></span></div>
                 </div>`;
 
             detailsRow.innerHTML = `
@@ -1498,7 +1543,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <div class="flex gap-3 items-end">
                             <div class="flex-1">
-                                ${canEditNotes ? `<textarea id="order-notes-${orderId}" class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" rows="2" placeholder="Notatki...">${fullOrder.notes || ''}</textarea>` : `<div class="p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 max-h-16 overflow-y-auto">${fullOrder.notes || 'Brak notatek'}</div>`}
+                                ${canEditNotes ? `<textarea id="order-notes-${orderId}" class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" rows="2" placeholder="Notatki...">${notesSafe}</textarea>` : `<div class="p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 max-h-16 overflow-y-auto">${notesDisplaySafe}</div>`}
                             </div>
                             <div class="flex gap-2">
                                 <button onclick="window.adminToggleOrderHistory('${fullOrder.id}')" class="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
@@ -1630,22 +1675,35 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     } catch (e) { /* ignore parse errors */ }
                 }
+
+                const productLabelSafe = escapeHtml(productLabel);
+                const projectsDisplaySafe = escapeHtml(projectsDisplay);
+                const locationDisplaySafe = escapeHtml(locationDisplay);
+                const notesDisplaySafe = escapeHtml(notesDisplay);
+                const sourcePrefixSafe = escapeHtml(sourcePrefix);
                 
-                return `<tr><td style="font-size:8px;">${productLabel}</td><td style="font-size:8px;">${projectsDisplay}</td><td style="text-align:center;font-size:8px;">${item.quantity}</td><td style="text-align:right;font-size:8px;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align:right;font-size:8px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td style="font-size:8px;">${sourcePrefix}${locationDisplay}</td><td style="font-size:7px;font-style:italic;color:#666;">${notesDisplay}</td></tr>`;
+                return `<tr><td style="font-size:8px;">${productLabelSafe}</td><td style="font-size:8px;">${projectsDisplaySafe}</td><td style="text-align:center;font-size:8px;">${item.quantity}</td><td style="text-align:right;font-size:8px;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align:right;font-size:8px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td style="font-size:8px;">${sourcePrefixSafe}${locationDisplaySafe}</td><td style="font-size:7px;font-style:italic;color:#666;">${notesDisplaySafe}</td></tr>`;
             }).join('');
 
             const createdDate = new Date(order.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const orderNumberSafe = escapeHtml(order.orderNumber || '');
+            const statusLabelPrint = STATUS_LABELS[order.status] || order.status;
+            const statusLabelPrintSafe = escapeHtml(statusLabelPrint);
+            const customerNamePrintSafe = escapeHtml(order.Customer?.name || '-');
+            const userNamePrint = order.User?.name || order.User?.shortCode || '-';
+            const userNamePrintSafe = escapeHtml(userNamePrint);
+            const notesPrintSafe = order.notes ? escapeHtml(order.notes) : '';
 
             const printHtml = `
                 <div class="print-document">
                     <div class="print-header">
-                        <div><div class="print-company">ZAMÓWIENIA</div><div class="print-title">Zamówienie ${order.orderNumber}</div></div>
-                        <div class="print-meta"><div>Data: ${createdDate}</div><div>Status: ${STATUS_LABELS[order.status] || order.status}</div></div>
+                        <div><div class="print-company">ZAMÓWIENIA</div><div class="print-title">Zamówienie ${orderNumberSafe}</div></div>
+                        <div class="print-meta"><div>Data: ${createdDate}</div><div>Status: ${statusLabelPrintSafe}</div></div>
                     </div>
                     <div class="print-section">
                         <div class="print-grid">
-                            <div class="print-field"><div class="print-field-label">Klient</div><div class="print-field-value">${order.Customer?.name || '-'}</div></div>
-                            <div class="print-field"><div class="print-field-label">Handlowiec</div><div class="print-field-value">${order.User?.name || order.User?.shortCode || '-'}</div></div>
+                            <div class="print-field"><div class="print-field-label">Klient</div><div class="print-field-value">${customerNamePrintSafe}</div></div>
+                            <div class="print-field"><div class="print-field-label">Handlowiec</div><div class="print-field-value">${userNamePrintSafe}</div></div>
                         </div>
                     </div>
                     <div class="print-section">
@@ -1653,7 +1711,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <table class="print-table"><thead><tr><th style="font-size:8px;">Produkt</th><th style="font-size:8px;">Projekty</th><th style="text-align:center;font-size:8px;">Ilość</th><th style="text-align:right;font-size:8px;">Cena j.</th><th style="text-align:right;font-size:8px;">Wartość</th><th style="font-size:8px;">Lokalizacja</th><th style="font-size:8px;">Uwagi</th></tr></thead><tbody>${itemsHtml || '<tr><td colspan="7" style="text-align: center; color: #999;">Brak pozycji</td></tr>'}</tbody></table>
                     </div>
                     <div class="print-total">Razem: ${(order.total || 0).toFixed(2)} zł</div>
-                    ${order.notes ? `<div class="print-section" style="margin-top: 8px;"><div class="print-section-title">Notatki</div><div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${order.notes}</div></div>` : ''}
+                    ${order.notes ? `<div class="print-section" style="margin-top: 8px;"><div class="print-section-title">Notatki</div><div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${notesPrintSafe}</div></div>` : ''}
                     <div class="print-footer"><div>Wydruk z systemu zarządzania zamówieniami | ${new Date().toLocaleString('pl-PL')}</div></div>
                 </div>`;
 
@@ -2040,12 +2098,13 @@ document.addEventListener('DOMContentLoaded', () => {
             
         } catch (error) {
             console.error('Błąd ładowania przypisań folderów:', error);
+            const safeMessage = escapeHtml(error.message || 'Nieznany błąd');
             folderAccessTableBody.innerHTML = `
                 <tr>
                     <td colspan="7" class="p-8 text-center text-red-500">
                         <div class="flex flex-col items-center gap-2">
                             <i class="fas fa-exclamation-triangle text-2xl"></i>
-                            <span>Błąd: ${error.message}</span>
+                            <span>Błąd: ${safeMessage}</span>
                         </div>
                     </td>
                 </tr>
@@ -2498,10 +2557,11 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Błąd ładowania widoku nieprzypisanych miejscowości:', error);
             if (cityTilesContainer) {
+                const safeMessage = escapeHtml(error.message || 'Nieznany błąd');
                 cityTilesContainer.innerHTML = `
                     <div class="text-center py-8 text-red-500">
                         <i class="fas fa-exclamation-circle text-2xl mb-2"></i>
-                        <p>Błąd ładowania danych: ${error.message}</p>
+                        <p>Błąd ładowania danych: ${safeMessage}</p>
                         <button onclick="loadCityAccess()" class="mt-2 text-blue-600 underline text-sm">Spróbuj ponownie</button>
                     </div>
                 `;
@@ -2529,6 +2589,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const salespeople = cityAccessUsers.filter(user => 
             ['SALES_REP', 'SALES_DEPT'].includes(user.role) && user.isActive
         );
+
+        const totalSafe = escapeHtml(String(data.stats.total));
+        const assignedSafe = escapeHtml(String(data.stats.assigned));
         
         container.innerHTML = `
             <div class="mb-4">
@@ -2537,12 +2600,20 @@ document.addEventListener('DOMContentLoaded', () => {
                         Nieprzypisane miejscowości (${data.unassignedCities.length})
                     </h3>
                     <div class="text-sm text-gray-500">
-                        Razem miejscowości: ${data.stats.total} | Przypisane: ${data.stats.assigned}
+                        Razem miejscowości: ${totalSafe} | Przypisane: ${assignedSafe}
                     </div>
                 </div>
             </div>
             <div class="grid gap-3">
-                ${data.unassignedCities.map(city => `
+                ${data.unassignedCities.map(city => {
+                    const citySafe = escapeHtml(city);
+                    const optionsHtml = salespeople.map(user => {
+                        const userIdSafe = escapeHtml(String(user.id));
+                        const userNameSafe = escapeHtml(user.name || '');
+                        const userEmailSafe = escapeHtml(user.email || '');
+                        return `<option value="${userIdSafe}">${userNameSafe} (${userEmailSafe})</option>`;
+                    }).join('');
+                    return `
                     <div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                         <div class="flex items-center justify-between flex-wrap gap-2">
                             <div class="flex items-center gap-3">
@@ -2550,24 +2621,22 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <i class="fas fa-map-marker-alt text-amber-600"></i>
                                 </div>
                                 <div>
-                                    <h4 class="font-medium text-gray-900">${city}</h4>
+                                    <h4 class="font-medium text-gray-900">${citySafe}</h4>
                                     <p class="text-sm text-gray-500">Nieprzypisana miejscowość</p>
                                 </div>
                             </div>
                             <div class="flex items-center gap-2">
-                                <select class="city-assignment-select px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" data-city="${city}">
+                                <select class="city-assignment-select px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" data-city="${citySafe}">
                                     <option value="">Wybierz handlowca</option>
-                                    ${salespeople.map(user => `
-                                        <option value="${user.id}">${user.name} (${user.email})</option>
-                                    `).join('')}
+                                    ${optionsHtml}
                                 </select>
-                                <button class="assign-city-btn px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors" data-city="${city}">
+                                <button class="assign-city-btn px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors" data-city="${citySafe}">
                                     <i class="fas fa-plus mr-1"></i> Przypisz
                                 </button>
                             </div>
                         </div>
-                    </div>
-                `).join('')}
+                    </div>`;
+                }).join('')}
             </div>
         `;
         
@@ -2608,11 +2677,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Pokaż krótkie powiadomienie
                 const notification = document.createElement('div');
+                const cityNameSafe = escapeHtml(cityName);
                 notification.className = 'fixed top-4 right-4 bg-green-50 border border-green-200 rounded-lg p-3 shadow-lg z-50';
                 notification.innerHTML = `
                     <div class="flex items-center gap-2">
                         <i class="fas fa-check-circle text-green-600"></i>
-                        <span class="text-sm text-green-800">Miejscowość ${cityName} została przypisana</span>
+                        <span class="text-sm text-green-800">Miejscowość ${cityNameSafe} została przypisana</span>
                     </div>
                 `;
                 document.body.appendChild(notification);
@@ -2856,18 +2926,20 @@ document.addEventListener('DOMContentLoaded', () => {
         // Renderuj kafelki
         let html = '';
         Object.keys(grouped).sort().forEach(letter => {
+            const letterSafe = escapeHtml(letter);
             html += `
                 <div class="mb-6">
-                    <div class="text-sm font-bold text-gray-400 mb-2 sticky top-0 bg-white py-1">${letter}</div>
+                    <div class="text-sm font-bold text-gray-400 mb-2 sticky top-0 bg-white py-1">${letterSafe}</div>
                     <div class="flex flex-wrap gap-2">
             `;
             
+            const globallyUnassignedCities = getGloballyUnassignedCities();
+
             grouped[letter].forEach(city => {
                 const isAssigned = assignedCities.has(city);
                 const accessData = assignedCities.get(city);
                 
                 // Sprawdź, czy miejscowość jest globalnie nieprzypisana
-                const globallyUnassignedCities = getGloballyUnassignedCities();
                 const isGloballyUnassigned = globallyUnassignedCities.includes(city);
                 
                 const baseClasses = 'city-tile px-4 py-2 rounded-lg font-medium text-sm cursor-pointer transition-all duration-200 transform select-none relative';
@@ -2877,14 +2949,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 const classes = isAssigned ? `${baseClasses} ${assignedClasses}` : `${baseClasses} ${availableClasses}`;
                 const icon = isAssigned ? '<i class="fas fa-check mr-1"></i>' : '';
                 const dataId = accessData ? `data-access-id="${accessData.id}"` : '';
+                const citySafe = escapeHtml(city);
                 
                 // Dodaj pomarańczową kropkę tylko dla miejscowości globalnie nieprzypisanych
                 const unassignedInfo = isGloballyUnassigned ? 
                     '<span class="absolute -top-1 -right-1 w-2 h-2 bg-orange-400 rounded-full" title="Nieprzypisana do żadnego handlowca"></span>' : '';
                 
                 html += `
-                    <button class="${classes}" data-city="${city}" data-assigned="${isAssigned}" ${dataId}>
-                        ${icon}${city}
+                    <button class="${classes}" data-city="${citySafe}" data-assigned="${isAssigned}" ${dataId}>
+                        ${icon}${citySafe}
                         ${unassignedInfo}
                     </button>
                 `;
@@ -3013,19 +3086,20 @@ document.addEventListener('DOMContentLoaded', () => {
         // Utwórz modal z listą wszystkich dostępnych miejscowości
         const modal = document.createElement('div');
         modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        const countSafe = escapeHtml(String(cities.length));
+        const citiesHtml = cities.map(city => {
+            const citySafe = escapeHtml(city);
+            return `<div class="p-2 bg-gray-50 rounded border border-gray-100 text-sm">${citySafe}</div>`;
+        }).join('');
         modal.innerHTML = `
             <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
                 <div class="p-6 border-b border-gray-200">
                     <h3 class="text-xl font-semibold text-gray-800">Miejscowości nieprzypisane do żadnego handlowca</h3>
-                    <p class="text-sm text-gray-500 mt-1">Liczba: ${cities.length}</p>
+                    <p class="text-sm text-gray-500 mt-1">Liczba: ${countSafe}</p>
                 </div>
                 <div class="p-4 overflow-y-auto flex-grow">
                     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                        ${cities.map(city => 
-                            `<div class="p-2 bg-gray-50 rounded border border-gray-100 text-sm">
-                                ${city}
-                            </div>`
-                        ).join('')}
+                        ${citiesHtml}
                     </div>
                 </div>
                 <div class="p-4 border-t border-gray-200 flex justify-end">
@@ -3068,7 +3142,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     window.adminToggleOrderHistory = async function(orderId) {
         if (adminLoadingHistory.has(orderId)) {
-            console.log(`[adminToggleOrderHistory] Historia dla ${orderId} już się ładuje`);
             return;
         }
         
@@ -3114,20 +3187,27 @@ document.addEventListener('DOMContentLoaded', () => {
                         hour: '2-digit', minute: '2-digit'
                     });
                     const userName = entry.User?.name || 'System';
+                    const oldLabel = STATUS_LABELS[entry.oldStatus] || entry.oldStatus;
+                    const newLabel = STATUS_LABELS[entry.newStatus] || entry.newStatus;
+                    const notesText = entry.notes || 'Zmiana statusu';
+                    const userNameSafe = escapeHtml(userName);
+                    const oldLabelSafe = escapeHtml(oldLabel);
+                    const newLabelSafe = escapeHtml(newLabel);
+                    const notesSafe = escapeHtml(notesText);
                     return `
                         <div class="bg-white border border-gray-200 rounded-lg p-3 mb-2 shadow-sm">
                             <div class="flex items-center justify-between">
                                 <div class="flex items-center gap-2">
                                     <i class="fas fa-exchange-alt text-blue-500 text-sm"></i>
                                     <span class="text-sm font-medium text-gray-900">
-                                        ${STATUS_LABELS[entry.oldStatus] || entry.oldStatus} → ${STATUS_LABELS[entry.newStatus] || entry.newStatus}
+                                        ${oldLabelSafe} → ${newLabelSafe}
                                     </span>
                                 </div>
                                 <span class="text-xs text-gray-500">${date}</span>
                             </div>
                             <div class="mt-1 text-xs text-gray-600">
                                 <i class="fas fa-user text-gray-400 mr-1"></i>
-                                ${userName} • ${entry.notes || 'Zmiana statusu'}
+                                ${userNameSafe} • ${notesSafe}
                             </div>
                         </div>
                     `;
@@ -3214,11 +3294,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error('Błąd ładowania projektów mapowania:', error);
+            const safeMessage = escapeHtml(error.message || 'Nieznany błąd');
             pmProjectsList.innerHTML = `
                 <div class="p-8 text-center text-red-500">
                     <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
                     <p>Nie udało się załadować projektów</p>
-                    <p class="text-sm text-gray-500">${error.message}</p>
+                    <p class="text-sm text-gray-500">${safeMessage}</p>
                 </div>
             `;
         }
@@ -3309,16 +3390,24 @@ document.addEventListener('DOMContentLoaded', () => {
         pmProjectsList.innerHTML = pmFilteredProjects.map(p => {
             const isSelected = p.id === pmSelectedProjectId;
             const hasMappings = p.productCount > 0;
+            const projectId = p.id; // używane tylko jako data-attribute
+            const nameText = p.displayName || p.slug || '';
+            const slugText = p.slug || '';
+            const nameSafe = escapeHtml(nameText);
+            const slugSafe = escapeHtml(slugText);
+            const count = p.productCount || 0;
+            const countText = `${count} ${count === 1 ? 'produkt' : 'produktów'}`;
+            const countSafe = escapeHtml(countText);
             return `
                 <div class="pm-project-item flex items-center justify-between px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${isSelected ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}"
-                     data-project-id="${p.id}">
+                     data-project-id="${projectId}">
                     <div class="flex-1 min-w-0">
-                        <div class="font-medium text-gray-800 truncate">${p.displayName || p.slug}</div>
-                        <div class="text-xs text-gray-500 truncate">${p.slug}</div>
+                        <div class="font-medium text-gray-800 truncate">${nameSafe}</div>
+                        <div class="text-xs text-gray-500 truncate">${slugSafe}</div>
                     </div>
                     <div class="ml-3 flex items-center gap-2">
                         <span class="px-2 py-0.5 text-xs rounded-full ${hasMappings ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
-                            ${p.productCount} ${p.productCount === 1 ? 'produkt' : 'produktów'}
+                            ${countSafe}
                         </span>
                     </div>
                 </div>
@@ -3398,18 +3487,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100 text-sm">
-                    ${products.map(p => `
+                    ${products.map(p => {
+                        const identifierSafe = escapeHtml(p.identifier || '-');
+                        const indexSafe = escapeHtml(p.index || '-');
+                        const productId = p.productId; // tylko data-attribute
+                        return `
                         <tr class="hover:bg-gray-50">
-                            <td class="p-3 font-medium text-gray-800">${p.identifier || '-'}</td>
-                            <td class="p-3 text-gray-600">${p.index || '-'}</td>
+                            <td class="p-3 font-medium text-gray-800">${identifierSafe}</td>
+                            <td class="p-3 text-gray-600">${indexSafe}</td>
                             <td class="p-3 text-right">
                                 <button class="pm-remove-product text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors"
-                                        data-product-id="${p.productId}" title="Usuń przypisanie">
+                                        data-product-id="${productId}" title="Usuń przypisanie">
                                     <i class="fas fa-trash-alt"></i>
                                 </button>
                             </td>
-                        </tr>
-                    `).join('')}
+                        </tr>`;
+                    }).join('')}
                 </tbody>
             </table>
         `;

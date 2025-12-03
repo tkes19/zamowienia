@@ -27,6 +27,16 @@ document.addEventListener('DOMContentLoaded', () => {
     let allSalesReps = [];
     const loadingOrders = new Set(); // Blokada podczas ładowania
 
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     const STATUS_LABELS = {
         PENDING: 'Oczekujące',
         APPROVED: 'Zatwierdzone',
@@ -109,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
-        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${escapeHtml(message)}</span>`;
         container.appendChild(toast);
 
         setTimeout(() => {
@@ -190,7 +200,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const options = ['<option value="">Wszyscy handlowcy</option>'];
         allSalesReps.forEach(rep => {
-            options.push(`<option value="${rep.id}">${rep.name} (${rep.email})</option>`);
+            const name = escapeHtml(rep.name || '');
+            const email = escapeHtml(rep.email || '');
+            const label = email ? `${name} (${email})` : name;
+            options.push(`<option value="${rep.id}">${label}</option>`);
         });
 
         ordersUserFilter.innerHTML = options.join('');
@@ -247,25 +260,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     <style>
                         @page { size: A4 landscape; margin: 10mm; }
                         * { margin: 0; padding: 0; }
-                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 8px; line-height: 1.2; font-size: 9px; }
-                        .print-document { background: white; padding: 10px; max-width: 100%; margin: 0 auto; }
-                        .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px; border-bottom: 1px solid #1f2937; padding-bottom: 6px; }
-                        .print-company { font-size: 14px; font-weight: bold; color: #1f2937; }
-                        .print-title { font-size: 12px; font-weight: bold; color: #1f2937; margin-top: 2px; }
-                        .print-meta { font-size: 9px; color: #6b7280; text-align: right; }
-                        .print-section { margin-bottom: 8px; }
-                        .print-section-title { font-size: 10px; font-weight: bold; color: #1f2937; margin-bottom: 4px; border-bottom: 1px solid #d1d5db; padding-bottom: 2px; }
-                        .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; }
-                        .print-field { font-size: 9px; }
-                        .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 1px; }
-                        .print-field-value { color: #1f2937; font-weight: 500; }
-                        .print-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 9px; }
-                        .print-table thead { background: #f3f4f6; border-bottom: 1px solid #d1d5db; }
-                        .print-table th { padding: 3px 4px; text-align: left; font-weight: 600; color: #1f2937; font-size: 8px; }
-                        .print-table td { padding: 3px 4px; border-bottom: 1px solid #e5e7eb; color: #374151; font-size: 8px; }
+                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 12px; line-height: 1.3; font-size: 11px; color: #111827; }
+                        .print-document { background: white; padding: 12px; max-width: 100%; margin: 0 auto; }
+                        .print-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 2px solid #111827; padding-bottom: 8px; }
+                        .print-company { font-size: 16px; font-weight: 700; color: #111827; }
+                        .print-title { font-size: 14px; font-weight: 700; color: #111827; margin-top: 4px; }
+                        .print-meta { font-size: 10px; color: #374151; text-align: right; }
+                        .print-section { margin-bottom: 10px; }
+                        .print-section-title { font-size: 11px; font-weight: 700; color: #111827; margin-bottom: 6px; border-bottom: 1px solid #9ca3af; padding-bottom: 3px; }
+                        .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+                        .print-field { font-size: 10px; }
+                        .print-field-label { color: #4b5563; font-weight: 600; margin-bottom: 2px; }
+                        .print-field-value { color: #111827; font-weight: 600; }
+                        .print-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px; }
+                        .print-table thead { background: #e5e7eb; border-bottom: 2px solid #9ca3af; }
+                        .print-table th { padding: 4px 6px; text-align: left; font-weight: 700; color: #111827; font-size: 10px; }
+                        .print-table td { padding: 4px 6px; border-bottom: 1px solid #9ca3af; color: #111827; font-size: 10px; }
                         .print-table tbody tr:last-child td { border-bottom: none; }
-                        .print-total { text-align: right; font-size: 10px; font-weight: bold; color: #1f2937; margin-top: 6px; padding-top: 4px; border-top: 1px solid #d1d5db; }
-                        .print-footer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8px; color: #6b7280; text-align: center; }
+                        .print-total { text-align: right; font-size: 11px; font-weight: 700; color: #111827; margin-top: 8px; padding-top: 6px; border-top: 2px solid #4b5563; }
+                        .print-footer { margin-top: 12px; padding-top: 8px; border-top: 1px solid #9ca3af; font-size: 9px; color: #4b5563; text-align: center; }
                     </style>
                 </head>
                 <body>
@@ -456,6 +469,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 minute: '2-digit'
             });
 
+            const customerName = order.Customer?.name || '-';
+            const customerNameSafe = escapeHtml(customerName);
+            const userDisplayRaw = order.User?.shortCode || order.User?.name || '-';
+            const userDisplaySafe = escapeHtml(userDisplayRaw);
+            const orderNumberSafe = escapeHtml(order.orderNumber || '');
+
             const allowedTransitions = canCurrentRoleChangeStatus
                 ? getAllowedStatusTransitions(order.status, currentUserRole)
                 : [];
@@ -473,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabel}</span>`;
 
             const userCell = showUserColumn 
-                ? `<td class="p-4">${order.User?.shortCode || order.User?.name || '-'}</td>`
+                ? `<td class="p-4">${userDisplaySafe}</td>`
                 : '';
 
             return `
@@ -481,12 +500,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-4">
                         <div class="flex items-center gap-2">
                             <i class="fas fa-chevron-right text-gray-400 transition-transform order-chevron"></i>
-                            <div class="font-semibold text-blue-600">${order.orderNumber}</div>
+                            <div class="font-semibold text-blue-600">${orderNumberSafe}</div>
                         </div>
                     </td>
                     <td class="p-4 text-gray-600">${date}</td>
                     <td class="p-4">
-                        <div class="font-medium text-gray-900">${order.Customer?.name || '-'}</div>
+                        <div class="font-medium text-gray-900">${customerNameSafe}</div>
                     </td>
                     ${userCell}
                     <td class="p-4">
@@ -565,7 +584,6 @@ document.addEventListener('DOMContentLoaded', () => {
     window.toggleOrderHistory = async function(orderId) {
         // Sprawdź, czy już nie ładujemy historii dla tego zamówienia
         if (loadingHistory.has(orderId)) {
-            console.log(`[toggleOrderHistory] Historia dla ${orderId} już się ładuje`);
             return;
         }
         
@@ -616,6 +634,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     const oldClass = entry.oldStatus ? (STATUS_CLASSES[entry.oldStatus] || 'bg-gray-100 text-gray-800') : 'bg-gray-100 text-gray-400';
                     const newClass = STATUS_CLASSES[entry.newStatus] || 'bg-gray-100 text-gray-800';
 
+                    const userNameSafe = escapeHtml(entry.User?.name || 'System');
+                    const notesPart = entry.notes
+                        ? `<span class="text-gray-400 mx-1">•</span> <span class="italic">${escapeHtml(entry.notes)}</span>`
+                        : '';
+
                     return `
                         <div class="flex items-start gap-3 p-2 hover:bg-gray-50 rounded transition-colors border-b border-gray-100 last:border-0">
                             <div class="text-gray-400 text-xs w-28 flex-shrink-0 pt-1">${date}</div>
@@ -626,8 +649,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <span class="px-2 py-0.5 rounded text-[10px] ${newClass}">${newStatusLabel}</span>
                                 </div>
                                 <div class="text-xs text-gray-600">
-                                    <span class="font-medium">${entry.User?.name || 'System'}</span>
-                                    ${entry.notes ? `<span class="text-gray-400 mx-1">•</span> <span class="italic">${entry.notes}</span>` : ''}
+                                    <span class="font-medium">${userNameSafe}</span>
+                                    ${notesPart}
                                 </div>
                             </div>
                         </div>
@@ -687,6 +710,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     } catch (e) { /* ignore parse errors */ }
                 }
+
+                const productLabelSafe = escapeHtml(productLabel);
+                const projectsDisplaySafe = escapeHtml(projectsDisplay);
+                const locationDisplaySafe = escapeHtml(locationDisplay);
+                const notesDisplaySafe = escapeHtml(notesDisplay);
                 
                 // Oznaczenie źródła prawdy
                 const isPerProjectSource = item.quantitySource === 'perProject';
@@ -695,13 +723,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
-                    <td class="p-2 text-xs font-medium text-gray-800">${productLabel}</td>
-                    <td class="p-2 text-xs text-gray-700 ${projectsClass}">${projectsDisplay}</td>
+                    <td class="p-2 text-xs font-medium text-gray-800">${productLabelSafe}</td>
+                    <td class="p-2 text-xs text-gray-700 ${projectsClass}">${projectsDisplaySafe}</td>
                     <td class="p-2 text-xs text-center text-gray-700 ${qtyClass}">${item.quantity}</td>
                     <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplay}</td>
-                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplay}</td>
+                    <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplaySafe}</td>
+                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplaySafe}</td>
                 </tr>
                 `;
             }).join('');
@@ -720,13 +748,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 : null;
 
+            const timelineUserLabel = fullOrder.User ? (fullOrder.User.name || fullOrder.User.shortCode || '') : '';
+            const timelineUserLabelSafe = escapeHtml(timelineUserLabel);
+
             // Timeline HTML
             const timelineHtml = `
                 <div class="flex items-center gap-4 text-xs text-gray-500 bg-gray-50 rounded-lg p-2">
                     <div class="flex items-center gap-1">
                         <i class="fas fa-plus-circle text-green-500"></i>
                         <span>Utworzono: <strong class="text-gray-700">${createdDate}</strong></span>
-                        ${fullOrder.User ? `<span class="text-gray-400">przez ${fullOrder.User.name || fullOrder.User.shortCode}</span>` : ''}
+                        ${fullOrder.User ? `<span class="text-gray-400">przez ${timelineUserLabelSafe}</span>` : ''}
                     </div>
                     ${updatedDate && updatedDate !== createdDate ? `
                         <div class="flex items-center gap-1">
@@ -772,9 +803,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             <!-- Notatki -->
                             <div class="flex-1">
                                 ${canEditNotes ? `
-                                    <textarea id="order-notes-${order.id}" class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" rows="2" placeholder="Notatki...">${fullOrder.notes || ''}</textarea>
+                                    <textarea id="order-notes-${order.id}" class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" rows="2" placeholder="Notatki...">${fullOrder.notes ? escapeHtml(fullOrder.notes) : ''}</textarea>
                                 ` : `
-                                    <div class="p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 max-h-16 overflow-y-auto">${fullOrder.notes || 'Brak notatek'}</div>
+                                    <div class="p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 max-h-16 overflow-y-auto">${fullOrder.notes ? escapeHtml(fullOrder.notes) : 'Brak notatek'}</div>
                                 `}
                             </div>
 
@@ -971,17 +1002,12 @@ document.addEventListener('DOMContentLoaded', () => {
             let groupedItems;
             if (isProductionOrder) {
                 groupedItems = {};
-                console.log('DEBUG: Production order mode - grouping items by production path');
-                console.log('DEBUG: Order items:', printOrderItems);
-                
+
                 printOrderItems.forEach(item => {
                     const path = item.Product?.productionPath || 'Standardowa';
-                    console.log(`DEBUG: Item ${item.Product?.identifier} has path: ${path}`);
                     if (!groupedItems[path]) groupedItems[path] = [];
                     groupedItems[path].push(item);
                 });
-                
-                console.log('DEBUG: Grouped items:', groupedItems);
             } else {
                 groupedItems = { 'Wszystkie pozycje': printOrderItems };
             }
@@ -1014,27 +1040,34 @@ document.addEventListener('DOMContentLoaded', () => {
                     const qtyStyle = isPerProjectSource ? '' : 'font-weight: bold; text-decoration: underline; color: #1d4ed8;';
                     const projectsStyle = isPerProjectSource ? 'font-weight: bold; text-decoration: underline; color: #1d4ed8;' : '';
                     
+                    const productLabelSafe = escapeHtml(productLabel);
+                    const projectsDisplaySafe = escapeHtml(projectsDisplay);
+                    const locationDisplaySafe = escapeHtml(locationDisplay);
+                    const notesDisplaySafe = escapeHtml(notesDisplay || '');
+
                     const priceColumns = includePrices ? `
                         <td style="text-align: right; font-size: 9px;">${(item.unitPrice || 0).toFixed(2)} zł</td>
                         <td style="text-align: right; font-size: 9px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>` : '';
                     
                     const notesColumn = isProductionOrder ? `
-                        <td style="font-size: 8px; font-style: italic; color: #666; font-weight: bold;">${notesDisplay || 'Brak'}</td>` : '';
+                        <td style="font-size: 8px; font-style: italic; color: #666; font-weight: bold;">${notesDisplaySafe || 'Brak'}</td>` : '';
                     
                     return `
                     <tr>
-                        <td style="font-size: 9px;">${productLabel}</td>
-                        <td style="font-size: 9px; ${projectsStyle}">${projectsDisplay}</td>
+                        <td style="font-size: 9px;">${productLabelSafe}</td>
+                        <td style="font-size: 9px; ${projectsStyle}">${projectsDisplaySafe}</td>
                         <td style="text-align: center; font-size: 9px; ${qtyStyle}">${item.quantity}</td>
                         ${priceColumns}
-                        <td style="font-size: 9px;">${sourcePrefix}${locationDisplay}</td>
+                        <td style="font-size: 9px;">${sourcePrefix}${locationDisplaySafe}</td>
                         ${notesColumn}
                     </tr>
                     `;
                 }).join('');
 
-                const pathTitle = productionPath ? ` - ${productionPath}` : '';
+                const pathTitle = productionPath ? ` - ${escapeHtml(productionPath)}` : '';
                 const orderNumberSuffix = productionPath ? `/${groupIndex + 1}` : '';
+                const customerNameSafe = escapeHtml(order.Customer?.name || '-');
+                const userDisplaySafe = escapeHtml(order.User?.name || order.User?.shortCode || '-');
                 
                 return `
                     <div class="print-document" style="${groupIndex > 0 ? 'page-break-before: always;' : ''}">
@@ -1053,11 +1086,11 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="print-grid">
                                 <div class="print-field">
                                     <div class="print-field-label">Klient</div>
-                                    <div class="print-field-value">${order.Customer?.name || '-'}</div>
+                                    <div class="print-field-value">${customerNameSafe}</div>
                                 </div>
                                 <div class="print-field">
                                     <div class="print-field-label">Handlowiec</div>
-                                    <div class="print-field-value">${order.User?.name || order.User?.shortCode || '-'}</div>
+                                    <div class="print-field-value">${userDisplaySafe}</div>
                                 </div>
                             </div>
                         </div>
@@ -1089,7 +1122,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${order.notes ? `
                             <div class="print-section" style="margin-top: 8px;">
                                 <div class="print-section-title">Notatki</div>
-                                <div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${order.notes}</div>
+                                <div style="font-size: 10px; color: #374151; white-space: pre-wrap; line-height: 1.2;">${escapeHtml(order.notes)}</div>
                             </div>
                         ` : ''}
 

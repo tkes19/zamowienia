@@ -9,11 +9,19 @@ const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const GALLERY_BASE = process.env.GALLERY_BASE || 'http://rezon.myqnapcloud.com:81/home';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Konfiguracja Supabase – wartości muszą być ustawione w backend/.env
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_TABLE_PRODUCTS = process.env.SUPABASE_TABLE_PRODUCTS || 'products';
+const AUTH_COOKIE_SECRET = process.env.AUTH_COOKIE_SECRET || (SUPABASE_SERVICE_ROLE_KEY
+    ? crypto.createHash('sha256').update(String(SUPABASE_SERVICE_ROLE_KEY)).digest('hex')
+    : 'dev-insecure-auth-secret');
+
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
+const LOGIN_WINDOW_MS = Number(process.env.LOGIN_WINDOW_MS || 15 * 60 * 1000);
+const loginAttempts = new Map();
 
 let supabase = null;
 if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
@@ -22,26 +30,77 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
   console.warn('Supabase nie jest skonfigurowany – brak SUPABASE_URL lub SUPABASE_SERVICE_ROLE_KEY w .env');
 }
 
+// Blokada bezpośredniego dostępu do katalogów SOURCE i SOURCE 2 (legacy/reference)
+app.use((req, res, next) => {
+  const p = req.path || '';
+  if (p.startsWith('/SOURCE') || p.startsWith('/SOURCE 2')) {
+    return res.status(404).end();
+  }
+  next();
+});
+
 // Serwowanie plików statycznych z folderu nadrzędnego
 app.use(express.static(path.join(__dirname, '..')));
 
+// Dopuszczalny origin frontendu (np. https://zamowienia.example.com) – w produkcji warto ustawić w .env
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '';
+
 // Konfiguracja CORS
 const corsOptions = {
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
+  origin: (origin, callback) => {
+    // Brak nagłówka Origin (np. curl, Postman, same-origin) -> nie wymaga CORS
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Jeśli nie zdefiniowano FRONTEND_ORIGIN:
+    //  - w produkcji blokujemy wszystkie żądania cross-origin
+    //  - w środowisku deweloperskim pozwalamy na dowolny origin (ułatwia testy)
+    if (!FRONTEND_ORIGIN) {
+      if (IS_PRODUCTION) {
+        return callback(null, false);
+      }
+      return callback(null, true);
+    }
+
+    // Jeśli ustawiono FRONTEND_ORIGIN – w produkcji akceptujemy tylko ten origin
+    if (origin === FRONTEND_ORIGIN) {
+      return callback(null, true);
+    }
+
+    // Poza produkcją pozwalamy na inne originy (np. lokalne testy)
+    if (!IS_PRODUCTION) {
+      return callback(null, true);
+    }
+
+    // Produkcja + inny origin niż FRONTEND_ORIGIN -> blokada
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 };
 app.use(cors(corsOptions));
 
-// Middleware do parsowania JSON
+// Middleware do parsowania JSON i ochrona CSRF dla metod modyfikujących
 app.use(express.json({ limit: '10mb' }));
+
+// Podstawowe nagłówki bezpieczeństwa HTTP
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+app.use(verifySameOrigin);
 
 // Proste parsowanie cookies (bez zewnętrznych bibliotek)
 function parseCookies(req) {
     const header = req.headers.cookie;
     if (!header) return {};
 
-    return header.split(';').reduce((acc, part) => {
+    const cookies = header.split(';').reduce((acc, part) => {
         const [rawKey, ...rest] = part.split('=');
         if (!rawKey) return acc;
         const key = rawKey.trim();
@@ -50,31 +109,182 @@ function parseCookies(req) {
         acc[key] = decodeURIComponent(value || '');
         return acc;
     }, {});
+
+    if (cookies.auth_id && cookies.auth_role) {
+        const sig = cookies.auth_sig;
+        const payload = `${cookies.auth_id}|${cookies.auth_role}`;
+
+        if (!sig) {
+            if (IS_PRODUCTION) {
+                delete cookies.auth_id;
+                delete cookies.auth_role;
+            }
+        } else {
+            try {
+                const expected = crypto
+                    .createHmac('sha256', AUTH_COOKIE_SECRET)
+                    .update(payload)
+                    .digest('hex');
+
+                if (expected !== sig) {
+                    delete cookies.auth_id;
+                    delete cookies.auth_role;
+                    delete cookies.auth_sig;
+                }
+            } catch (e) {
+                delete cookies.auth_id;
+                delete cookies.auth_role;
+                delete cookies.auth_sig;
+            }
+        }
+    }
+
+    return cookies;
 }
 
 function setAuthCookies(res, { id, role }) {
     const cookies = [];
-    const cookieBase = '; Path=/; HttpOnly; SameSite=Lax';
+    const cookieBase = `; Path=/; HttpOnly; SameSite=Lax${IS_PRODUCTION ? '; Secure' : ''}`;
+
+    const payload = `${id}|${role}`;
+    const sig = crypto
+        .createHmac('sha256', AUTH_COOKIE_SECRET)
+        .update(payload)
+        .digest('hex');
 
     cookies.push(`auth_id=${encodeURIComponent(id)}${cookieBase}`);
     cookies.push(`auth_role=${encodeURIComponent(role)}${cookieBase}`);
+    cookies.push(`auth_sig=${sig}${cookieBase}`);
 
     res.setHeader('Set-Cookie', cookies);
 }
 
 function clearAuthCookies(res) {
-    const expired = '; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
+    const expired = `; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${IS_PRODUCTION ? '; Secure' : ''}`;
     res.setHeader('Set-Cookie', [
         `auth_id=${expired}`,
         `auth_role=${expired}`,
+        `auth_sig=${expired}`,
     ]);
 }
 
+function getLoginAttemptKey(req, email) {
+    const ip = req.ip || (req.connection && req.connection.remoteAddress) || '';
+    const normalizedEmail = (email || '').toString().toLowerCase();
+    return `${ip}|${normalizedEmail}`;
+}
+
+function isLoginBlocked(key) {
+    const state = loginAttempts.get(key);
+    if (!state) return false;
+    const now = Date.now();
+    if (now - state.firstAttemptAt > LOGIN_WINDOW_MS) {
+        loginAttempts.delete(key);
+        return false;
+    }
+    return state.count >= LOGIN_MAX_ATTEMPTS;
+}
+
+function registerFailedLogin(key) {
+    const now = Date.now();
+    const existing = loginAttempts.get(key);
+    if (!existing || now - existing.firstAttemptAt > LOGIN_WINDOW_MS) {
+        loginAttempts.set(key, { count: 1, firstAttemptAt: now });
+        return;
+    }
+    existing.count += 1;
+    loginAttempts.set(key, existing);
+}
+
+function resetLoginAttempts(key) {
+    loginAttempts.delete(key);
+}
+
+function isSafeMethod(method) {
+    return method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+}
+
+function verifySameOrigin(req, res, next) {
+    if (isSafeMethod(req.method)) {
+        return next();
+    }
+
+    const origin = req.headers.origin;
+    if (!origin) {
+        return next();
+    }
+
+    try {
+        const originHost = new URL(origin).host;
+        const host = req.headers.host;
+
+        if (!host || originHost !== host) {
+            return res.status(403).json({ status: 'error', message: 'Nieprawidłowe źródło żądania' });
+        }
+
+        return next();
+    } catch (e) {
+        return res.status(400).json({ status: 'error', message: 'Nieprawidłowe nagłówki źródła żądania' });
+    }
+}
+async function getAuthContext(req) {
+    if (req._authContext) {
+        return req._authContext;
+    }
+
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id || null;
+    const roleFromCookie = cookies.auth_role || null;
+
+    // Brak identyfikatora użytkownika – traktujemy jako niezalogowanego
+    if (!userId) {
+        const anonymous = { userId: null, role: null, user: null };
+        req._authContext = anonymous;
+        return anonymous;
+    }
+
+    // Jeśli Supabase nie jest skonfigurowany – zachowujemy stare zachowanie oparte na roli z cookies
+    if (!supabase) {
+        const ctx = {
+            userId,
+            role: roleFromCookie || 'NEW_USER',
+            user: null,
+        };
+        req._authContext = ctx;
+        return ctx;
+    }
+
+    try {
+        const { data: user, error } = await supabase
+            .from('User')
+            .select('id, role, isActive')
+            .eq('id', userId)
+            .single();
+
+        if (error || !user || user.isActive === false) {
+            const anonymous = { userId: null, role: null, user: null };
+            req._authContext = anonymous;
+            return anonymous;
+        }
+
+        const ctx = {
+            userId: user.id,
+            role: user.role || roleFromCookie || 'NEW_USER',
+            user,
+        };
+        req._authContext = ctx;
+        return ctx;
+    } catch (err) {
+        console.error('Błąd getAuthContext:', err);
+        const anonymous = { userId: null, role: null, user: null };
+        req._authContext = anonymous;
+        return anonymous;
+    }
+}
+
 function requireRole(allowedRoles = []) {
-    return (req, res, next) => {
-        const cookies = parseCookies(req);
-        const userId = cookies.auth_id;
-        const role = cookies.auth_role;
+    return async (req, res, next) => {
+        const { userId, role } = await getAuthContext(req);
 
         if (!userId || !role) {
             return res.status(401).json({ status: 'error', message: 'Nieautoryzowany – zaloguj się.' });
@@ -85,7 +295,7 @@ function requireRole(allowedRoles = []) {
         }
 
         req.user = { id: userId, role };
-        next();
+        return next();
     };
 }
 
@@ -181,6 +391,12 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     try {
+        const attemptKey = getLoginAttemptKey(req, email);
+
+        if (isLoginBlocked(attemptKey)) {
+            return res.status(429).json({ status: 'error', message: 'Zbyt wiele nieudanych prób logowania. Spróbuj ponownie później.' });
+        }
+
         const { data: user, error } = await supabase
             .from('User')
             .select('id, email, password, role, isActive')
@@ -188,14 +404,17 @@ app.post('/api/auth/login', async (req, res) => {
             .single();
 
         if (error || !user) {
+            registerFailedLogin(attemptKey);
             return res.status(401).json({ status: 'error', message: 'Nieprawidłowe dane logowania.' });
         }
 
         if (user.isActive === false) {
+            registerFailedLogin(attemptKey);
             return res.status(403).json({ status: 'error', message: 'Konto jest nieaktywne.' });
         }
 
         if (!user.password) {
+            registerFailedLogin(attemptKey);
             return res.status(401).json({ status: 'error', message: 'Nieprawidłowe dane logowania.' });
         }
 
@@ -209,18 +428,24 @@ app.post('/api/auth/login', async (req, res) => {
                 console.warn('Błąd porównania hasła bcrypt:', compareError);
                 passwordOk = false;
             }
-        } else {
-            // Fallback: proste porównanie 1:1 (dla ewentualnych nowych kont testowych)
+        } else if (!IS_PRODUCTION) {
+            // Fallback w środowisku nieprodukcyjnym – np. dla kont testowych
             passwordOk = user.password === password;
+        } else {
+            // W produkcji nie akceptujemy haseł w postaci jawnej
+            passwordOk = false;
         }
 
         if (!passwordOk) {
+            registerFailedLogin(attemptKey);
             return res.status(401).json({ status: 'error', message: 'Nieprawidłowe dane logowania.' });
         }
 
         const role = user.role || 'NEW_USER';
 
         setAuthCookies(res, { id: user.id, role });
+
+        resetLoginAttempts(attemptKey);
 
         return res.json({
             status: 'success',
@@ -233,78 +458,6 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (err) {
         console.error('Błąd logowania:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas logowania', details: err.message });
-    }
-});
-
-// ============================================
-// GET /api/orders/:id - Szczegóły zamówienia
-// ============================================
-app.get('/api/orders/:id', async (req, res) => {
-    if (!supabase) {
-        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
-    }
-
-    try {
-        const cookies = parseCookies(req);
-        const requesterId = cookies.auth_id;
-        const role = cookies.auth_role;
-
-        if (!requesterId || !role) {
-            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
-        }
-
-        const orderId = req.params.id;
-
-        const { data: order, error } = await supabase
-            .from('Order')
-            .select(`
-                id,
-                orderNumber,
-                customerId,
-                userId,
-                status,
-                total,
-                notes,
-                createdAt,
-                updatedAt,
-                Customer:customerId(id, name, email, phone, city, address, zipCode, country),
-                User:userId(id, name, shortCode),
-                OrderItem:OrderItem(
-                    id,
-                    productId,
-                    quantity,
-                    unitPrice,
-                    selectedProjects,
-                    projectQuantities,
-                    quantitySource,
-                    totalQuantity,
-                    source,
-                    locationName,
-                    customization,
-                    productionNotes,
-                    Product:productId(id, name, identifier, index, code)
-                )
-            `)
-            .eq('id', orderId)
-            .single();
-
-        if (error) {
-            console.error('Błąd pobierania zamówienia:', error);
-            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać zamówienia' });
-        }
-
-        if (!order) {
-            return res.status(404).json({ status: 'error', message: 'Zamówienie nie istnieje' });
-        }
-
-        if (!canRoleAccessOrder(role, requesterId, order.userId)) {
-            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do podglądu zamówienia' });
-        }
-
-        return res.json({ status: 'success', data: order });
-    } catch (error) {
-        console.error('Błąd w GET /api/orders/:id:', error);
-        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
 
@@ -491,70 +644,6 @@ app.get('/api/orders/:id/history', async (req, res) => {
             status: 'error', 
             message: 'Błąd serwera: ' + (error.message || String(error))
         });
-    }
-});
-
-// ============================================
-// POST /api/orders/:id/history/test - dodaj testowy wpis historii (TYMCZASOWE!)
-// ============================================
-app.post('/api/orders/:id/history/test', async (req, res) => {
-    if (!supabase) {
-        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
-    }
-
-    try {
-        const orderId = req.params.id;
-        
-        const { error: insertError } = await supabase
-            .from('OrderStatusHistory')
-            .insert({
-                orderId: orderId,
-                oldStatus: 'PENDING',
-                newStatus: 'APPROVED',
-                changedBy: '9c19a5af-01af-4875-8c76-d5c0bfd39dff',
-                changedAt: new Date().toISOString(),
-                notes: 'Testowy wpis historii'
-            });
-
-        if (insertError) {
-            console.error('Błąd wstawiania testu:', insertError);
-            return res.status(500).json({ status: 'error', message: insertError.message });
-        }
-
-        return res.json({ status: 'success', message: 'Testowy wpis dodany' });
-    } catch (error) {
-        console.error('Błąd w POST /api/orders/:id/history/test:', error);
-        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
-    }
-});
-
-// ============================================
-// POST /api/orders/disable-trigger - wyłączenie wyzwalacza historii (TYMCZASOWE!)
-// ============================================
-app.post('/api/orders/disable-trigger', async (req, res) => {
-    if (!supabase) {
-        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
-    }
-
-    try {
-        // Wyłącz wyzwalacz, który powoduje podwójne wpisy
-        const { error: dropError } = await supabase
-            .rpc('exec_sql', { 
-                sql: 'DROP TRIGGER IF EXISTS trigger_order_status_change ON public."Order";' 
-            });
-
-        if (dropError) {
-            // Alternatywa - bezpośrednie SQL przez Supabase client
-            console.log('Próba wyłączenia wyzwalacza...');
-        }
-
-        return res.json({ 
-            status: 'success', 
-            message: 'Wyzwalacz został wyłączony. Historia będzie zapisywana tylko przez backend.' 
-        });
-    } catch (error) {
-        console.error('Błąd wyłączania wyzwalacza:', error);
-        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
 
@@ -779,8 +868,8 @@ app.get('/api/auth/me', async (req, res) => {
     }
 });
 
-// Test połączenia z Supabase – proste zapytanie do tabeli produktów
-app.get('/api/supabase/health', async (req, res) => {
+// Test połączenia z Supabase – proste zapytanie do tabeli produktów (tylko ADMIN)
+app.get('/api/supabase/health', requireRole(['ADMIN']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({
             status: 'error',
@@ -2810,13 +2899,12 @@ app.get('/api/admin/unassigned-cities', requireRole(['GRAPHICS', 'ADMIN', 'SALES
 const MAX_FAVORITES = 12;
 
 // Pobierz ulubione użytkownika
-app.get('/api/favorites', async (req, res) => {
+app.get('/api/favorites', requireRole(), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
 
-    const cookies = parseCookies(req);
-    const userId = cookies.auth_id;
+    const userId = req.user?.id;
 
     if (!userId) {
         return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
@@ -2854,13 +2942,12 @@ app.get('/api/favorites', async (req, res) => {
 });
 
 // Dodaj do ulubionych
-app.post('/api/favorites', async (req, res) => {
+app.post('/api/favorites', requireRole(), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
 
-    const cookies = parseCookies(req);
-    const userId = cookies.auth_id;
+    const userId = req.user?.id;
 
     if (!userId) {
         return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
@@ -2933,13 +3020,12 @@ app.post('/api/favorites', async (req, res) => {
 });
 
 // Usuń z ulubionych
-app.delete('/api/favorites/:type/:itemId', async (req, res) => {
+app.delete('/api/favorites/:type/:itemId', requireRole(), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
 
-    const cookies = parseCookies(req);
-    const userId = cookies.auth_id;
+    const userId = req.user?.id;
 
     if (!userId) {
         return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
@@ -4370,10 +4456,8 @@ app.post('/api/order-templates/:id/favorite', requireRole(['SALES_REP', 'SALES_D
 // ============================================
 app.get('/api/user', async (req, res) => {
     try {
-        const cookies = parseCookies(req);
-        const userId = cookies.auth_id;
-        const role = cookies.auth_role;
-        
+        const { userId, role } = await getAuthContext(req);
+
         if (!userId || !role) {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
         }
@@ -4403,10 +4487,8 @@ app.get('/api/user', async (req, res) => {
 // ============================================
 app.get('/api/users', async (req, res) => {
     try {
-        const cookies = parseCookies(req);
-        const userId = cookies.auth_id;
-        const role = cookies.auth_role;
-        
+        const { userId, role } = await getAuthContext(req);
+
         if (!userId || !role) {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
         }
@@ -4438,12 +4520,8 @@ app.get('/api/users', async (req, res) => {
 // ============================================
 app.get('/api/orders/my', async (req, res) => {
     try {
-        const cookies = parseCookies(req);
-        const userId = cookies.auth_id;
-        
-        console.log('[GET /api/orders/my] cookies:', cookies);
-        console.log('[GET /api/orders/my] userId:', userId);
-        
+        const { userId } = await getAuthContext(req);
+
         if (!userId) {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
         }
@@ -4508,11 +4586,9 @@ app.get('/api/orders/my', async (req, res) => {
 // ============================================
 app.get('/api/orders', async (req, res) => {
     try {
-        const cookies = parseCookies(req);
-        const userId = cookies.auth_id;
-        const role = cookies.auth_role;
+        const { userId, role } = await getAuthContext(req);
 
-        console.log('[GET /api/orders] start', { cookies, userId, role });
+        console.log('[GET /api/orders] start', { userId, role });
         
         if (!userId || !role) {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
@@ -4593,9 +4669,7 @@ app.get('/api/orders', async (req, res) => {
 // ============================================
 app.get('/api/admin/orders', async (req, res) => {
     try {
-        const cookies = parseCookies(req);
-        const userId = cookies.auth_id;
-        const role = cookies.auth_role;
+        const { userId, role } = await getAuthContext(req);
 
         console.log('[GET /api/admin/orders] start', { userId, role });
         
@@ -4678,9 +4752,7 @@ app.get('/api/admin/orders', async (req, res) => {
 // ============================================
 app.get('/api/orders/:id', async (req, res) => {
     try {
-        const cookies = parseCookies(req);
-        const userId = cookies.auth_id;
-        const role = cookies.auth_role;
+        const { userId, role } = await getAuthContext(req);
         
         if (!userId || !role) {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
@@ -4758,52 +4830,6 @@ app.get('/api/orders/:id', async (req, res) => {
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
     console.error('Niezłapany błąd:', err);
-});
-
-// Tymczasowy endpoint do sprawdzania ścieżek produkcyjnych
-app.post('/api/orders/test-production-paths', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('Product')
-      .select('identifier, productionPath')
-      .not('productionPath', 'is', null)
-      .limit(20);
-    
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-    
-    console.log('Ścieżki produkcyjne w bazie danych:');
-    console.log('=====================================');
-    data.forEach((row, index) => {
-      console.log(`${index + 1}. ${row.identifier}: ${row.productionPath}`);
-    });
-    
-    // Grupowanie według ścieżek
-    const grouped = {};
-    data.forEach(row => {
-      const path = row.productionPath || 'Brak ścieżki';
-      if (!grouped[path]) grouped[path] = [];
-      grouped[path].push(row.identifier);
-    });
-    
-    console.log('\nGrupy produktów według ścieżek:');
-    Object.entries(grouped).forEach(([path, products]) => {
-      console.log(`\n"${path}":`);
-      products.forEach(product => console.log(`  - ${product}`));
-    });
-    
-    res.json({ 
-      message: 'Sprawdzono ścieżki produkcyjne',
-      count: data.length,
-      products: data,
-      grouped: grouped
-    });
-    
-  } catch (error) {
-    console.error('Błąd:', error.message);
-    res.status(500).json({ error: error.message });
-  }
 });
 
 // Start serwera
