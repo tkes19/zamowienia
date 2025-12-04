@@ -2476,6 +2476,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const cityTilesSearch = document.getElementById('city-tiles-search');
     const cityTilesSort = document.getElementById('city-tiles-sort');
     const cityTilesShowAssignedOnly = document.getElementById('city-tiles-show-assigned-only');
+    const cityFilterShared = document.getElementById('city-filter-shared');
+    const cityFilterNew = document.getElementById('city-filter-new');
+    const cityFilterUnassignedGlobal = document.getElementById('city-filter-unassigned-global');
+    const cityFiltersClearBtn = document.getElementById('city-filters-clear-btn');
+    const cityAccessExportCsvBtn = document.getElementById('city-access-export-csv-btn');
+    const cityAccessPrintBtn = document.getElementById('city-access-print-btn');
     const refreshCityAccessBtn = document.getElementById('refresh-city-access-btn');
     
     // Event listenery dla kafelków miejscowości
@@ -2484,6 +2490,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cityTilesSearch) cityTilesSearch.addEventListener('input', debounce(renderCityTiles, 200));
     if (cityTilesSort) cityTilesSort.addEventListener('change', renderCityTiles);
     if (cityTilesShowAssignedOnly) cityTilesShowAssignedOnly.addEventListener('change', renderCityTiles);
+    if (cityFilterShared) cityFilterShared.addEventListener('change', renderCityTiles);
+    if (cityFilterNew) cityFilterNew.addEventListener('change', renderCityTiles);
+    if (cityFilterUnassignedGlobal) cityFilterUnassignedGlobal.addEventListener('change', renderCityTiles);
+    if (cityFiltersClearBtn) cityFiltersClearBtn.addEventListener('click', clearCityFilters);
+    if (cityAccessExportCsvBtn) cityAccessExportCsvBtn.addEventListener('click', exportCityAccessCSV);
+    if (cityAccessPrintBtn) cityAccessPrintBtn.addEventListener('click', showCityAccessPrintPreview);
     
     async function loadCityAccess() {
         // Sprawdź rolę użytkownika
@@ -2549,6 +2561,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             
             if (result.status === 'success') {
+                // Zaktualizuj liczniki w nagłówku dla widoku grafika na podstawie statystyk globalnych
+                if (result.data && result.data.stats) {
+                    updateCityStatsForGraphics(result.data.stats);
+                }
                 renderUnassignedCitiesList(result.data);
             } else {
                 throw new Error(result.message || 'Błąd pobierania danych');
@@ -2727,6 +2743,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // Jeśli był wybrany użytkownik, odśwież jego dane
             if (selectedUserId) {
                 await loadUserCityAccess(selectedUserId);
+            } else {
+                // Brak wybranego użytkownika – zaktualizuj globalne statystyki
+                updateCityTilesStats();
             }
             
         } catch (error) {
@@ -2754,15 +2773,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function getGloballyUnassignedCities() {
-        // Stwórz zbiór wszystkich miejscowości, które mają aktywne przypisanie w systemie
         const globallyAssignedCities = new Set();
+        const cityAssignmentCounts = new Map();
+        const cityEntries = new Map(); // { user, assignmentId }
+
         allSystemCityAssignments.forEach(a => {
-            if (a.isActive) {
-                globallyAssignedCities.add(a.cityName);
+            if (a.isActive && a.cityName) {
+                const key = a.cityName;
+                globallyAssignedCities.add(key);
+
+                const current = cityAssignmentCounts.get(key) || 0;
+                cityAssignmentCounts.set(key, current + 1);
+
+                const list = cityEntries.get(key) || [];
+                if (a.user) {
+                    const exists = list.some(e => e.user && e.user.id === a.user.id);
+                    if (!exists) {
+                        list.push({ user: a.user, assignmentId: a.id });
+                    }
+                }
+                cityEntries.set(key, list);
             }
         });
         
-        // Zwróć miejscowości, które nie mają żadnego przypisania w systemie
+        window.__citySharedStats = {
+            counts: cityAssignmentCounts,
+            entriesByCity: cityEntries,
+        };
+
         return allQnapCities.filter(city => !globallyAssignedCities.has(city));
     }
     
@@ -2862,6 +2900,17 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `;
     }
+
+    function clearCityFilters() {
+        if (cityTilesSearch) cityTilesSearch.value = '';
+        if (cityTilesSort) cityTilesSort.value = 'alpha';
+        if (cityTilesShowAssignedOnly) cityTilesShowAssignedOnly.checked = false;
+        if (cityFilterShared) cityFilterShared.checked = false;
+        if (cityFilterNew) cityFilterNew.checked = false;
+        if (cityFilterUnassignedGlobal) cityFilterUnassignedGlobal.checked = false;
+
+        renderCityTiles();
+    }
     
     function renderCityTiles() {
         if (!cityTilesContainer || !selectedUserId) return;
@@ -2869,6 +2918,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const searchTerm = cityTilesSearch?.value?.toLowerCase() || '';
         const sortMode = cityTilesSort?.value || 'alpha';
         const showAssignedOnly = cityTilesShowAssignedOnly?.checked || false;
+        const filterSharedOn = cityFilterShared?.checked || false;
+        const filterNewOn = cityFilterNew?.checked || false;
+        const filterUnassignedGlobalOn = cityFilterUnassignedGlobal?.checked || false;
         
         // Przygotuj mapę przypisań
         const assignedCities = new Map();
@@ -2878,14 +2930,52 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
         
+        // Globalne dane pomocnicze: nieprzypisane, współdzielone, nowe (30 dni)
+        const globallyUnassignedCities = getGloballyUnassignedCities();
+        const globallyUnassignedSet = new Set(globallyUnassignedCities);
+
+        const sharedCounts = window.__citySharedStats && window.__citySharedStats.counts;
+
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        const cityFirstAssignmentAt = new Map();
+
+        (allSystemCityAssignments || []).forEach(a => {
+            if (!a || !a.isActive || !a.cityName) return;
+            const tsRaw = a.updatedAt || a.createdAt;
+            if (!tsRaw) return;
+            const ts = new Date(tsRaw).getTime();
+            if (!ts || Number.isNaN(ts)) return;
+            const existing = cityFirstAssignmentAt.get(a.cityName);
+            if (existing == null || ts < existing) {
+                cityFirstAssignmentAt.set(a.cityName, ts);
+            }
+        });
+
         // Filtruj miejscowości
         let cities = allQnapCities.filter(city => {
             if (searchTerm && !city.toLowerCase().includes(searchTerm)) return false;
             if (showAssignedOnly && !assignedCities.has(city)) return false;
+
+            // Filtry globalne
+            if (filterSharedOn) {
+                const count = sharedCounts && typeof sharedCounts.get === 'function'
+                    ? (sharedCounts.get(city) || 0)
+                    : 0;
+                if (count <= 1) return false;
+            }
+
+            if (filterNewOn) {
+                const firstAssignedTs = cityFirstAssignmentAt.get(city);
+                const isNewCity = firstAssignedTs != null && (now - firstAssignedTs) <= THIRTY_DAYS_MS;
+                if (!isNewCity) return false;
+            }
+
+            if (filterUnassignedGlobalOn && !globallyUnassignedSet.has(city)) return false;
+
             return true;
         });
-        
-                
+
         // Sortuj
         if (sortMode === 'assigned-first') {
             cities.sort((a, b) => {
@@ -2899,6 +2989,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 const aAssigned = assignedCities.has(a) ? 1 : 0;
                 const bAssigned = assignedCities.has(b) ? 1 : 0;
                 if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+                return a.localeCompare(b, 'pl');
+            });
+        } else if (sortMode === 'recent-first') {
+            cities.sort((a, b) => {
+                const aData = assignedCities.get(a);
+                const bData = assignedCities.get(b);
+                const aAssigned = !!aData;
+                const bAssigned = !!bData;
+
+                // Najpierw przypisane, potem pozostałe
+                if (aAssigned && !bAssigned) return -1;
+                if (!aAssigned && bAssigned) return 1;
+
+                if (aAssigned && bAssigned) {
+                    const aTimeRaw = aData.updatedAt || aData.createdAt || '';
+                    const bTimeRaw = bData.updatedAt || bData.createdAt || '';
+                    const aTime = aTimeRaw ? new Date(aTimeRaw).getTime() : 0;
+                    const bTime = bTimeRaw ? new Date(bTimeRaw).getTime() : 0;
+                    if (aTime !== bTime) {
+                        // Nowsze przypisania na początku listy
+                        return bTime - aTime;
+                    }
+                }
+
                 return a.localeCompare(b, 'pl');
             });
         } else {
@@ -2933,14 +3047,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="flex flex-wrap gap-2">
             `;
             
-            const globallyUnassignedCities = getGloballyUnassignedCities();
-
             grouped[letter].forEach(city => {
                 const isAssigned = assignedCities.has(city);
                 const accessData = assignedCities.get(city);
                 
                 // Sprawdź, czy miejscowość jest globalnie nieprzypisana
-                const isGloballyUnassigned = globallyUnassignedCities.includes(city);
+                const isGloballyUnassigned = globallyUnassignedSet.has(city);
+
+                // Sprawdź, czy miejscowość jest współdzielona (globalnie > 1 aktywne przypisanie)
+                const sharedCount = sharedCounts && typeof sharedCounts.get === 'function'
+                    ? (sharedCounts.get(city) || 0)
+                    : 0;
+                const isShared = sharedCount > 1;
+
+                // Sprawdź, czy miejscowość jest "nowa" (pierwsze aktywne przypisanie w ostatnich 30 dniach)
+                const firstAssignedTs = cityFirstAssignmentAt.get(city);
+                const isNewCity = firstAssignedTs != null && (now - firstAssignedTs) <= THIRTY_DAYS_MS;
                 
                 const baseClasses = 'city-tile px-4 py-2 rounded-lg font-medium text-sm cursor-pointer transition-all duration-200 transform select-none relative';
                 const assignedClasses = 'bg-green-500 text-white shadow-lg scale-105 hover:bg-green-600 hover:shadow-xl';
@@ -2954,11 +3076,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Dodaj pomarańczową kropkę tylko dla miejscowości globalnie nieprzypisanych
                 const unassignedInfo = isGloballyUnassigned ? 
                     '<span class="absolute -top-1 -right-1 w-2 h-2 bg-orange-400 rounded-full" title="Nieprzypisana do żadnego handlowca"></span>' : '';
+
+                // Badge współdzielonej miejscowości (globalnie)
+                const sharedBadge = isShared
+                    ? `<span class="absolute -top-2 left-2 px-1 py-0 rounded-full bg-amber-500 text-white text-[8px] font-semibold shadow-sm flex items-center gap-1" title="Współdzielone: ${sharedCount} handlowców">
+                            <i class="fas fa-users text-[8px]"></i>
+                            <span>${sharedCount}</span>
+                       </span>`
+                    : '';
+
+                // Badge "Nowe" dla miejscowości, które pojawiły się w systemie w ciągu ostatnich 30 dni
+                const recentBadge = isNewCity
+                    ? '<span class="absolute -top-2 right-2 px-1 py-0 rounded-full bg-blue-600 text-white text-[8px] font-semibold shadow-sm">Nowe</span>'
+                    : '';
                 
                 html += `
                     <button class="${classes}" data-city="${citySafe}" data-assigned="${isAssigned}" ${dataId}>
                         ${icon}${citySafe}
                         ${unassignedInfo}
+                        ${sharedBadge}
+                        ${recentBadge}
                     </button>
                 `;
             });
@@ -2978,6 +3115,156 @@ document.addEventListener('DOMContentLoaded', () => {
         
         updateCityTilesStats();
     }
+
+    function exportCityAccessCSV() {
+        const assignments = Array.isArray(allSystemCityAssignments) ? allSystemCityAssignments : [];
+        if (assignments.length === 0) {
+            showAdminToast('Brak przypisań miejscowości do eksportu', 'warning');
+            return;
+        }
+
+        const userById = new Map();
+        (cityAccessUsers || []).forEach(u => {
+            if (!u || u.id == null) return;
+            userById.set(String(u.id), u);
+        });
+
+        const headers = ['Handlowiec', 'Email', 'Rola', 'Miejscowość', 'Data przypisania', 'Aktywne'];
+
+        const rows = assignments
+            .filter(a => a && a.cityName && a.userId != null)
+            .map(a => {
+                const user = userById.get(String(a.userId)) || a.user || {};
+                const name = user.name || '';
+                const email = user.email || '';
+                const role = user.role || '';
+                const cityName = a.cityName || '';
+                const tsRaw = a.updatedAt || a.createdAt || '';
+                let dateStr = '';
+                if (tsRaw) {
+                    try {
+                        dateStr = new Date(tsRaw).toLocaleString('pl-PL');
+                    } catch (_) {
+                        dateStr = tsRaw;
+                    }
+                }
+                const active = a.isActive ? 'TAK' : 'NIE';
+                return [name, email, role, cityName, dateStr, active];
+            });
+
+        if (rows.length === 0) {
+            showAdminToast('Brak aktywnych przypisań do eksportu', 'warning');
+            return;
+        }
+
+        const escapeCSV = (val) => {
+            const str = String(val ?? '');
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                return '"' + str.replace(/"/g, '""') + '"';
+            }
+            return str;
+        };
+
+        const csvContent = [
+            headers.map(escapeCSV).join(','),
+            ...rows.map(row => row.map(escapeCSV).join(','))
+        ].join('\n');
+
+        const BOM = '\uFEFF';
+        const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `przypisania_miejscowosci_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showAdminToast(`Wyeksportowano ${rows.length} przypisań miejscowości`, 'success');
+    }
+
+    function showCityAccessPrintPreview() {
+        const assignments = Array.isArray(allSystemCityAssignments) ? allSystemCityAssignments : [];
+        if (assignments.length === 0) {
+            alert('Brak przypisań miejscowości do wydruku.');
+            return;
+        }
+
+        const userById = new Map();
+        (cityAccessUsers || []).forEach(u => {
+            if (!u || u.id == null) return;
+            userById.set(String(u.id), u);
+        });
+
+        const map = new Map();
+        assignments
+            .filter(a => a && a.cityName && a.userId != null && a.isActive)
+            .forEach(a => {
+                const user = userById.get(String(a.userId)) || a.user || {};
+                const userKey = String(a.userId);
+                if (!map.has(userKey)) {
+                    map.set(userKey, { user, cities: new Set() });
+                }
+                map.get(userKey).cities.add(a.cityName);
+            });
+
+        if (map.size === 0) {
+            alert('Brak aktywnych przypisań miejscowości do wydruku.');
+            return;
+        }
+
+        const groups = Array.from(map.values()).map(({ user, cities }) => {
+            const name = user.name || user.email || `Użytkownik #${user.id ?? ''}`;
+            const email = user.email || '';
+            const role = user.role || '';
+            const citiesSorted = Array.from(cities).sort((a, b) => a.localeCompare(b, 'pl'));
+            return { name, email, role, cities: citiesSorted };
+        }).sort((a, b) => a.name.localeCompare(b.name, 'pl'));
+
+        const sectionsHtml = groups.map(group => {
+            const safeName = escapeHtml(group.name);
+            const safeEmail = escapeHtml(group.email);
+            const safeRole = escapeHtml(group.role || '');
+            const citiesHtml = group.cities.map(city => `<li>${escapeHtml(city)}</li>`).join('');
+            return `
+                <section class="mb-6 break-inside-avoid">
+                    <header class="mb-1">
+                        <div class="text-sm font-semibold text-gray-900">${safeName}</div>
+                        <div class="text-[10px] text-gray-500">${safeEmail}${safeRole ? ' · ' + safeRole : ''}</div>
+                    </header>
+                    <ol class="list-decimal list-inside text-[11px] text-gray-800 leading-snug">
+                        ${citiesHtml}
+                    </ol>
+                </section>
+            `;
+        }).join('');
+
+        const nowStr = new Date().toLocaleString('pl-PL');
+
+        const printHtml = `
+            <div class="print-document">
+                <div class="print-header">
+                    <div>
+                        <div class="print-company">Rezon</div>
+                        <div class="print-title">Przypisania miejscowości PM</div>
+                    </div>
+                    <div class="print-meta">
+                        <div>Data wydruku: ${escapeHtml(nowStr)}</div>
+                    </div>
+                </div>
+                <div class="print-section">
+                    <div class="print-section-title">Zestawienie według handlowców</div>
+                    <div class="print-grid" style="grid-template-columns: 1fr 1fr; gap: 16px;">
+                        ${sectionsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        if (adminPrintPreviewContent) adminPrintPreviewContent.innerHTML = printHtml;
+        if (adminPrintPreviewModal) adminPrintPreviewModal.classList.remove('hidden');
+    }
     
     async function handleCityTileClick(e) {
         const tile = e.currentTarget;
@@ -2993,6 +3280,27 @@ document.addEventListener('DOMContentLoaded', () => {
         
         try {
             if (isAssigned && accessId) {
+                // Sprawdź, czy to ostatnie aktywne przypisanie tej miejscowości w całym systemie
+                let isLastAssignment = false;
+                if (Array.isArray(allSystemCityAssignments) && allSystemCityAssignments.length > 0) {
+                    const activeForCity = allSystemCityAssignments.filter(a =>
+                        a && a.isActive && a.cityName === city
+                    );
+                    if (activeForCity.length === 1) {
+                        isLastAssignment = true;
+                    }
+                }
+
+                if (isLastAssignment) {
+                    const confirmMessage = `Ta operacja spowoduje, że miejscowość "${city}" nie będzie przypisana do żadnego handlowca.\n\nCzy na pewno chcesz usunąć ostatnie przypisanie?`;
+                    const confirmed = confirm(confirmMessage);
+                    if (!confirmed) {
+                        tile.disabled = false;
+                        tile.style.opacity = '1';
+                        return;
+                    }
+                }
+
                 // Usuń przypisanie
                 const response = await fetch(`/api/admin/user-city-access/${accessId}`, {
                     method: 'DELETE'
@@ -3009,7 +3317,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     // Aktualizuj lokalną listę
                     selectedUserCityAccess = selectedUserCityAccess.filter(a => a.id != accessId);
+                    await loadAllCityAssignments();
                     updateCityTilesStats();
+                    renderCityTiles();
                 } else {
                     alert('Błąd: ' + (result.message || 'Nie udało się usunąć'));
                 }
@@ -3032,7 +3342,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     // Aktualizuj lokalną listę
                     selectedUserCityAccess.push(result.data);
+                    await loadAllCityAssignments();
                     updateCityTilesStats();
+                    renderCityTiles();
                 } else {
                     alert('Błąd: ' + (result.message || 'Nie udało się przypisać'));
                 }
@@ -3047,28 +3359,163 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function updateCityTilesStats() {
-        const assignedCities = new Set(selectedUserCityAccess
-            .filter(a => a.isActive)
-            .map(a => a.cityName));
-            
-        const unassignedCities = allQnapCities.filter(city => !assignedCities.has(city));
-        const globallyUnassignedCities = getGloballyUnassignedCities();
-        
-        const assignedCount = assignedCities.size;
-        const totalCount = allQnapCities.length;
-        const availableCount = unassignedCities.length;
-        const globallyUnassignedCount = globallyUnassignedCities.length;
-        
         const statsAssigned = document.getElementById('city-stats-assigned');
         const statsAvailable = document.getElementById('city-stats-available');
         const statsTotal = document.getElementById('city-stats-total');
-        
-        if (statsAssigned) statsAssigned.textContent = assignedCount;
-        if (statsAvailable) statsAvailable.textContent = availableCount;
-        if (statsTotal) statsTotal.textContent = totalCount;
-        
-        // Dodaj obsługę kliknięcia na "Dostępnych" - pokazuje listę globalnie nieprzypisanych
         const availableTrigger = document.getElementById('available-cities-trigger');
+        const sharedTrigger = document.getElementById('shared-cities-trigger');
+        const sharedCounter = document.getElementById('city-stats-shared');
+        const recentTrigger = document.getElementById('recent-assignments-trigger');
+        const recentCounter = document.getElementById('city-stats-recent');
+        const modeLabel = document.getElementById('city-stats-mode');
+        const userSummary = document.getElementById('city-user-summary');
+
+        const globallyUnassignedCities = getGloballyUnassignedCities();
+        const globallyUnassignedCount = globallyUnassignedCities.length;
+        const totalCount = allQnapCities.length;
+        const globallyAssignedCount = Math.max(totalCount - globallyUnassignedCount, 0);
+
+        // Oblicz współdzielone miejscowości (mające >1 aktywne przypisanie)
+        let sharedCities = [];
+        const sharedCounts = window.__citySharedStats && window.__citySharedStats.counts;
+        const entriesByCity = window.__citySharedStats && window.__citySharedStats.entriesByCity;
+        if (sharedCounts) {
+            sharedCounts.forEach((count, city) => {
+                if (count > 1) {
+                    const entries = entriesByCity ? (entriesByCity.get(city) || []) : [];
+                    const assignments = entries.map(e => ({
+                        user: e.user,
+                        assignmentId: e.assignmentId || null,
+                    }));
+                    const users = assignments.map(a => a.user).filter(Boolean);
+                    sharedCities.push({ cityName: city, count, users, assignments });
+                }
+            });
+        }
+        const sharedCount = sharedCities.length;
+
+        // Nowe przypisania z ostatnich 30 dni (na podstawie updatedAt lub createdAt)
+        const now = Date.now();
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+        const recentAssignmentsAll = (allSystemCityAssignments || []).filter(a => {
+            if (!a || !a.isActive) return false;
+            const tsRaw = a.updatedAt || a.createdAt;
+            if (!tsRaw) return false;
+            const ts = new Date(tsRaw).getTime();
+            if (!ts || Number.isNaN(ts)) return false;
+            return (now - ts) <= THIRTY_DAYS_MS;
+        });
+        const recentGlobalCount = recentAssignmentsAll.length;
+
+        // Brak wybranego użytkownika – pokaż statystyki globalne
+        if (!selectedUserId) {
+            if (statsAssigned) statsAssigned.textContent = globallyAssignedCount;
+            if (statsAvailable) statsAvailable.textContent = globallyUnassignedCount;
+            if (statsTotal) statsTotal.textContent = totalCount;
+
+            if (recentCounter) recentCounter.textContent = recentGlobalCount;
+
+            if (modeLabel) {
+                modeLabel.textContent = 'Widok globalny – statystyki dla całego systemu';
+            }
+
+            if (userSummary) {
+                userSummary.textContent = '';
+                userSummary.classList.add('hidden');
+            }
+
+            const assignedPct = totalCount ? Math.round((globallyAssignedCount / totalCount) * 100) : 0;
+            const availablePct = totalCount ? Math.round((globallyUnassignedCount / totalCount) * 100) : 0;
+            if (statsAssigned) statsAssigned.title = `Globalnie przypisane miejscowości (${assignedPct}% wszystkich)`;
+            if (statsAvailable) statsAvailable.title = `Globalnie nieprzypisane miejscowości (${availablePct}% wszystkich)`;
+            if (statsTotal) statsTotal.title = 'Liczba wszystkich miejscowości dostępnych w systemie';
+
+            if (availableTrigger) {
+                availableTrigger.onclick = (e) => {
+                    e.stopPropagation();
+                    if (globallyUnassignedCities.length > 0) {
+                        showAllUnassignedCities(globallyUnassignedCities);
+                    }
+                };
+                availableTrigger.title = `Kliknij, aby zobaczyć listę (${globallyUnassignedCount} miejscowości nieprzypisanych do żadnego handlowca – dane globalne)`;
+            }
+
+            if (sharedTrigger) {
+                if (sharedCounter) sharedCounter.textContent = sharedCount;
+                sharedTrigger.onclick = (e) => {
+                    e.stopPropagation();
+                    if (sharedCount > 0) {
+                        showSharedCitiesModal(sharedCities);
+                    }
+                };
+                sharedTrigger.title = sharedCount > 0
+                    ? `Liczba miejscowości współdzielonych przez wielu handlowców: ${sharedCount}`
+                    : 'Brak miejscowości współdzielonych przez wielu handlowców';
+            }
+
+            if (recentTrigger) {
+                recentTrigger.onclick = (e) => {
+                    e.stopPropagation();
+                    if (recentAssignmentsAll.length > 0) {
+                        showRecentAssignmentsModal(recentAssignmentsAll, { scope: 'global' });
+                    } else {
+                        alert('Brak nowych przypisań w ostatnich 30 dniach (globalnie).');
+                    }
+                };
+                recentTrigger.title = recentGlobalCount > 0
+                    ? `Liczba nowych przypisań w ostatnich 30 dniach (globalnie): ${recentGlobalCount}`
+                    : 'Brak nowych przypisań w ostatnich 30 dniach (globalnie)';
+            }
+
+            updateCityRanking();
+            return;
+        }
+
+        // Wybrany użytkownik – statystyki dla konkretnego handlowca
+        const assignedCities = new Set(selectedUserCityAccess
+            .filter(a => a.isActive)
+            .map(a => a.cityName));
+
+        const unassignedCities = allQnapCities.filter(city => !assignedCities.has(city));
+        const assignedCount = assignedCities.size;
+        const availableCount = unassignedCities.length;
+
+        const assignedPctUser = totalCount ? Math.round((assignedCount / totalCount) * 100) : 0;
+        const availablePctUser = totalCount ? Math.round((availableCount / totalCount) * 100) : 0;
+
+        const recentAssignmentsForUser = recentAssignmentsAll.filter(a => a.userId === selectedUserId);
+        const recentUserCount = recentAssignmentsForUser.length;
+
+        if (modeLabel) {
+            const currentUser = cityAccessUsers.find(u => u.id === selectedUserId);
+            const name = currentUser?.name || currentUser?.email || 'wybranego użytkownika';
+            modeLabel.textContent = `Widok dla: ${name}`;
+        }
+
+        if (statsAssigned) {
+            statsAssigned.textContent = assignedCount;
+            statsAssigned.title = `Miejscowości przypisane do wybranego handlowca (${assignedPctUser}% wszystkich)`;
+        }
+        if (statsAvailable) {
+            statsAvailable.textContent = availableCount;
+            statsAvailable.title = `Miejscowości, których wybrany handlowiec jeszcze nie ma (${availablePctUser}% wszystkich)`;
+        }
+        if (statsTotal) {
+            statsTotal.textContent = totalCount;
+            statsTotal.title = 'Liczba wszystkich miejscowości dostępnych w systemie';
+        }
+
+        if (userSummary) {
+            const sharedForUser = sharedCities.filter(item =>
+                Array.isArray(item.users) && item.users.some(u => u && String(u.id) === String(selectedUserId))
+            ).length;
+
+            const sharedPart = `Współdzielone miejscowości: ${sharedForUser}`;
+            const recentPart = `Nowe przypisania 30 dni: ${recentUserCount}`;
+            userSummary.textContent = `${sharedPart} · ${recentPart}`;
+            userSummary.classList.remove('hidden');
+        }
+
         if (availableTrigger) {
             availableTrigger.onclick = (e) => {
                 e.stopPropagation();
@@ -3076,12 +3523,428 @@ document.addEventListener('DOMContentLoaded', () => {
                     showAllUnassignedCities(globallyUnassignedCities);
                 }
             };
-            
-            // Aktualizuj title z liczbą globalnie nieprzypisanych
-            availableTrigger.title = `Kliknij, aby zobaczyć listę (${globallyUnassignedCount} miejscowości nieprzypisanych do żadnego handlowca)`;
+            availableTrigger.title = `Kliknij, aby zobaczyć listę (${globallyUnassignedCount} miejscowości nieprzypisanych do żadnego handlowca – dane globalne)`;
         }
+
+        if (sharedTrigger) {
+            if (sharedCounter) sharedCounter.textContent = sharedCount;
+            sharedTrigger.onclick = (e) => {
+                e.stopPropagation();
+                if (sharedCount > 0) {
+                    showSharedCitiesModal(sharedCities);
+                }
+            };
+            sharedTrigger.title = sharedCount > 0
+                ? `Liczba miejscowości współdzielonych przez wielu handlowców: ${sharedCount}`
+                : 'Brak miejscowości współdzielonych przez wielu handlowców';
+        }
+
+        if (recentTrigger) {
+            if (recentCounter) recentCounter.textContent = recentUserCount;
+            recentTrigger.onclick = (e) => {
+                e.stopPropagation();
+                if (recentAssignmentsForUser.length > 0) {
+                    const currentUser = cityAccessUsers.find(u => u.id === selectedUserId);
+                    const name = currentUser?.name || currentUser?.email || '';
+                    showRecentAssignmentsModal(recentAssignmentsForUser, { scope: 'user', userName: name });
+                } else {
+                    alert('Brak nowych przypisań w ostatnich 30 dniach dla tego handlowca.');
+                }
+            };
+            recentTrigger.title = recentUserCount > 0
+                ? `Nowe przypisania w ostatnich 30 dniach dla wybranego handlowca: ${recentUserCount}`
+                : 'Brak nowych przypisań w ostatnich 30 dniach dla wybranego handlowca';
+        }
+
+        updateCityRanking();
     }
-    
+
+    function updateCityRanking() {
+        const container = document.getElementById('city-ranking-container');
+        const topList = document.getElementById('city-ranking-top');
+        const bottomList = document.getElementById('city-ranking-bottom');
+
+        if (!container || !topList || !bottomList) return;
+
+        const assignments = Array.isArray(allSystemCityAssignments) ? allSystemCityAssignments : [];
+        if (assignments.length === 0 || !Array.isArray(cityAccessUsers)) {
+            container.classList.add('hidden');
+            topList.innerHTML = '';
+            bottomList.innerHTML = '';
+            return;
+        }
+
+        const counts = new Map();
+        assignments.forEach(a => {
+            if (!a || !a.isActive || !a.userId || !a.cityName) return;
+            const current = counts.get(a.userId) || 0;
+            counts.set(a.userId, current + 1);
+        });
+
+        const candidates = cityAccessUsers
+            .filter(u => u && u.isActive && u.id != null && ['SALES_REP', 'SALES_DEPT'].includes(u.role))
+            .map(u => ({
+                userId: u.id,
+                name: u.name || u.email || '',
+                count: counts.get(u.id) || 0
+            }))
+            .filter(item => item.count > 0);
+
+        if (candidates.length === 0) {
+            container.classList.add('hidden');
+            topList.innerHTML = '';
+            bottomList.innerHTML = '';
+            return;
+        }
+
+        container.classList.remove('hidden');
+
+        const maxItems = 5;
+
+        const sortedDesc = [...candidates].sort((a, b) => {
+            if (b.count !== a.count) return b.count - a.count;
+            return (a.name || '').localeCompare(b.name || '', 'pl-PL');
+        });
+
+        const sortedAsc = [...candidates].sort((a, b) => {
+            if (a.count !== b.count) return a.count - b.count;
+            return (a.name || '').localeCompare(b.name || '', 'pl-PL');
+        });
+
+        const renderRow = (item, index, variant) => {
+            const idSafe = escapeHtml(String(item.userId));
+            const nameSafe = escapeHtml(item.name || '');
+            const countSafe = escapeHtml(String(item.count));
+            const badgeBase = 'inline-flex items-center justify-center w-5 h-5 text-[11px] rounded-full font-semibold';
+            let badgeClasses = 'bg-gray-100 text-gray-600';
+            if (variant === 'top') {
+                badgeClasses = index === 0 ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-700';
+            } else if (variant === 'bottom') {
+                badgeClasses = index === 0 ? 'bg-red-500 text-white' : 'bg-red-100 text-red-700';
+            }
+            return `
+                <button class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors city-ranking-item" data-user-id="${idSafe}">
+                    <div class="flex items-center gap-2">
+                        <span class="${badgeBase} ${badgeClasses}">${index + 1}</span>
+                        <span class="truncate">${nameSafe}</span>
+                    </div>
+                    <span class="text-xs text-gray-500 mr-1">${countSafe} miejsc.</span>
+                </button>
+            `;
+        };
+
+        const topItems = sortedDesc.slice(0, maxItems);
+        const bottomFiltered = sortedAsc.filter(item => !topItems.some(top => top.userId === item.userId));
+        const bottomItems = bottomFiltered.slice(0, maxItems);
+
+        topList.innerHTML = topItems.map((item, index) => renderRow(item, index, 'top')).join('');
+        if (bottomItems.length > 0) {
+            bottomList.innerHTML = bottomItems.map((item, index) => renderRow(item, index, 'bottom')).join('');
+        } else {
+            bottomList.innerHTML = `<p class="text-xs text-gray-400">Za mało danych do wyświetlenia dolnego rankingu.</p>`;
+        }
+
+        const attachHandlers = (root) => {
+            root.querySelectorAll('.city-ranking-item').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const userId = btn.getAttribute('data-user-id');
+                    if (!userId || !cityAccessUserSelect) return;
+                    cityAccessUserSelect.value = userId;
+                    const event = new Event('change');
+                    cityAccessUserSelect.dispatchEvent(event);
+                    const view = document.getElementById('view-city-access');
+                    if (view && typeof view.scrollIntoView === 'function') {
+                        view.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+            });
+        };
+
+        attachHandlers(topList);
+        attachHandlers(bottomList);
+    }
+
+    function showSharedCitiesModal(sharedCities) {
+        if (!Array.isArray(sharedCities) || sharedCities.length === 0) return;
+
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+
+        const itemsHtml = sharedCities
+            .sort((a, b) => b.count - a.count || a.cityName.localeCompare(b.cityName, 'pl'))
+            .map(item => {
+                const citySafe = escapeHtml(item.cityName);
+                const countSafe = escapeHtml(String(item.count));
+                const assignments = Array.isArray(item.assignments) && item.assignments.length > 0
+                    ? item.assignments
+                    : (Array.isArray(item.users) ? item.users.map(u => ({ user: u, assignmentId: null })) : []);
+                const usersHtml = assignments.map(a => {
+                    const user = a.user || {};
+                    const label = escapeHtml((user.name || user.email) || '');
+                    const idSafe = a.assignmentId != null ? escapeHtml(String(a.assignmentId)) : '';
+                    const userIdSafe = user.id != null ? escapeHtml(String(user.id)) : '';
+                    const disabledAttr = idSafe ? '' : 'data-disabled="true"';
+                    return `
+                        <button class="shared-city-user inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[11px] text-amber-800 hover:bg-amber-100" data-city="${citySafe}" data-assignment-id="${idSafe}" data-user-id="${userIdSafe}" ${disabledAttr}>
+                            <span class="shared-city-user-label">${label}</span>
+                            ${idSafe ? '<span class="shared-city-user-delete" title="Usuń przypisanie"><i class="fas fa-times text-[10px]"></i></span>' : ''}
+                        </button>
+                    `;
+                }).join(' ');
+                return `
+                    <div class="shared-city-item p-3 bg-white rounded border border-gray-100 shadow-sm" data-city="${citySafe}">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-800">${citySafe}</span>
+                            <span class="text-xs font-semibold text-amber-700">${countSafe} handlowców</span>
+                        </div>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                            ${usersHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+        const countSafe = escapeHtml(String(sharedCities.length));
+
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                <div class="p-6 border-b border-gray-200">
+                    <h3 class="text-xl font-semibold text-gray-800">Miejscowości współdzielone</h3>
+                    <p class="text-sm text-gray-500 mt-1">Liczba miejscowości przypisanych do więcej niż jednego handlowca: ${countSafe}</p>
+                </div>
+                <div class="px-6 pt-3 pb-2 border-b bg-white text-xs text-gray-600">
+                    <div class="grid gap-2 md:grid-cols-2">
+                        <div class="relative">
+                            <i class="fas fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-[11px]"></i>
+                            <input id="shared-cities-filter-city" type="text" class="w-full pl-7 pr-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-[11px]" placeholder="Filtruj po nazwie miejscowości...">
+                        </div>
+                        <div class="relative">
+                            <i class="fas fa-user absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-[11px]"></i>
+                            <input id="shared-cities-filter-user" type="text" class="w-full pl-7 pr-2 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-[11px]" placeholder="Filtruj po handlowcu...">
+                        </div>
+                    </div>
+                </div>
+                <div class="p-4 overflow-y-auto flex-grow bg-gray-50">
+                    <div id="shared-cities-list" class="space-y-2">
+                        ${itemsHtml}
+                    </div>
+                </div>
+                <div class="p-4 border-t border-gray-200 flex justify-end bg-white">
+                    <button id="close-shared-cities-modal" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        Zamknij
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const closeBtn = modal.querySelector('#close-shared-cities-modal');
+        if (closeBtn) {
+            closeBtn.onclick = () => modal.remove();
+        }
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+
+        // Filtrowanie listy współdzielonych miejscowości
+        const filterCityInput = modal.querySelector('#shared-cities-filter-city');
+        const filterUserInput = modal.querySelector('#shared-cities-filter-user');
+        const listContainer = modal.querySelector('#shared-cities-list');
+
+        const applySharedFilters = () => {
+            if (!listContainer) return;
+            const cityTerm = (filterCityInput?.value || '').toLowerCase().trim();
+            const userTerm = (filterUserInput?.value || '').toLowerCase().trim();
+
+            listContainer.querySelectorAll('.shared-city-item').forEach(item => {
+                const cityName = (item.getAttribute('data-city') || '').toLowerCase();
+                const matchesCity = !cityTerm || cityName.includes(cityTerm);
+
+                const labels = Array.from(item.querySelectorAll('.shared-city-user-label'));
+                const matchesUser = !userTerm || labels.some(el => (el.textContent || '').toLowerCase().includes(userTerm));
+
+                item.style.display = (matchesCity && matchesUser) ? '' : 'none';
+            });
+        };
+
+        if (filterCityInput) filterCityInput.addEventListener('input', applySharedFilters);
+        if (filterUserInput) filterUserInput.addEventListener('input', applySharedFilters);
+
+        // Obsługa kliknięć w "chipy" handlowców: klik w nazwisko przechodzi do widoku handlowca,
+        // klik w ikonę X usuwa przypisanie (z ostrzeżeniem przy ostatnim przypisaniu).
+        modal.querySelectorAll('.shared-city-user').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const deleteTarget = e.target.closest('.shared-city-user-delete');
+                const assignmentId = btn.getAttribute('data-assignment-id');
+                const cityName = btn.getAttribute('data-city') || '';
+                const disabled = btn.getAttribute('data-disabled') === 'true';
+
+                // Usuwanie przypisania tylko po kliknięciu w ikonę X
+                if (deleteTarget && assignmentId && !disabled) {
+                    // Sprawdź, czy to ostatnie aktywne przypisanie tej miejscowości w całym systemie
+                    let isLastAssignment = false;
+                    if (Array.isArray(allSystemCityAssignments) && allSystemCityAssignments.length > 0) {
+                        const activeForCity = allSystemCityAssignments.filter(a =>
+                            a && a.isActive && a.cityName === cityName
+                        );
+                        if (activeForCity.length === 1) {
+                            isLastAssignment = true;
+                        }
+                    }
+
+                    const labelText = btn.textContent.trim();
+                    let confirmMessage = `Usunąć przypisanie miejscowości "${cityName}" od handlowca "${labelText}"?`;
+                    if (isLastAssignment) {
+                        confirmMessage += `\n\nUwaga: to ostatnie aktywne przypisanie tej miejscowości. Po usunięciu nie będzie ona przypisana do żadnego handlowca.`;
+                    }
+
+                    if (!confirm(confirmMessage)) return;
+
+                    const originalHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin text-[10px]"></i><span>Usuwanie...</span>';
+
+                    try {
+                        const response = await fetch(`/api/admin/user-city-access/${assignmentId}`, { method: 'DELETE' });
+                        const result = await response.json();
+
+                        if (result.status === 'success') {
+                            // Odśwież dane globalne i statystyki
+                            await loadAllCityAssignments();
+                            updateCityTilesStats();
+                            modal.remove();
+                        } else {
+                            alert('Błąd: ' + (result.message || 'Nie udało się usunąć przypisania'));
+                            btn.disabled = false;
+                            btn.innerHTML = originalHtml;
+                        }
+                    } catch (error) {
+                        console.error('Błąd usuwania przypisania współdzielonego:', error);
+                        alert('Wystąpił błąd podczas usuwania przypisania');
+                        btn.disabled = false;
+                        btn.innerHTML = originalHtml;
+                    }
+
+                    return;
+                }
+
+                // Klik w chip (nazwisko) – szybkie przejście do widoku handlowca
+                const userId = btn.getAttribute('data-user-id');
+                if (userId && cityAccessUserSelect) {
+                    cityAccessUserSelect.value = userId;
+                    const changeEvent = new Event('change');
+                    cityAccessUserSelect.dispatchEvent(changeEvent);
+                    modal.remove();
+
+                    const view = document.getElementById('view-city-access');
+                    if (view && typeof view.scrollIntoView === 'function') {
+                        view.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }
+            });
+        });
+    }
+
+    function showRecentAssignmentsModal(assignments, options = {}) {
+        if (!Array.isArray(assignments) || assignments.length === 0) {
+            alert('Brak nowych przypisań w wybranym okresie.');
+            return;
+        }
+
+        const scope = options.scope || 'global';
+        const userName = options.userName || '';
+
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+
+        const sorted = [...assignments].sort((a, b) => {
+            const aTs = new Date(a.updatedAt || a.createdAt || 0).getTime();
+            const bTs = new Date(b.updatedAt || b.createdAt || 0).getTime();
+            return bTs - aTs;
+        });
+
+        const itemsHtml = sorted.map(a => {
+            const citySafe = escapeHtml(a.cityName || '');
+            const userLabel = a.user ? (a.user.name || a.user.email || '') : '';
+            const userSafe = escapeHtml(userLabel);
+            const tsRaw = a.updatedAt || a.createdAt || null;
+            const ts = tsRaw ? new Date(tsRaw) : null;
+            const dateSafe = ts ? escapeHtml(ts.toLocaleString('pl-PL')) : '';
+            return `
+                <div class="flex items-center justify-between p-2 bg-white rounded border border-gray-100 shadow-sm">
+                    <div class="flex flex-col">
+                        <span class="text-sm text-gray-800">${citySafe}</span>
+                        <span class="text-xs text-gray-500">${userSafe}</span>
+                    </div>
+                    <span class="text-xs text-gray-400 font-mono">${dateSafe}</span>
+                </div>
+            `;
+        }).join('');
+
+        const countSafe = escapeHtml(String(assignments.length));
+        const scopeLabel = scope === 'user'
+            ? `dla użytkownika ${escapeHtml(userName || '')}`
+            : 'globalnie';
+
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                <div class="p-6 border-b border-gray-200">
+                    <h3 class="text-xl font-semibold text-gray-800">Nowe przypisania (30 dni)</h3>
+                    <p class="text-sm text-gray-500 mt-1">Liczba: ${countSafe} &middot; Zakres: ${scopeLabel}</p>
+                </div>
+                <div class="p-4 overflow-y-auto flex-grow bg-gray-50">
+                    <div class="space-y-2">
+                        ${itemsHtml}
+                    </div>
+                </div>
+                <div class="p-4 border-t border-gray-200 flex justify-end bg-white">
+                    <button id="close-recent-assignments-modal" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Zamknij</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const closeBtn = modal.querySelector('#close-recent-assignments-modal');
+        if (closeBtn) {
+            closeBtn.onclick = () => modal.remove();
+        }
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+    }
+
+    function updateCityStatsForGraphics(stats) {
+        const statsAssigned = document.getElementById('city-stats-assigned');
+        const statsAvailable = document.getElementById('city-stats-available');
+        const statsTotal = document.getElementById('city-stats-total');
+
+        if (!stats) {
+            if (statsAssigned) statsAssigned.textContent = '0';
+            if (statsAvailable) statsAvailable.textContent = '0';
+            if (statsTotal) statsTotal.textContent = '0';
+            return;
+        }
+
+        const total = Number(stats.total) || 0;
+        const assigned = Number(stats.assigned) || 0;
+        const unassigned = Number(stats.unassigned) || 0;
+
+        if (statsAssigned) statsAssigned.textContent = assigned;
+        if (statsAvailable) statsAvailable.textContent = unassigned;
+        if (statsTotal) statsTotal.textContent = total;
+    }
+
     function showAllUnassignedCities(cities) {
         // Utwórz modal z listą wszystkich dostępnych miejscowości
         const modal = document.createElement('div');
@@ -3387,7 +4250,26 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        pmProjectsList.innerHTML = pmFilteredProjects.map(p => {
+        // Posortuj tak, aby projekty z przypisanymi produktami były na górze,
+        // a w obrębie każdej grupy alfabetycznie po nazwie/slug.
+        const sortedProjects = [...pmFilteredProjects].sort((a, b) => {
+            const aCount = a.productCount || 0;
+            const bCount = b.productCount || 0;
+
+            const aHas = aCount > 0;
+            const bHas = bCount > 0;
+
+            if (aHas !== bHas) {
+                return aHas ? -1 : 1; // najpierw z przypisaniami
+            }
+
+            const aName = (a.displayName || a.slug || '').toLowerCase();
+            const bName = (b.displayName || b.slug || '').toLowerCase();
+
+            return aName.localeCompare(bName, 'pl-PL');
+        });
+
+        pmProjectsList.innerHTML = sortedProjects.map(p => {
             const isSelected = p.id === pmSelectedProjectId;
             const hasMappings = p.productCount > 0;
             const projectId = p.id; // używane tylko jako data-attribute

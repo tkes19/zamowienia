@@ -4783,7 +4783,8 @@ app.get('/api/orders/:id', async (req, res) => {
         }
 
         // Sprawdź uprawnienia: handlowiec widzi tylko swoje, ADMIN / SALES_DEPT widzą wszystkie
-        if (!['ADMIN', 'SALES_DEPT'].includes(role) && order.userId !== userId) {
+        const canSeeAllOrders = ['ADMIN', 'SALES_DEPT', 'WAREHOUSE', 'PRODUCTION'].includes(role);
+        if (!canSeeAllOrders && order.userId !== userId) {
             return res.status(403).json({ status: 'error', message: 'Brak dostępu do tego zamówienia' });
         }
 
@@ -4805,7 +4806,7 @@ app.get('/api/orders/:id', async (req, res) => {
                 projectName,
                 customization,
                 productionNotes,
-                Product:productId(id, name, identifier, index, pc_id)
+                Product:productId(id, name, identifier, index)
             `)
             .eq('orderId', id);
 
