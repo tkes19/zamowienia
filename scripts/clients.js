@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const clientsTableInfo = document.getElementById('clients-table-info');
     const logoutBtn = document.getElementById('logout-btn');
     const adminLink = document.getElementById('admin-link');
+    const ordersLink = document.getElementById('orders-link');
 
     let allClients = [];
     let filteredClients = [];
@@ -41,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (!response.ok) {
-                window.location.href = '/login.html';
+                window.location.href = '/login';
                 return false;
             }
 
@@ -61,6 +62,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
+            if (ordersLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(currentUserRole)) {
+                ordersLink.style.display = 'flex';
+            }
+
             // Pokaż sidebar dla SALES_DEPT
             const sidebar = document.getElementById('clients-sidebar');
             if (sidebar && currentUserRole === 'SALES_DEPT') {
@@ -75,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return true;
         } catch (error) {
             console.error('Błąd sprawdzania autoryzacji:', error);
-            window.location.href = '/login.html';
+            window.location.href = '/login';
             return false;
         }
     }
@@ -127,7 +132,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isAuthorized) return;
 
         loadSalesReps();
-        fetchClients();
+        await fetchClients();
+
+        const params = new URLSearchParams(window.location.search || '');
+        if (params.get('new') === '1') {
+            openClientForm();
+        }
     }
 
     // Event listenery
@@ -154,10 +164,10 @@ document.addEventListener('DOMContentLoaded', () => {
     logoutBtn.addEventListener('click', async () => {
         try {
             await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-            window.location.href = '/login.html';
+            window.location.href = '/';
         } catch (error) {
             console.error('Błąd wylogowania:', error);
-            window.location.href = '/login.html';
+            window.location.href = '/';
         }
     });
 

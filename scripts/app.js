@@ -1,5 +1,5 @@
 import { EMBEDDED_FONTS } from '../assets/fonts/embedded-fonts.js';
-import { computePerProjectQuantities } from './projectQuantityLogic.js';
+import { computePerProjectQuantities, parseProjects } from './projectQuantityLogic.js';
 
 // Wszystkie zapytania produktowe idą na ten sam origin (proxy /api/v1/products w backend/server.js)
 const API_BASE = '/api/v1/products';
@@ -66,6 +66,7 @@ const galleryLockCheckbox = document.getElementById('gallery-lock-product');
 const orderCustomerNameEl = document.getElementById('order-customer-name');
 const orderCustomerSearchInput = document.getElementById('order-customer-search');
 const orderCustomerSelectEl = document.getElementById('order-customer-select');
+const orderAddCustomerBtn = document.getElementById('order-add-customer-btn');
 const sortNewFirstCheckbox = document.getElementById('sort-new-first');
 const sortAvailableFirstCheckbox = document.getElementById('sort-available-first');
 
@@ -492,6 +493,13 @@ async function loadGalleryCities() {
     galleryProducts = [];
     setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć projekty.');
     updateProjectFilterAvailability();
+
+    const galleryState = typeof loadGalleryStateFromStorage === 'function' ? loadGalleryStateFromStorage() : null;
+    const savedCity = galleryState && galleryState.pmCity ? galleryState.pmCity : '';
+    if (savedCity && visibleCities.includes(savedCity)) {
+      galleryCitySelect.value = savedCity;
+      loadGalleryProducts(savedCity);
+    }
   } catch (error) {
     console.error('Nie udało się pobrać listy miast:', error);
     galleryCitySelect.innerHTML = '<option value="">Błąd ładowania</option>';
@@ -508,6 +516,12 @@ async function loadGalleryProductsForObject(salesperson, object) {
 
   const sp = salesperson ?? gallerySalespersonSelect?.value;
   const obj = object ?? galleryObjectSelect?.value;
+
+  const galleryState = typeof loadGalleryStateFromStorage === 'function' ? loadGalleryStateFromStorage() : null;
+  let persistedSlug = '';
+  if (galleryState && galleryState.kiSalesperson === sp && galleryState.kiObject === obj) {
+    persistedSlug = galleryState.kiProductSlug || '';
+  }
 
   if (!sp || !obj) {
     galleryProductSelect.innerHTML = '<option value="">Najpierw wybierz handlowca i obiekt</option>';
@@ -592,6 +606,16 @@ async function loadGalleryProductsForObject(salesperson, object) {
       }
     }
 
+    // Jeśli nie ma blokady produktu, spróbuj przywrócić ostatnio użyty produkt dla tej miejscowości
+    if (!selectedSlug && !lockedSlug && persistedSlug && galleryProducts.includes(persistedSlug)) {
+      selectedSlug = persistedSlug;
+    }
+
+    // Jeśli nie ma blokady produktu, spróbuj przywrócić ostatnio użyty produkt dla tego handlowca i obiektu
+    if (!selectedSlug && !lockedSlug && persistedSlug && galleryProducts.includes(persistedSlug)) {
+      selectedSlug = persistedSlug;
+    }
+
     galleryProductSelect.innerHTML = productOptions.join('');
     sortGalleryProductOptions(galleryProductSelect);
     updateProjectFilterAvailability();
@@ -610,6 +634,12 @@ async function loadGalleryProductsForObject(salesperson, object) {
       } else {
         renderGalleryPreview();
       }
+
+      // Po automatycznym ustawieniu produktu (np. z localStorage) odtwórz sekcję "Wybrane produkty"
+      if (typeof handleGalleryProductChangeFromSelect === 'function') {
+        handleGalleryProductChangeFromSelect();
+      }
+
       return;
     }
 
@@ -638,6 +668,13 @@ async function loadGalleryProducts(city) {
     setGalleryPlaceholder('Wybierz miejscowość, aby zobaczyć produkty.');
     updateProjectFilterAvailability();
     return;
+  }
+
+  // Spróbuj odczytać zapamiętany produkt dla tej miejscowości z localStorage
+  const galleryState = typeof loadGalleryStateFromStorage === 'function' ? loadGalleryStateFromStorage() : null;
+  let persistedSlug = '';
+  if (galleryState && galleryState.pmCity === targetCity) {
+    persistedSlug = galleryState.pmProductSlug || '';
   }
 
   try {
@@ -709,6 +746,11 @@ async function loadGalleryProducts(city) {
       }
     }
 
+    // Jeśli nie ma blokady produktu, spróbuj przywrócić ostatnio użyty produkt dla tej miejscowości
+    if (!selectedSlug && !lockedSlug && persistedSlug && galleryProducts.includes(persistedSlug)) {
+      selectedSlug = persistedSlug;
+    }
+
     galleryProductSelect.innerHTML = productOptions.join('');
     sortGalleryProductOptions(galleryProductSelect);
     updateProjectFilterAvailability();
@@ -727,6 +769,12 @@ async function loadGalleryProducts(city) {
       } else {
         renderGalleryPreview();
       }
+
+      // Po automatycznym ustawieniu produktu (np. z localStorage) odtwórz sekcję "Wybrane produkty"
+      if (typeof handleGalleryProductChangeFromSelect === 'function') {
+        handleGalleryProductChangeFromSelect();
+      }
+
       return;
     }
 
@@ -882,7 +930,7 @@ function syncGalleryWithSearch(query, products) {
     matchingSlugs = findGallerySlugsByName(products[0]?.name);
   }
 
-  if (matchingSlugs.length === 1) {
+  if (matchingSlugs.length) {
     applyGallerySelectionFromSlug(matchingSlugs[0]);
   } else {
     galleryProductSelect.value = '';
@@ -955,6 +1003,13 @@ async function loadSalespeople() {
 
     gallerySalespersonSelect.innerHTML = options.join('');
     gallerySalespersonSelect.disabled = false;
+
+    const galleryState = typeof loadGalleryStateFromStorage === 'function' ? loadGalleryStateFromStorage() : null;
+    const savedSalesperson = galleryState && galleryState.kiSalesperson ? galleryState.kiSalesperson : '';
+    if (savedSalesperson && salesPeople.includes(savedSalesperson)) {
+      gallerySalespersonSelect.value = savedSalesperson;
+      loadObjectsForSalesperson(savedSalesperson);
+    }
 
     // Pokaż select z powrotem i usuń info o folderze (jeśli istnieje)
     const parent = gallerySalespersonSelect.parentElement;
@@ -1067,6 +1122,12 @@ async function loadObjectsForSalesperson(salesperson) {
 
     galleryObjectSelect.innerHTML = options.join('');
     galleryObjectSelect.disabled = false;
+    const galleryState = typeof loadGalleryStateFromStorage === 'function' ? loadGalleryStateFromStorage() : null;
+    const savedObject = galleryState && galleryState.kiSalesperson === salesperson ? galleryState.kiObject : '';
+    if (savedObject && objects.includes(savedObject)) {
+      galleryObjectSelect.value = savedObject;
+      loadGalleryProductsForObject(salesperson, savedObject);
+    }
     return objects;
   } catch (error) {
     console.error('Nie udało się pobrać obiektów:', error);
@@ -1329,7 +1390,7 @@ function sanitizeProjectsValue(value) {
   return value
     .split(',')
     .map(segment => segment.trim())
-    .filter(Boolean)
+    .filter(Boolean)  // usuwa puste segmenty (np. końcowy przecinek)
     .map(segment => {
       if (segment.includes('-')) {
         const [start, end] = segment.split('-').map(num => num.trim());
@@ -1342,6 +1403,25 @@ function sanitizeProjectsValue(value) {
     })
     .filter(Boolean)
     .join(', ');
+}
+
+// Czyści wartość pola ilości na projekty (usuwa zbędne przecinki, spacje)
+function sanitizePerProjectValue(value) {
+  if (!value) return '';
+  
+  const trimmed = value.trim();
+  
+  // Jeśli to format "po X" - zostaw jak jest
+  if (/^po\s+\d+$/i.test(trimmed)) {
+    return trimmed;
+  }
+  
+  // Jeśli to lista liczb - wyczyść
+  return trimmed
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s && /^\d+$/.test(s))  // tylko niepuste liczby
+    .join(',');
 }
 
 let pdfFontsPromise = null;
@@ -1445,6 +1525,78 @@ function safeSplitText(doc, text, maxWidth) {
   if (!text) return [];
   const rawLines = doc.splitTextToSize(text, maxWidth) || [];
   return rawLines.map(line => line.replace(/[&]/g, ' ').trim()).filter(Boolean);
+}
+
+// ==========================
+// Trwałe przechowywanie koszyka (localStorage)
+// ==========================
+
+const CART_STORAGE_KEY = 'rezonCartV1';
+const GALLERY_STATE_KEY = 'rezonGalleryStateV1';
+
+function loadGalleryStateFromStorage() {
+  try {
+    const raw = localStorage.getItem(GALLERY_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn('Nie udało się odczytać stanu galerii z localStorage:', error);
+  }
+  return null;
+}
+
+function saveGalleryStateToStorage(patch) {
+  try {
+    const current = loadGalleryStateFromStorage() || {};
+    const next = { ...current, ...patch };
+    localStorage.setItem(GALLERY_STATE_KEY, JSON.stringify(next));
+  } catch (error) {
+    console.warn('Nie udało się zapisać stanu galerii w localStorage:', error);
+  }
+}
+
+function saveCartToStorage() {
+  try {
+    const plain = Array.from(cart.entries()).map(([id, item]) => ({ id, item }));
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(plain));
+  } catch (error) {
+    console.warn('Nie udało się zapisać koszyka w localStorage:', error);
+  }
+}
+
+function loadCartFromStorage() {
+  try {
+    const raw = localStorage.getItem(CART_STORAGE_KEY);
+    if (!raw) return;
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+
+    cart.clear();
+    parsed.forEach(({ id, item }) => {
+      if (!id || !item || !item.product) return;
+
+      const normalizedItem = { ...item };
+
+      if (typeof normalizedItem.quantitySource === 'undefined') {
+        const hasPerProjectInput =
+          typeof normalizedItem.quantityInputPerProject === 'string' &&
+          normalizedItem.quantityInputPerProject.trim() !== '';
+        normalizedItem.quantitySource = hasPerProjectInput ? 'perProject' : 'total';
+      }
+
+      if (!Array.isArray(normalizedItem.perProjectQuantities)) {
+        normalizedItem.perProjectQuantities = [];
+      }
+
+      cart.set(id, normalizedItem);
+    });
+  } catch (error) {
+    console.warn('Nie udało się odczytać koszyka z localStorage:', error);
+  }
 }
 
 function setStatus(message, type = 'info', target = 'global') {
@@ -1561,6 +1713,8 @@ async function submitOrder() {
     // Wyczyść koszyk i pole uwag ogólnych
     cart.clear();
     renderCart();
+    saveCartToStorage();
+    saveCartToStorage();
     
     // Wyczyść pole uwag ogólnych
     if (orderGeneralNotesEl) {
@@ -2016,8 +2170,15 @@ async function searchProducts(event) {
       return;
     }
 
+    const resultsCount = visibleProducts.length;
+    const modeLabel = mode === 'pc_id' ? 'indeks' : 'identyfikator';
+    const resultsWord = resultsCount === 1 ? 'wynik' : 'wyników';
+    const exactLabel = exactMatch ? ', dokładne dopasowanie' : '';
+    setStatus(`Znaleziono ${resultsCount} ${resultsWord} dla "${query}" (tryb: ${modeLabel}${exactLabel}).`, 'success');
+
     renderResults(visibleProducts);
     syncGalleryWithSearch(query, visibleProducts);
+    scrollResultsIntoViewAfterSearch();
   } catch (error) {
     console.error('Błąd wyszukiwania produktów:', error);
     setStatus(`Błąd pobierania danych: ${error.message}`, 'error');
@@ -2115,6 +2276,83 @@ function initProjectFilter() {
   updateProjectFilterAvailability();
 }
 
+function initSearchModeSwitch() {
+  const switchRoot = document.querySelector('.search-mode-switch');
+  const modeSelect = document.getElementById('mode');
+  if (!switchRoot || !modeSelect) return;
+
+  const options = Array.from(switchRoot.querySelectorAll('.project-filter__option'));
+
+  options.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const newMode = btn.dataset.mode;
+      if (!newMode || modeSelect.value === newMode) return;
+
+      modeSelect.value = newMode;
+
+      options.forEach((opt) => {
+        opt.classList.toggle('project-filter__option--active', opt === btn);
+      });
+    });
+  });
+
+  const initialMode = modeSelect.value;
+  options.forEach((btn) => {
+    const btnMode = btn.dataset.mode;
+    btn.classList.toggle('project-filter__option--active', btnMode === initialMode);
+  });
+}
+
+function initSearchToolbarSticky() {
+  const toolbar = document.getElementById('search-toolbar');
+  const pinBtn = document.getElementById('search-toolbar-toggle');
+  if (!toolbar || !pinBtn) return;
+
+  const STORAGE_KEY = 'searchToolbarPinned';
+
+  function applyPinned(isPinned) {
+    toolbar.classList.toggle('search-toolbar--sticky', isPinned);
+    toolbar.classList.toggle('search-toolbar--static', !isPinned);
+    pinBtn.classList.toggle('search-toolbar__pin--active', isPinned);
+    pinBtn.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
+    pinBtn.setAttribute('title', isPinned ? 'Odepnij pasek wyszukiwania' : 'Przyklej pasek wyszukiwania');
+  }
+
+  const stored = localStorage.getItem(STORAGE_KEY);
+  const initialPinned = stored === null ? true : stored === 'true';
+  applyPinned(initialPinned);
+
+  pinBtn.addEventListener('click', () => {
+    const currentPinned = toolbar.classList.contains('search-toolbar--sticky');
+    const nextPinned = !currentPinned;
+    applyPinned(nextPinned);
+    localStorage.setItem(STORAGE_KEY, String(nextPinned));
+  });
+}
+
+function scrollResultsIntoViewAfterSearch() {
+  const resultsPanel = document.querySelector('section.panel.guest-hidden');
+  if (!resultsPanel) return;
+
+  const toolbar = document.getElementById('search-toolbar');
+  const toolbarHeight = toolbar ? toolbar.offsetHeight : 0;
+
+  const rect = resultsPanel.getBoundingClientRect();
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const offset = toolbarHeight + 12; // niewielki margines pod paskiem wyszukiwania
+
+  // Jeśli górna krawędź panelu jest już w rozsądnym zakresie pod paskiem – nie przewijaj
+  const visibleTop = rect.top >= offset && rect.top < offset + 80;
+  const panelCoversViewport = rect.top < offset && rect.bottom > offset + 80;
+  if (visibleTop || panelCoversViewport) {
+    return;
+  }
+
+  // Przewijaj tylko, gdy panel jest wyraźnie nad lub pod aktualnym widokiem
+  const targetY = window.scrollY + rect.top - offset;
+  window.scrollTo({ top: Math.max(targetY, 0), behavior: 'smooth' });
+}
+
 function setSelectedResultsRow(row) {
   if (selectedResultsRow && selectedResultsRow !== row) {
     selectedResultsRow.classList.remove('results-row--selected');
@@ -2152,15 +2390,15 @@ function renderResults(products) {
       <td class="price-column">${priceSafe}</td>
       <td class="stock-cell">${createBadge(product.stock, product.stock_optimal)}</td>
       <td class="qty-cell">
-        <input type="number" class="qty-input" value="1" min="1" ${product.stock > 0 ? '' : 'disabled'} title="Łącznie szt." />
+        <input type="number" class="qty-input" min="1" ${product.stock > 0 ? '' : 'disabled'} placeholder="1" title="Łącznie szt." />
       </td>
       <td class="notes-cell">
         <div class="notes-cell__wrapper">
-          <textarea class="item-notes-input" placeholder="Uwagi..." title="Uwagi produkcyjne"></textarea>
+          <textarea class="item-notes-input" placeholder="Uwagi do pozycji..." title="Uwagi produkcyjne"></textarea>
         </div>
       </td>
       <td>
-        <button type="button" class="btn btn--primary btn--sm" ${product.stock > 0 ? '' : 'disabled'}>Dodaj</button>
+        <button type="button" class="btn btn--success btn--sm" ${product.stock > 0 ? '' : 'disabled'}>Dodaj</button>
       </td>
     `;
 
@@ -2201,69 +2439,50 @@ function renderResults(products) {
 
     const addBtn = row.querySelector('button');
 
-    // --- Walidacja projektów ---
-    projectsInput.addEventListener('input', () => {
-      projectsInput.value = projectsInput.value.replace(/[^0-9,\-\s]/g, '');
-    });
+    // ============================================================
+    // LOGIKA PÓL W SEKCJI "WYBRANE PRODUKTY" - spójna z koszykiem
+    // ============================================================
 
-    projectsInput.addEventListener('blur', () => {
-      const value = projectsInput.value.trim();
-      if (!value) {
-        projectsInput.value = '';
-        hideQtyPreview();
-        return;
-      }
-
-      if (!isValidProjectInput(value)) {
-        showQtyPreview('❌ Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.', 'error');
-        projectsInput.focus();
-        return;
-      }
-
-      projectsInput.value = sanitizeProjectsValue(value);
-      hideQtyPreview();
-    });
-
-    // --- Funkcje pomocnicze dla dwukierunkowej logiki ---
-
+    // Pomocnicza funkcja do formatowania podglądu
     const formatPerProjectPreview = (result) => {
       return result.perProjectQuantities
         .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
         .join(' | ');
     };
 
-    // Na podstawie total + projektów zbuduj listę np. 16 -> 6,5,5
-    const buildPerProjectListFromTotal = () => {
-      const projectsValue = projectsInput.value.trim();
+    // Przelicz rozkład na projekty z łącznej ilości
+    const recalculateFromTotal = () => {
+      const projectsValue = sanitizeProjectsValue(projectsInput.value);
       const totalValue = parseInt(qtyInput.value, 10);
+      
       if (!projectsValue || !Number.isFinite(totalValue) || totalValue <= 0) {
+        qtyPerProjectInput.value = '';
         hideQtyPreview();
         return;
       }
 
       const result = computePerProjectQuantities(projectsValue, totalValue, '');
-      if (!result.success) {
-        showQtyPreview(`❌ ${result.error}`, 'error');
-        return;
+      if (result.success) {
+        qtyPerProjectInput.value = result.perProjectQuantities.map(p => p.qty).join(',');
+        showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${formatPerProjectPreview(result)}`, 'success');
+      } else {
+        qtyPerProjectInput.value = '';
+        hideQtyPreview();
       }
-
-      // Wpisujemy dokładną listę do pola B
-      const list = result.perProjectQuantities.map(p => p.qty).join(',');
-      qtyPerProjectInput.value = list;
-
-      const preview = formatPerProjectPreview(result);
-      showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${preview}`, 'success');
     };
 
-    // Na podstawie pola B (po X lub lista) przelicz total + podgląd
-    const buildTotalFromPerProject = () => {
-      const projectsValue = projectsInput.value.trim();
-      const perValue = qtyPerProjectInput.value.trim();
-
+    // Przelicz łączną ilość z pola "Ilości na proj."
+    const recalculateFromPerProject = () => {
+      const projectsValue = sanitizeProjectsValue(projectsInput.value);
+      const perValue = sanitizePerProjectValue(qtyPerProjectInput.value);
+      
       if (!perValue) {
         hideQtyPreview();
         return;
       }
+
+      // Zapisz wyczyszczoną wartość
+      qtyPerProjectInput.value = perValue;
 
       if (!projectsValue) {
         showQtyPreview('⚠️ Wpisz numery projektów', 'warning');
@@ -2271,115 +2490,146 @@ function renderResults(products) {
       }
 
       const result = computePerProjectQuantities(projectsValue, '', perValue);
-
-      if (!result.success) {
+      if (result.success) {
+        qtyInput.value = result.totalQuantity;
+        showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${formatPerProjectPreview(result)}`, 'success');
+      } else {
         showQtyPreview(`❌ ${result.error}`, 'error');
-        return;
       }
-
-      qtyInput.value = result.totalQuantity;
-      const preview = formatPerProjectPreview(result);
-      showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${preview}`, 'success');
     };
 
-    // Flagi: które pole było faktycznie edytowane przez użytkownika
-    let qtyInputDirty = false;        // pole ILOŚĆ
-    let qtyPerProjectDirty = false;   // pole ILOŚCI NA PROJEKT
-
-    qtyInput.addEventListener('input', () => {
-      qtyInputDirty = true;
-      qtyPerProjectDirty = false; // przełączamy się na tryb "suma jako źródło"
-      qtyPerProjectInput.value = '';
-      hideQtyPreview();
+    // 1. POLE "Nr projektów" - filtruj znaki i przelicz przy blur
+    projectsInput.addEventListener('input', () => {
+      projectsInput.value = projectsInput.value.replace(/[^0-9,\-\s]/g, '');
     });
 
-    qtyInput.addEventListener('blur', () => {
-      // Jeśli użytkownik tylko wszedł TAB-em i nic nie zmienił, nie przeliczamy rozkładu
-      if (!qtyInputDirty) {
+    projectsInput.addEventListener('blur', () => {
+      const value = projectsInput.value.trim();
+      
+      if (!value) {
+        projectsInput.value = '';
+        hideQtyPreview();
         return;
       }
 
-      qtyInputDirty = false;
+      // Automatycznie wyczyść (usuwa zbędne przecinki, spacje)
+      const sanitized = sanitizeProjectsValue(value);
+      projectsInput.value = sanitized;
 
-      if (!qtyInput.value.trim()) {
+      // Jeśli po sanityzacji jest pusty lub niepoprawny - wyczyść bez błędu
+      if (!sanitized || !isValidProjectInput(sanitized)) {
+        projectsInput.value = '';
+        hideQtyPreview();
+        return;
+      }
+
+      // Jeśli mamy ilość - przelicz rozkład
+      const totalValue = parseInt(qtyInput.value, 10);
+      if (Number.isFinite(totalValue) && totalValue > 0) {
+        recalculateFromTotal();
+      } 
+      // Jeśli mamy "po X" lub listę - przelicz sumę
+      else if (qtyPerProjectInput.value.trim()) {
+        recalculateFromPerProject();
+      } else {
+        hideQtyPreview();
+      }
+    });
+
+    // 2. POLE "Ilość" - przelicz rozkład przy blur
+    qtyInput.addEventListener('blur', () => {
+      const value = parseInt(qtyInput.value, 10);
+      
+      if (!Number.isFinite(value) || value <= 0) {
+        qtyInput.value = '';
         qtyPerProjectInput.value = '';
         hideQtyPreview();
         return;
       }
-      buildPerProjectListFromTotal();
+
+      // Jeśli mamy projekty - przelicz rozkład
+      const projectsValue = sanitizeProjectsValue(projectsInput.value);
+      if (projectsValue) {
+        recalculateFromTotal();
+      } else {
+        hideQtyPreview();
+      }
     });
 
-    // Pisanie w B czyści A, zapamiętujemy że to projekty są źródłem
-    qtyPerProjectInput.addEventListener('input', () => {
-      qtyPerProjectDirty = true;
-      qtyInput.value = '';
-      hideQtyPreview();
-    });
-
+    // 3. POLE "Ilości na proj." - przelicz sumę przy blur
     qtyPerProjectInput.addEventListener('blur', () => {
-      if (!qtyPerProjectInput.value.trim()) {
+      const value = qtyPerProjectInput.value.trim();
+      
+      if (!value) {
         hideQtyPreview();
         return;
       }
-      buildTotalFromPerProject();
+
+      // Automatycznie wyczyść (usuwa zbędne przecinki)
+      const sanitized = sanitizePerProjectValue(value);
+      qtyPerProjectInput.value = sanitized;
+
+      if (!sanitized) {
+        hideQtyPreview();
+        return;
+      }
+
+      // Wyczyść pole ilości - będzie przeliczone
+      qtyInput.value = '';
+      recalculateFromPerProject();
     });
 
+    // 4. PRZYCISK "Dodaj" - dodaj do koszyka
     addBtn.addEventListener('click', () => {
-      const projectsValue = projectsInput.value.trim();
+      const projectsValue = sanitizeProjectsValue(projectsInput.value);
       const qtyTotalValue = parseInt(qtyInput.value, 10);
-      const qtyPerProjectValue = qtyPerProjectInput.value.trim();
+      const qtyPerProjectValue = sanitizePerProjectValue(qtyPerProjectInput.value);
       const itemNotesValue = itemNotesInput.value.trim();
 
+      // Walidacja projektów (jeśli wpisane)
       if (projectsValue && !isValidProjectInput(projectsValue)) {
-        showQtyPreview('❌ Podaj poprawny zakres: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.', 'error');
+        showQtyPreview('❌ Podaj poprawny zakres: np. 1-5,7', 'error');
         projectsInput.focus();
         return;
       }
 
-      // Jeśli w polu B jest coś wpisane
-      if (qtyPerProjectValue) {
-        const normalizedProjects = sanitizeProjectsValue(projectsValue);
-
-        // Przypadek 1: użytkownik ręcznie edytował pole B -> źródło to projekty
-        if (qtyPerProjectDirty) {
-          const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, qtyPerProjectValue);
-          
-          if (!result.success) {
-            showQtyPreview(`❌ ${result.error}`, 'error');
-            qtyPerProjectInput.focus();
-            return;
-          }
-
-          result.quantityInputPerProject = qtyPerProjectValue;
-          result.quantitySource = 'perProject';
-          addToCartWithQuantityBreakdown(product, result, itemNotesValue);
+      // Przypadek A: Mamy "Ilości na proj." - to jest źródło prawdy
+      if (qtyPerProjectValue && projectsValue) {
+        const result = computePerProjectQuantities(projectsValue, '', qtyPerProjectValue);
+        
+        if (!result.success) {
+          showQtyPreview(`❌ ${result.error}`, 'error');
+          qtyPerProjectInput.focus();
+          return;
         }
-        // Przypadek 2: pole B zostało automatycznie wyliczone z A -> źródło to suma
-        else {
-          const result = computePerProjectQuantities(normalizedProjects, qtyTotalValue, '');
 
-          if (!result.success) {
-            showQtyPreview(`❌ ${result.error}`, 'error');
-            return;
+        result.quantityInputPerProject = result.perProjectQuantities.map(p => p.qty).join(',');
+        result.quantitySource = 'perProject';
+        addToCartWithQuantityBreakdown(product, result, itemNotesValue);
+      }
+      // Przypadek B: Mamy tylko łączną ilość (i ewentualnie projekty)
+      else if (Number.isFinite(qtyTotalValue) && qtyTotalValue > 0) {
+        if (projectsValue) {
+          const result = computePerProjectQuantities(projectsValue, qtyTotalValue, '');
+          if (result.success) {
+            result.quantityInputPerProject = result.perProjectQuantities.map(p => p.qty).join(',');
+            result.quantitySource = 'total';
+            addToCartWithQuantityBreakdown(product, result, itemNotesValue);
+          } else {
+            addToCart(product, qtyTotalValue, projectsValue, itemNotesValue);
           }
-
-          // Zapisz listę ilości na projekty do wyświetlenia
-          result.quantityInputPerProject = result.perProjectQuantities
-            .map(p => p.qty)
-            .join(',');
-          result.quantitySource = 'total';
-          addToCartWithQuantityBreakdown(product, result, itemNotesValue);
+        } else {
+          addToCart(product, qtyTotalValue, '', itemNotesValue);
         }
-      } else {
-        // Zwykłe dodanie bez rozkładu
-        const quantity = Number.isFinite(qtyTotalValue) && qtyTotalValue > 0 ? qtyTotalValue : 1;
-        const normalizedProjects = sanitizeProjectsValue(projectsValue);
-        addToCart(product, quantity, normalizedProjects, itemNotesValue);
+      }
+      // Przypadek C: Brak ilości - dodaj 1 sztukę
+      else {
+        addToCart(product, 1, projectsValue, itemNotesValue);
       }
 
       // Czyszczenie pól po dodaniu
       projectsInput.value = '';
-      qtyInput.value = '1';
+      qtyInput.value = '';
       qtyPerProjectInput.value = '';
       itemNotesInput.value = '';
       hideQtyPreview();
@@ -2446,6 +2696,7 @@ function addToCart(product, quantity, projects, itemNotes = '') {
     itemNotes: currentNotes  // Uwagi do pozycji
   });
   renderCart();
+  saveCartToStorage();
   setStatus(`Dodano produkt ${product.name} do koszyka.`, 'success');
 }
 
@@ -2489,6 +2740,7 @@ function addToCartWithQuantityBreakdown(product, computeResult, itemNotes = '') 
     itemNotes: currentNotes  // Uwagi do pozycji
   });
   renderCart();
+  saveCartToStorage();
   setStatus(`Dodano produkt ${product.name} do koszyka (rozkład na projekty).`, 'success');
 }
 
@@ -2524,6 +2776,7 @@ function renderCart() {
     if (cartTotal) {
       cartTotal.textContent = formatCurrency(0);
     }
+    saveCartToStorage();
     return;
   }
 
@@ -2596,71 +2849,75 @@ function renderCart() {
   const qtyPerProjectInputs = cartBody.querySelectorAll('.qty-per-project-input');
   const removeBtns = cartBody.querySelectorAll('.remove-from-cart');
 
-  // Obsługa pola ilości (A) - edycja przelicza rozkład na projekty
+  // ============================================================
+  // OBSŁUGA EDYCJI W KOSZYKU - uproszczona i niezawodna logika
+  // ============================================================
+
+  // Pomocnicza funkcja do aktualizacji pozycji w koszyku
+  function updateCartEntry(id, updates) {
+    const entry = cart.get(id);
+    if (!entry) return false;
+    
+    const newEntry = { ...entry, ...updates };
+    cart.set(id, newEntry);
+    saveCartToStorage();
+    return true;
+  }
+
+  // Pomocnicza funkcja do przeliczania rozkładu na projekty
+  function recalculateProjectBreakdown(id, projectsStr, totalQty) {
+    if (!projectsStr || totalQty <= 0) {
+      return { quantityInputPerProject: '', perProjectQuantities: [] };
+    }
+    
+    const result = computePerProjectQuantities(projectsStr, totalQty, '');
+    if (result.success) {
+      return {
+        quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
+        perProjectQuantities: result.perProjectQuantities
+      };
+    }
+    return { quantityInputPerProject: '', perProjectQuantities: [] };
+  }
+
+  // 1. OBSŁUGA POLA ILOŚCI (kolumna "Ilość")
   qtyInputs.forEach(qtyInput => {
     qtyInput.addEventListener('blur', () => {
       const id = qtyInput.dataset.id;
-      const value = parseInt(qtyInput.value, 10);
       const entry = cart.get(id);
       if (!entry) return;
-      
+
+      const value = parseInt(qtyInput.value, 10);
       const stock = entry?.product?.stock ?? Infinity;
 
+      // Walidacja
       if (!Number.isFinite(value) || value < 1) {
-        qtyInput.value = entry?.quantity ?? 1;
+        qtyInput.value = entry.quantity ?? 1;
         return;
       }
 
+      const finalQty = Math.min(value, stock);
       if (value > stock) {
-        qtyInput.value = stock;
-        cart.set(id, { 
-          ...entry, 
-          quantity: stock,
-          quantityInputPerProject: '',
-          perProjectQuantities: []
-        });
-        renderCart();
-        return;
+        qtyInput.value = finalQty;
+        setStatus(`Maksymalna dostępna ilość: ${stock}`, 'error', 'cart');
       }
 
-      // Jeśli są projekty, przelicz rozkład
+      // Przelicz rozkład na projekty (jeśli są)
       const projectsStr = entry.projects || '';
-      if (projectsStr && value > 0) {
-        const result = computePerProjectQuantities(projectsStr, value, '');
-        if (result.success) {
-          // Zapisz wyliczone ilości jako listę (np. "14,13,13")
-          const qtyList = result.perProjectQuantities.map(p => p.qty).join(',');
-          cart.set(id, { 
-            ...entry, 
-            quantity: value,
-            quantityInputPerProject: qtyList,
-            perProjectQuantities: result.perProjectQuantities,
-            quantitySource: 'total'  // Edycja sumy = źródło to suma
-          });
-        } else {
-          cart.set(id, { 
-            ...entry, 
-            quantity: value,
-            quantityInputPerProject: '',
-            perProjectQuantities: [],
-            quantitySource: 'total'
-          });
-        }
-      } else {
-        cart.set(id, { 
-          ...entry, 
-          quantity: value,
-          quantityInputPerProject: '',
-          perProjectQuantities: [],
-          quantitySource: 'total'
-        });
-      }
+      const breakdown = recalculateProjectBreakdown(id, projectsStr, finalQty);
+
+      updateCartEntry(id, {
+        quantity: finalQty,
+        ...breakdown,
+        quantitySource: 'total'
+      });
       renderCart();
     });
   });
 
-  // Obsługa pola projektów - walidacja i przeliczenie
+  // 2. OBSŁUGA POLA PROJEKTÓW (kolumna "Nr projektów")
   projectsInputs.forEach(projectsInput => {
+    // Filtruj niedozwolone znaki podczas wpisywania
     projectsInput.addEventListener('input', () => {
       projectsInput.value = projectsInput.value.replace(/[^0-9,\-\s]/g, '');
     });
@@ -2668,153 +2925,175 @@ function renderCart() {
     projectsInput.addEventListener('blur', () => {
       const id = projectsInput.dataset.id;
       const entry = cart.get(id);
-      const value = projectsInput.value.trim();
-
       if (!entry) return;
 
+      const value = projectsInput.value.trim();
+
+      // Puste pole = wyczyść projekty
       if (!value) {
-        cart.set(id, { ...entry, projects: '', quantityInputPerProject: '', perProjectQuantities: [] });
-        renderCart();
-        return;
-      }
-
-      if (!isValidProjectInput(value)) {
-        setStatus('Podaj poprawny zakres numerów projektów: np. 1-5,7. Użyj tylko liczb, przecinków i myślników.', 'error', 'cart');
-        projectsInput.value = entry.projects ?? '';
-        return;
-      }
-
-      const normalized = sanitizeProjectsValue(value);
-      const totalQty = entry.quantity || 0;
-      const oldPerProject = entry.perProjectQuantities || [];
-      
-      // Parsuj nowe numery projektów
-      const newProjectNumbers = parseProjects(normalized);
-      
-      if (newProjectNumbers.length === 0) {
-        cart.set(id, { ...entry, projects: normalized, quantityInputPerProject: '', perProjectQuantities: [] });
-        renderCart();
-        return;
-      }
-      
-      // Inteligentne przeliczanie - zachowaj istniejące ilości, dodaj nowe projekty
-      if (oldPerProject.length > 0 && totalQty > 0) {
-        // Mapa starych ilości: projectNo -> qty
-        const oldQtyMap = new Map(oldPerProject.map(p => [p.projectNo, p.qty]));
-        
-        // Oblicz ile zostało do rozdzielenia na nowe projekty
-        const existingProjects = newProjectNumbers.filter(pn => oldQtyMap.has(pn));
-        const newProjects = newProjectNumbers.filter(pn => !oldQtyMap.has(pn));
-        
-        let newPerProjectQuantities = [];
-        
-        if (newProjects.length > 0) {
-          // Są nowe projekty - rozdziel pozostałą ilość
-          const usedQty = existingProjects.reduce((sum, pn) => sum + (oldQtyMap.get(pn) || 0), 0);
-          const remainingQty = Math.max(0, totalQty - usedQty);
-          const qtyPerNewProject = newProjects.length > 0 ? Math.floor(remainingQty / newProjects.length) : 0;
-          const extraQty = remainingQty - (qtyPerNewProject * newProjects.length);
-          
-          // Zachowaj stare ilości dla istniejących projektów
-          existingProjects.forEach(pn => {
-            newPerProjectQuantities.push({ projectNo: pn, qty: oldQtyMap.get(pn) });
-          });
-          
-          // Dodaj nowe projekty z rozdzieloną ilością
-          newProjects.forEach((pn, idx) => {
-            const qty = qtyPerNewProject + (idx < extraQty ? 1 : 0);
-            newPerProjectQuantities.push({ projectNo: pn, qty });
-          });
-          
-          // Posortuj po numerze projektu
-          newPerProjectQuantities.sort((a, b) => a.projectNo - b.projectNo);
-        } else {
-          // Tylko istniejące projekty (może usunięto niektóre)
-          existingProjects.forEach(pn => {
-            newPerProjectQuantities.push({ projectNo: pn, qty: oldQtyMap.get(pn) });
-          });
-          newPerProjectQuantities.sort((a, b) => a.projectNo - b.projectNo);
-        }
-        
-        const newTotal = newPerProjectQuantities.reduce((sum, p) => sum + p.qty, 0);
-        const qtyList = newPerProjectQuantities.map(p => p.qty).join(',');
-        
-        cart.set(id, { 
-          ...entry, 
-          projects: normalized,
-          quantity: newTotal,
-          quantityInputPerProject: qtyList,
-          perProjectQuantities: newPerProjectQuantities
+        updateCartEntry(id, {
+          projects: '',
+          quantityInputPerProject: '',
+          perProjectQuantities: [],
+          quantitySource: 'total'
         });
-      } else if (totalQty > 0) {
-        // Brak starych danych - przelicz z sumy
-        const result = computePerProjectQuantities(normalized, totalQty, '');
+        renderCart();
+        return;
+      }
+
+      // Automatycznie wyczyść (usuwa zbędne przecinki, spacje)
+      const normalized = sanitizeProjectsValue(value);
+      
+      // Jeśli po sanityzacji jest pusty lub niepoprawny - wyczyść bez błędu
+      if (!normalized || !isValidProjectInput(normalized)) {
+        updateCartEntry(id, {
+          projects: '',
+          quantityInputPerProject: '',
+          perProjectQuantities: [],
+          quantitySource: 'total'
+        });
+        renderCart();
+        return;
+      }
+
+      const projectNumbers = parseProjects(normalized);
+
+      // Brak poprawnych numerów
+      if (projectNumbers.length === 0) {
+        updateCartEntry(id, {
+          projects: normalized,
+          quantityInputPerProject: '',
+          perProjectQuantities: [],
+          quantitySource: 'total'
+        });
+        renderCart();
+        return;
+      }
+
+      // Mamy poprawne projekty - teraz decydujemy jak przeliczyć ilości
+      const totalQty = entry.quantity || 0;
+      const perProjectInputStr = (entry.quantityInputPerProject || '').trim();
+
+      // Przypadek A: Użytkownik wcześniej wpisał "po X" lub listę ilości - użyj tego
+      if (perProjectInputStr) {
+        const result = computePerProjectQuantities(normalized, '', perProjectInputStr);
         if (result.success) {
-          const qtyList = result.perProjectQuantities.map(p => p.qty).join(',');
-          cart.set(id, { 
-            ...entry, 
+          updateCartEntry(id, {
             projects: normalized,
-            quantityInputPerProject: qtyList,
-            perProjectQuantities: result.perProjectQuantities
+            quantity: result.totalQuantity,
+            quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
+            perProjectQuantities: result.perProjectQuantities,
+            quantitySource: 'perProject'
           });
         } else {
-          cart.set(id, { ...entry, projects: normalized });
+          // Ilości nie pasują do nowej liczby projektów - rozłóż równomiernie
+          if (totalQty > 0) {
+            const breakdown = recalculateProjectBreakdown(id, normalized, totalQty);
+            updateCartEntry(id, {
+              projects: normalized,
+              ...breakdown,
+              quantitySource: 'total'
+            });
+          } else {
+            updateCartEntry(id, {
+              projects: normalized,
+              quantityInputPerProject: '',
+              perProjectQuantities: [],
+              quantitySource: 'total'
+            });
+          }
         }
-      } else {
-        cart.set(id, { ...entry, projects: normalized });
       }
+      // Przypadek B: Mamy tylko łączną ilość - rozłóż równomiernie
+      else if (totalQty > 0) {
+        const breakdown = recalculateProjectBreakdown(id, normalized, totalQty);
+        updateCartEntry(id, {
+          projects: normalized,
+          ...breakdown,
+          quantitySource: 'total'
+        });
+      }
+      // Przypadek C: Brak ilości - tylko zapisz projekty
+      else {
+        updateCartEntry(id, {
+          projects: normalized,
+          quantityInputPerProject: '',
+          perProjectQuantities: [],
+          quantitySource: 'total'
+        });
+      }
+
       renderCart();
     });
   });
 
-  // Obsługa pola "po X" (B) - przelicza sumę automatycznie
+  // 3. OBSŁUGA POLA "ILOŚCI NA PROJEKTY" (kolumna "Ilości na proj.")
   qtyPerProjectInputs.forEach(qtyPerProjectInput => {
     qtyPerProjectInput.addEventListener('blur', () => {
       const id = qtyPerProjectInput.dataset.id;
       const entry = cart.get(id);
       if (!entry) return;
 
+      const rawValue = qtyPerProjectInput.value.trim();
       const projectsStr = entry.projects || '';
-      const perProjectQtyStr = qtyPerProjectInput.value.trim();
 
-      // Jeśli puste, czyścimy
-      if (!perProjectQtyStr) {
-        cart.set(id, { 
-          ...entry,
+      // Puste pole = wyczyść rozkład (ale zachowaj łączną ilość)
+      if (!rawValue) {
+        updateCartEntry(id, {
           quantityInputPerProject: '',
-          perProjectQuantities: []
+          perProjectQuantities: [],
+          quantitySource: 'total'
         });
         renderCart();
         return;
       }
 
-      // Sprawdź czy są projekty
-      if (!projectsStr) {
-        setStatus('Wpisz najpierw numery projektów w kolumnie "Nr projektów / Ilości na proj."', 'error', 'cart');
-        qtyPerProjectInput.value = entry.quantityInputPerProject || '';
+      // Automatycznie wyczyść (usuwa zbędne przecinki)
+      const perProjectQtyStr = sanitizePerProjectValue(rawValue);
+      
+      // Jeśli po sanityzacji jest pusty - wyczyść bez błędu
+      if (!perProjectQtyStr) {
+        updateCartEntry(id, {
+          quantityInputPerProject: '',
+          perProjectQuantities: [],
+          quantitySource: 'total'
+        });
+        renderCart();
         return;
       }
 
-      // Obliczamy rozkład - ignorujemy starą sumę, liczymy nową z "po X" lub listy
+      // Zawsze zapisz wpisaną wartość (nawet bez projektów)
+      if (!projectsStr) {
+        updateCartEntry(id, {
+          quantityInputPerProject: perProjectQtyStr,
+          perProjectQuantities: [],
+          quantitySource: 'perProject'
+        });
+        setStatus('Wpisz numery projektów, aby przeliczyć ilości', 'info', 'cart');
+        renderCart();
+        return;
+      }
+
+      // Mamy projekty - oblicz rozkład
       const result = computePerProjectQuantities(projectsStr, '', perProjectQtyStr);
 
       if (!result.success) {
-        setStatus(result.error, 'error', 'cart');
-        qtyPerProjectInput.value = entry.quantityInputPerProject || '';
+        // Zachowaj wpisaną wartość mimo błędu (bez komunikatu o błędzie dla drobnych problemów)
+        updateCartEntry(id, {
+          quantityInputPerProject: perProjectQtyStr,
+          quantitySource: 'perProject'
+        });
+        renderCart();
         return;
       }
 
-      // Zapisujemy wynik - jeśli to "po X", zamień na listę ilości
-      const qtyList = result.perProjectQuantities.map(p => p.qty).join(',');
-      const newEntry = { 
-        ...entry,
+      // Sukces - zapisz przeliczone wartości
+      updateCartEntry(id, {
         quantity: result.totalQuantity,
-        quantityInputPerProject: qtyList,
+        quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
         perProjectQuantities: result.perProjectQuantities,
-        quantitySource: 'perProject'  // Edycja ilości na projekt = źródło to ilości
-      };
-      cart.set(id, newEntry);
-      
+        quantitySource: 'perProject'
+      });
       renderCart();
     });
   });
@@ -2823,6 +3102,7 @@ function renderCart() {
     removeBtn.addEventListener('click', () => {
       cart.delete(removeBtn.dataset.id);
       renderCart();
+      saveCartToStorage();
     });
   });
 
@@ -2838,6 +3118,7 @@ function renderCart() {
         ...entry,
         itemNotes: notesInput.value.trim()
       });
+      saveCartToStorage();
     });
   });
 
@@ -2849,6 +3130,7 @@ function renderCart() {
 function clearCart() {
   cart.clear();
   renderCart();
+  saveCartToStorage();
   setStatus('Koszyk został wyczyszczony.', 'info');
 }
 
@@ -3149,8 +3431,17 @@ function initialize() {
   initTheme();
   
   resetResultsPlaceholder();
-  resetCartPlaceholder();
+
+  // Przywróć koszyk z localStorage (jeśli istnieje)
+  loadCartFromStorage();
+  if (cart.size) {
+    renderCart();
+  } else {
+    resetCartPlaceholder();
+  }
   initProjectFilter();
+  initSearchModeSwitch();
+  initSearchToolbarSticky();
   const searchForm = document.querySelector('#search-form');
   const exportPdfBtn = document.querySelector('#export-pdf');
 
@@ -3251,6 +3542,13 @@ function initialize() {
     modeButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
         const mode = btn.dataset.mode;
+
+        // Tryby planowane (PI/Hasła) są obecnie niedostępne – pokazujemy tylko komunikat
+        if (mode === 'projekty-imienne' || mode === 'projekty-hasla') {
+          setStatus('Tryb planowany – obecnie dostępne: Projekty miejscowości, Klienci indywidualni.', 'info');
+          return;
+        }
+
         if (!mode || mode === currentFormMode) return;
 
         modeButtons.forEach((other) => {
@@ -3278,6 +3576,14 @@ function initialize() {
       galleryProducts = [];
       updateProjectFilterAvailability();
       setGalleryPlaceholder('Wybierz obiekt, aby zobaczyć projekty.');
+
+      if (typeof saveGalleryStateToStorage === 'function') {
+        saveGalleryStateToStorage({
+          kiSalesperson: salesperson || '',
+          kiObject: '',
+          kiProductSlug: ''
+        });
+      }
     });
   }
 
@@ -3290,6 +3596,13 @@ function initialize() {
       
       // Zaktualizuj przycisk ulubionych przy miejscowości
       updateCityFavoriteButton(city);
+
+      if (typeof saveGalleryStateToStorage === 'function') {
+        saveGalleryStateToStorage({
+          pmCity: city || '',
+          pmProductSlug: ''
+        });
+      }
     });
   }
   
@@ -3336,6 +3649,14 @@ function initialize() {
       loadGalleryProductsForObject(sp, obj);
       // Zaktualizuj przycisk ulubionych dla obiektu KI
       updateObjectFavoriteButton(obj);
+
+      if (typeof saveGalleryStateToStorage === 'function') {
+        saveGalleryStateToStorage({
+          kiSalesperson: sp || '',
+          kiObject: obj || '',
+          kiProductSlug: ''
+        });
+      }
     });
   }
 
@@ -3349,12 +3670,25 @@ function initialize() {
         const city = galleryCitySelect ? galleryCitySelect.value : '';
         if (city) {
           cityModeProductSlug = slug;
+          if (typeof saveGalleryStateToStorage === 'function') {
+            saveGalleryStateToStorage({
+              pmCity: city,
+              pmProductSlug: slug || ''
+            });
+          }
         }
       } else if (currentFormMode === 'klienci-indywidualni') {
         const sp = gallerySalespersonSelect ? gallerySalespersonSelect.value : '';
         const obj = galleryObjectSelect ? galleryObjectSelect.value : '';
         if (sp && obj) {
           clientsModeProductSlug = slug;
+          if (typeof saveGalleryStateToStorage === 'function') {
+            saveGalleryStateToStorage({
+              kiSalesperson: sp,
+              kiObject: obj,
+              kiProductSlug: slug || ''
+            });
+          }
         }
       }
       
@@ -3519,6 +3853,18 @@ function initOrderCustomerControls() {
       setOrderCustomer(customer);
     });
   }
+
+  if (orderAddCustomerBtn) {
+    orderAddCustomerBtn.addEventListener('click', () => {
+      window.open('/clients?new=1', '_blank');
+    });
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      loadOrderCustomers();
+    }
+  });
 }
 
 // Sprawdzenie autoryzacji i inicjalizacja
@@ -4259,16 +4605,24 @@ async function useTemplate(templateId) {
       };
 
       const cartKey = `${item.productCode}_${item.locationName || 'katalog'}`;
+      const perProjectQuantities = item.projectQuantities ? JSON.parse(item.projectQuantities) : [];
+      const quantityInputPerProject = perProjectQuantities.length > 0 
+        ? perProjectQuantities.map(p => p.qty).join(',') 
+        : '';
+      
       cart.set(cartKey, {
         product,
         quantity: item.quantity,
         projects: item.selectedProjects || '',
-        perProjectQuantities: item.projectQuantities ? JSON.parse(item.projectQuantities) : [],
+        quantityInputPerProject,
+        perProjectQuantities,
+        quantitySource: perProjectQuantities.length > 0 ? 'perProject' : 'total',
         locationName: item.locationName,
         source: item.source || 'MIEJSCOWOSCI'
       });
     }
 
+    saveCartToStorage();
     renderCart();
     closeTemplateModal();
     setStatus(`Szablon "${result.data.templateName}" został wczytany do koszyka.`, 'success', 'cart');

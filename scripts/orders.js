@@ -298,10 +298,10 @@ document.addEventListener('DOMContentLoaded', () => {
     logoutBtn.addEventListener('click', async () => {
         try {
             await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-            window.location.href = '/login';
+            window.location.href = '/';
         } catch (error) {
             console.error('Błąd wylogowania:', error);
-            window.location.href = '/login';
+            window.location.href = '/';
         }
     });
 

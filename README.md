@@ -317,7 +317,7 @@ W każdej opcji pamiętaj o ustawieniu zmiennych środowiskowych (`PORT`, `SMTP_
     - `KI` (katalog indywidualny / klienci indywidualni) – zielony,
     - inne typy (imienne / hasła / okolicznościowe) mają własne kolory.
   - Badge pojawia się niezależnie od tego, czy zamówienie ma mieszane źródła, czy nie.
-
+  
 - **Mapowanie projektów galerii na produkty**
   - Nowy moduł admina "Mapowanie produktów" oparty o tabele `GalleryProject` i `GalleryProjectProduct`.
   - Endpointy `api/gallery/products/*` wzbogacają odpowiedź o strukturę:
@@ -327,7 +327,22 @@ W każdej opcji pamiętaj o ustawieniu zmiennych środowiskowych (`PORT`, `SMTP_
     - wyszukiwarka wyników potrafi dopasować wybrany produkt do konkretnego projektu,
     - filtr "z projektem / bez projektu" uwzględnia zarówno nazwy z galerii, jak i mapowanie w bazie.
 
+- **Widok "Miejscowości PM" w panelu admina**
+  - Dodano szybkie filtry i przycisk "Wyczyść filtry" resetujący wyszukiwarkę, sortowanie i checkboxy nad siatką miast.
+  - Dostępny jest przycisk "Eksport CSV" z globalną listą przypisań miejscowości do handlowców.
+  - Nowy podgląd wydruku przypisań w układzie: Handlowiec → lista przypisanych miejscowości (alfabetycznie).
+
+- **Szczegóły zamówień i role**
+  - `ADMIN`, `SALES_DEPT`, `WAREHOUSE`, `PRODUCTION` mogą oglądać szczegóły wszystkich zamówień.
+  - `SALES_REP` widzi tylko własne zamówienia (spójnie z listą zamówień).
+  - Naprawiono błąd 500 w `/api/orders/:id` (usunięta nieistniejąca kolumna produktu z zapytania SQL).
+  
 - **Zmiany techniczne**
   - Dodano migrację `supabase/migrations/20251201_add_quantity_source.sql` z kolumną `OrderItem.quantitySource text DEFAULT 'total'`.
   - Backend (`server.js`) zapisuje i odczytuje `projectQuantities` i `quantitySource` oraz zwraca te pola w `/api/orders` i `/api/orders/:id`.
   - Wyciszono większość logów `[DEBUG]` w `scripts/app.js` i `admin/admin.js`.
+
+- **City Access (Miejscowości PM)**
+  - Dodano nowy moduł w panelu admina do zarządzania przypisaniem miejscowości do handlowców.
+  - Ulepszono wyświetlanie informacji o miejscowościach w szczegółach zamówień.
+  - Naprawiono błąd związany z dostępem do szczegółów zamówień dla użytkowników z rolą `SALES_REP`.

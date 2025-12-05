@@ -264,6 +264,21 @@ oraz w przyszłości przez panel produkcyjny.
   dostępne na liście na podstawie danych z galerii.
 
 
+### 6.7. Stan formularza zamówień w localStorage
+
+- **Zakres:** dotyczy wyłącznie frontendu (przeglądarka użytkownika). Dane nie są synchronizowane z backendem.
+- **Klucze:**
+  - `rezonCartV1` – serializowany stan koszyka (pozycje, ilości, uwagi). Zapisywany przy każdej zmianie koszyka
+    (dodanie/edycja/usunięcie pozycji, wczytanie szablonu). Czyści się przy ręcznym „Wyczyść koszyk” oraz po
+    poprawnym wysłaniu zamówienia.
+  - `rezonGalleryStateV1` – ostatnio użyte ustawienia galerii:
+    - tryb PM: `pmCity`, `pmProductSlug`,
+    - tryb KI: `kiSalesperson`, `kiObject`, `kiProductSlug`.
+- **Odtwarzanie stanu:** przy starcie formularza odczytywany jest zapisany stan. Zapisany produkt
+  jest ustawiany tylko wtedy, gdy nadal istnieje w danych zwróconych przez API
+  (`/api/gallery/products/:city` lub `/api/gallery/products-object`). W przeciwnym razie select produktu
+  pozostaje pusty.
+
 ---
 
 ## 7. Workflow zamówień

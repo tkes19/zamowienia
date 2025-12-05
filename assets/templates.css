@@ -227,6 +227,17 @@
   align-items: center;
 }
 
+/* Kolorowe przyciski szablonów nad koszykiem */
+.panel__actions .btn--secondary {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.panel__actions .btn--secondary:hover {
+  background: var(--color-primary-hover);
+}
+
 /* Responsywność */
 @media (max-width: 768px) {
   .modal__content {

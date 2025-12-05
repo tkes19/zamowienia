@@ -249,6 +249,10 @@ Dozwolone przejścia:
 - **Aktywacja/Dezaktywacja:** Przełącznik w kolumnie "Aktywny"
 - **Usuwanie:** Ikona kosza (tylko ADMIN)
 - **Filtrowanie:** Pola filtru dla użytkownika i miejscowości
+- **Szybkie filtry nad siatką miast:** checkboxy (współdzielone, nowe w 30 dniach, bez przypisań globalnie)
+- **Wyczyść filtry:** przycisk resetujący wyszukiwarkę, sortowanie i checkboxy nad siatką miast
+- **Eksport przypisań:** przycisk "Eksport CSV" w nagłówku widoku (globalna lista przypisań miejscowości do handlowców)
+- **Podgląd wydruku:** przycisk "Podgląd wydruku" z układem Handlowiec → przypisane miejscowości (alfabetycznie)
 
 ### 8.4. Mapowanie produktów (galeria)
 

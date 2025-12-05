@@ -2051,10 +2051,10 @@ function showUserNavigation(role) {
 async function handleLogout() {
   try {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-    window.location.href = '/login.html';
+    window.location.href = '/';
   } catch (error) {
     console.error('Błąd wylogowania:', error);
-    window.location.href = '/login.html';
+    window.location.href = '/';
   }
 }
 

@@ -140,6 +140,16 @@ header {
   border-bottom-color: var(--color-text);
 }
 
+.mode-nav__item--disabled {
+  opacity: 0.45;
+  cursor: default;
+  border-bottom-color: transparent;
+}
+
+.mode-nav__item--disabled:hover {
+  color: var(--color-muted);
+}
+
 .header-row {
   display: flex;
   justify-content: space-between;
@@ -258,6 +268,11 @@ header {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.order-customer__actions .field {
+  flex: 1 1 0;
+  min-width: 220px;
 }
 
 .btn--sm {
@@ -602,6 +617,7 @@ header h1 {
 .panel--note {
   border: 1px dashed var(--color-border);
   background: rgba(37, 99, 235, 0.03);
+  gap: 0.75rem;
 }
 
 .panel--gallery {
@@ -824,6 +840,20 @@ header h1 {
   align-items: end;
 }
 
+.search-toolbar {
+  position: sticky;
+  top: 3.5rem;
+  z-index: 15;
+  background: var(--color-surface);
+  padding-bottom: 0.5rem;
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.04);
+}
+
+.search-toolbar--static {
+  position: static;
+  box-shadow: none;
+}
+
 .field {
   display: grid;
   gap: 0.4rem;
@@ -834,12 +864,17 @@ header h1 {
   min-width: 220px;
 }
 
+.field--mode .search-mode-switch {
+  justify-self: start;
+  width: max-content;
+}
+
 .field--grow {
   grid-column: span 6;
 }
 
 .field--query input {
-  min-height: 52px;
+  min-height: 44px;
 }
 
 .search-form__actions {
@@ -849,8 +884,17 @@ header h1 {
 }
 
 .search-form__submit {
-  min-width: 160px;
-  height: 52px;
+  min-width: 120px;
+}
+
+.search-toolbar__pin {
+  margin-left: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+}
+
+.search-toolbar__pin--active {
+  color: var(--color-primary);
 }
 
 .field__label {
@@ -864,6 +908,12 @@ header h1 {
   justify-content: space-between;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+.search-help {
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--color-muted);
 }
 
 .field__input {
@@ -955,6 +1005,25 @@ select:focus {
   transform: translateY(0);
 }
 
+.btn--danger {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.btn--danger:hover {
+  background: #dc2626; /* trochę ciemniejszy czerwony dla hovera */
+}
+
+.btn--secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.btn--secondary:hover {
+  background: var(--color-surface-secondary);
+}
+
 .btn--primary {
   color: #fff;
   background: var(--color-primary);
@@ -996,6 +1065,10 @@ select:focus {
   gap: 1rem;
   flex-wrap: wrap;
   margin-top: 1rem;
+}
+
+.panel--note .export-buttons {
+  margin-top: 0.5rem;
 }
 
 .export-buttons .btn {
@@ -1097,11 +1170,13 @@ select:focus {
 .table__total-label {
   text-align: right;
   font-weight: 700;
+  white-space: nowrap; /* nie zawijaj "Suma zamówienia" */
 }
 
 .table__total-value {
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: 0.95rem;   /* trochę mniejsze, żeby 6,50 zł mieściło się w 1 linii */
+  white-space: nowrap;  /* nie zawijaj "zł" do nowej linii */
 }
 
 
@@ -1118,9 +1193,6 @@ select:focus {
 .qty-cell {
   width: 90px;
   min-width: 90px;
-  padding-right: 0.5rem;
-  position: relative;
-  z-index: 2;
 }
 
 .qty-cell .qty-input {
@@ -1128,7 +1200,7 @@ select:focus {
   min-width: 60px !important;
   max-width: 60px !important;
   padding: 6px 4px !important;
-  margin-right: 10px;
+  margin: 0 auto;
   text-align: center;
   position: relative;
   z-index: 2;
@@ -1165,7 +1237,8 @@ select:focus {
 .notes-cell {
   min-width: 150px;
   width: auto;
-  padding-left: 2.5rem;
+  padding-left: 0.5rem;
+  padding-right: 0.75rem;
   position: relative;
 }
 
@@ -1174,6 +1247,8 @@ select:focus {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
+  margin-left: 0.25rem;
+  margin-right: 0;
 }
 
 .notes-cell textarea,
@@ -1190,15 +1265,19 @@ select:focus {
 
 /* Dodatkowe style dla koszyka */
 #cart-body .qty-input {
-  width: 80px;
-  min-width: 80px;
-  padding: 0.4rem 0.5rem;
+  width: 60px;
+  min-width: 60px;
+  padding: 0.2rem 0.3rem;
+  height: 28px;
+  font-size: 0.75rem;
+  display: block;
+  margin: 0 0.1rem 0 auto; /* maksymalnie dosunięte w prawo pod label ILOŚĆ */
 }
 
 .qty-input:focus {
   border-color: var(--color-primary);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
 }
 
 .action-btns {
@@ -1451,17 +1530,17 @@ main.layout {
   padding: 0.3rem 0.5rem;
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   background-color: var(--color-surface);
   color: var(--color-text);
-  font-family: monospace;
+  font-family: var(--font-base);
 }
 
 .qty-per-project-input::placeholder,
 .qty-per-project-input-results::placeholder {
   color: var(--color-muted);
   font-family: var(--font-base);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 
 .qty-per-project-input:focus,
@@ -1473,12 +1552,12 @@ main.layout {
 
 .qty-preview,
 .qty-preview-results {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--color-muted);
   padding: 0.25rem 0.5rem;
   background-color: var(--color-surface-secondary);
   border-radius: 4px;
-  font-family: monospace;
+  font-family: var(--font-base);
   word-break: break-word;
   margin-top: 0.2rem;
   line-height: 1.3;
@@ -1498,23 +1577,67 @@ main.layout {
   letter-spacing: 0.5px;
 }
 
+/* ============================================
+   Sekcja "Wybrane produkty" - pola projektów
+   ============================================ */
+.projects-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-left: -2.5rem;
+}
+
+.projects-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.projects-field__label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Pola w sekcji wyników - szersze i spójne */
+.projects-cell .projects-input {
+  width: 180px;
+  min-width: 150px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  font-family: var(--font-base);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+.projects-cell .qty-per-project-input-results {
+  width: 180px;
+  min-width: 150px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.projects-cell .projects-input:focus,
+.projects-cell .qty-per-project-input-results:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.1);
+}
+
 /* Kompaktowy koszyk - wszystko w jednym wierszu */
 .cart-projects-col {
   display: flex;
   flex-direction: row;
-  gap: 0.25rem;
+  gap: 0.4rem;
   align-items: center;
   flex-wrap: nowrap;
-}
-
-.cart-projects-col .projects-input {
-  width: 70px;
-  min-width: 60px;
-}
-
-.cart-projects-col .qty-per-project-input {
-  width: 90px;
-  min-width: 80px;
+  margin-left: -2rem;
 }
 
 .cart-projects-col .qty-preview {
@@ -1546,7 +1669,7 @@ main.layout {
 
 /* Pole uwag ogólnych do zamówienia */
 .order-notes-section {
-  margin-top: 1rem;
+  margin-top: 0.35rem;
   padding: 1rem;
   background: var(--color-surface-secondary);
   border-radius: 8px;
@@ -1604,23 +1727,37 @@ main.layout {
   width: 100%;
 }
 
-.table--cart th:nth-child(1) { width: 15%; } /* Identyfikator */
-.table--cart th:nth-child(2) { width: 14%; } /* Nr projektów / Ilości - mniejsze */
-.table--cart th:nth-child(3) { width: 6%; }  /* Ilość */
-.table--cart th:nth-child(4) { width: 46%; } /* Uwagi - bardzo dużo miejsca */
-.table--cart th:nth-child(5) { width: 10%; } /* Wartość */
-.table--cart th:nth-child(6) { width: 9%; text-align: right; } /* Akcje - do prawej */
+/* Szerokości kolumn koszyka sterowane przez colgroup */
+/* Suma = 100% */
+.cart-col-identifiers { width: 2%; }   /* IDENTYFIKATOR i INDEKS – maksymalnie wąski, daje jeszcze więcej miejsca na projekty */
+.cart-col-projects    { width: 41%; }  /* NR PROJEKTÓW / ILOŚCI NA PROJ. – szerszy blok, bliżej lewej krawędzi tabeli */
+.cart-col-qty         { width: 5%; }   /* ILOŚĆ – bez zmian wizualnych */
+.cart-col-notes       { width: 44%; }  /* UWAGI – bez zmian, szerokie pole */
+.cart-col-price       { width: 3%; }   /* Wartość */
+.cart-col-actions     { width: 5%; }   /* AKCJE – przycisk Usuń nadal ma miejsce */
 
 .table--cart th {
   font-size: 0.7rem;
   padding: 0.35rem 0.25rem;
-  white-space: nowrap;
+  white-space: normal;  /* pozwól nagłówkom zawijać się w 2 linie */
+}
+
+/* Nagłówek kolumny ILOŚĆ wyrównany do prawej, spójnie z polem ilości */
+.table--cart th:nth-child(3) {
+  text-align: right;
+  padding-right: 0.55rem;
 }
 
 .table--cart td {
   vertical-align: top;
   padding: 0.25rem 0.2rem;
   font-size: 0.75rem;
+}
+
+/* Dodatkowy odstęp między blokiem projektów a kolumną Ilość w koszyku */
+.table--cart .cart-projects-col {
+  padding-left: 0;
+  padding-right: 1.7rem; /* maksymalna bezpieczna przerwa przed kolumną ILOŚĆ */
 }
 
 .table--cart tbody tr {
@@ -1630,14 +1767,16 @@ main.layout {
 .table--cart .product-identifiers {
   line-height: 1.2;
   padding-top: 0.4rem;
+  width: 52px;
+  max-width: 52px; /* nie pozwól, żeby długa nazwa rozpychała kolumnę */
+  min-width: 45px;
 }
 
 .table--cart .product-name {
   font-size: 0.8rem;
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;    /* pozwól na łamanie w 2 linie w koszyku */
+  word-break: break-word;
 }
 
 .table--cart .product-id {
@@ -1646,12 +1785,12 @@ main.layout {
 }
 
 .table--cart .projects-input,
-.table--cart .qty-per-project-input,
-.table--cart .qty-input {
-  padding: 0.2rem 0.3rem;
-  font-size: 0.75rem;
-  height: 26px;
-  width: 50px;
+.table--cart .qty-per-project-input {
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+  font-family: var(--font-base);
+  height: 28px;
+  width: 140px;
 }
 
 /* Akcje - przycisk do prawej */
@@ -1663,19 +1802,20 @@ main.layout {
 }
 
 .table--cart .btn--danger {
-  padding: 0.15rem 0.5rem;
-  font-size: 0.65rem;
+  padding: 0.3rem 0.6rem;  /* jak przycisk Dodaj w wynikach */
+  font-size: 0.7rem;       /* jak przycisk Dodaj w wynikach */
+  white-space: nowrap;
 }
 
-/* Pola w koszyku - szersze */
+/* Pola w koszyku - szersze (więcej miejsca na długie listy projektów) */
 .cart-projects-col .projects-input {
-  width: 70px;
-  min-width: 60px;
+  width: 180px;
+  min-width: 160px;
 }
 
 .cart-projects-col .qty-per-project-input {
-  width: 65px;
-  min-width: 55px;
+  width: 180px;
+  min-width: 160px;
 }
 
 /* Komórka uwag w koszyku */
@@ -1689,11 +1829,11 @@ main.layout {
   min-height: 28px;
   max-height: 60px;
   resize: vertical;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.4rem;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.35rem;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-bg);
+  background: var(--color-surface);
 }
 
 /* Podgląd rozkładu ilości w koszyku */
@@ -1732,11 +1872,10 @@ main.layout {
 
 /* Oznaczenie źródła prawdy dla ilości w koszyku */
 .qty-source-highlight {
-  border: 3px solid #2563eb !important;
+  border: 2px solid #2563eb !important;
   background-color: #dbeafe !important;
-  font-weight: 700 !important;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3) !important;
-  outline: 2px solid #1d4ed8 !important;
+  font-weight: 600 !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22) !important;
 }
 
 /* Tabela Wybrane produkty - szerokości kolumn */
@@ -1783,7 +1922,8 @@ main.layout {
   padding: 0.2rem 0.3rem;
 }
 
-.table--results .btn--primary {
+.table--results .btn--primary,
+.table--results .btn--success {
   padding: 0.3rem 0.6rem;
   font-size: 0.7rem;
   white-space: nowrap;
@@ -2083,6 +2223,17 @@ header.header {
   font-size: 0.75rem;
   padding: 0.4rem 0.7rem;
   min-height: auto;
+}
+
+/* Mocniejszy wygląd przycisków nawigacji w pasku użytkownika */
+.header__user-actions .btn--secondary {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.header__user-actions .btn--secondary:hover {
+  background: var(--color-primary-hover);
 }
 
 .header .theme-toggle {

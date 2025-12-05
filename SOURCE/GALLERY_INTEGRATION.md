@@ -116,4 +116,13 @@ Ta dokumentacja opisuje aktualny zestaw plików tworzących galerię produktów 
 - Buforowanie wyników API (service worker lub prosty cache w localStorage).
 - Własny backend API → reverse proxy, gdy QNAP jest dostępny tylko z sieci lokalnej.
 
+W systemie zamówień **Rezon** galeria jest zintegrowana z formularzem zamówień. Frontend formularza korzysta
+z prostego stanu w `localStorage`, aby zapamiętać ostatnio wybrane:
+
+- w trybie PM: miejscowość (`pmCity`) i produkt (`pmProductSlug`),
+- w trybie KI: handlowca (`kiSalesperson`), obiekt (`kiObject`) i produkt (`kiProductSlug`).
+
+Szczegóły zachowania (w tym klucze localStorage i zasady odtwarzania stanu) opisuje `docs/SPEC.md`
+(`sekcja 6.7. Stan formularza zamówień w localStorage`).
+
 Masz pytania albo potrzebujesz wersji modułowej (np. `gallery.js` + `gallery.css`)? Daj znać – łatwo wygenerujemy gotowe pliki do importu.

@@ -177,17 +177,21 @@
           </button>
           <button
             type="button"
-            class="mode-nav__item"
+            class="mode-nav__item mode-nav__item--disabled"
             data-mode="projekty-imienne"
+            aria-disabled="true"
+            title="Tryb planowany – obecnie dostępne: Projekty miejscowości, Klienci indywidualni."
           >
-            Projekty imienne
+            Projekty imienne (Wkrótce)
           </button>
           <button
             type="button"
-            class="mode-nav__item"
+            class="mode-nav__item mode-nav__item--disabled"
             data-mode="projekty-hasla"
+            aria-disabled="true"
+            title="Tryb planowany – obecnie dostępne: Projekty miejscowości, Klienci indywidualni."
           >
-            Projekty hasła
+            Projekty hasła (Wkrótce)
           </button>
         </nav>
 
@@ -265,10 +269,27 @@
       </section>
 
       <section class="panel panel--search-gallery">
-        <form id="search-form" class="search-form" autocomplete="off">
+        <div id="search-toolbar" class="search-toolbar search-toolbar--sticky">
+          <form id="search-form" class="search-form" autocomplete="off">
           <label class="field field--mode">
             <span class="field__label">Tryb wyszukiwania</span>
-            <select id="mode" class="field__input">
+            <div class="project-filter__switch search-mode-switch" role="radiogroup" aria-label="Tryb wyszukiwania">
+              <button
+                type="button"
+                class="project-filter__option project-filter__option--active"
+                data-mode="name"
+              >
+                Identyfikator
+              </button>
+              <button
+                type="button"
+                class="project-filter__option"
+                data-mode="pc_id"
+              >
+                Indeks
+              </button>
+            </div>
+            <select id="mode" class="field__input visually-hidden">
               <option value="name">Identyfikator</option>
               <option value="pc_id">Indeks</option>
             </select>
@@ -282,13 +303,23 @@
                 <span class="gallery-lock__text">Dokładne dopasowanie</span>
               </label>
             </span>
-            <input id="query" class="field__input" placeholder="np. koło, DK42" required />
+            <input id="query" class="field__input" placeholder="np. KUBEK_300, MAGNES_HDF, DK42-01" required />
           </label>
 
           <div class="search-form__actions">
-            <button type="submit" class="btn btn--primary search-form__submit">Szukaj</button>
+            <button type="submit" class="btn btn--primary btn--small search-form__submit">Szukaj</button>
+            <button
+              type="button"
+              id="search-toolbar-toggle"
+              class="btn--icon search-toolbar__pin"
+              aria-pressed="true"
+              title="Odepnij pasek wyszukiwania"
+            >
+              <i class="fas fa-thumbtack"></i>
+            </button>
           </div>
-        </form>
+          </form>
+        </div>
 
         <div class="search-gallery__divider"></div>
 
@@ -405,7 +436,7 @@
                 </button>
               </div>
             </div>
-            <button type="button" class="btn btn--outline" id="toggle-price">
+            <button type="button" class="btn btn--outline btn--small" id="toggle-price">
               <i class="fas fa-eye"></i> Pokaż ceny
             </button>
           </div>
@@ -440,45 +471,29 @@
         </div>
       </section>
 
-      <!-- Pasek klienta zamówienia -->
-      <section class="panel panel--customer-bar guest-hidden" aria-label="Klient zamówienia">
-        <div class="panel__header panel__header--customer">
-          <div class="order-customer">
-            <span class="order-customer__label">Klient zamówienia:</span>
-            <span id="order-customer-name" class="order-customer__value order-customer__value--empty">
-              Brak wybranego klienta
-            </span>
-          </div>
-          <div class="order-customer__actions">
-            <label class="field field--inline">
-              <span class="field__label">Szukaj</span>
-              <input id="order-customer-search" class="field__input field__input--sm" placeholder="Nazwa, miasto, email" />
-            </label>
-            <label class="field field--inline">
-              <span class="field__label">Lista klientów</span>
-              <select id="order-customer-select" class="field__input field__input--sm" aria-label="Wybierz klienta">
-                <option value="">--- wybierz klienta ---</option>
-              </select>
-            </label>
-          </div>
-        </div>
-      </section>
-
       <section class="panel guest-hidden">
         <div class="panel__header">
           <h2>Koszyk zamówienia</h2>
           <div class="panel__actions">
-            <button id="save-template-btn" class="btn btn--secondary" type="button">
+            <button id="save-template-btn" class="btn btn--secondary btn--small" type="button">
               <i class="fas fa-save"></i> Zapisz szablon
             </button>
-            <button id="load-template-btn" class="btn btn--secondary" type="button">
+            <button id="load-template-btn" class="btn btn--secondary btn--small" type="button">
               <i class="fas fa-folder-open"></i> Wczytaj szablon
             </button>
-            <button id="clear-cart" class="btn btn--link" type="button">Wyczyść koszyk</button>
+            <button id="clear-cart" class="btn btn--danger btn--small" type="button">Wyczyść koszyk</button>
           </div>
         </div>
         <div class="table-wrapper">
           <table class="table table--cart">
+            <colgroup>
+              <col class="cart-col-identifiers" />
+              <col class="cart-col-projects" />
+              <col class="cart-col-qty" />
+              <col class="cart-col-notes" />
+              <col class="cart-col-price" />
+              <col class="cart-col-actions" />
+            </colgroup>
             <thead>
               <tr>
                 <th>IDENTYFIKATOR i INDEKS</th>
@@ -501,11 +516,7 @@
             </tfoot>
           </table>
         </div>
-      </section>
 
-      <section class="panel panel--note guest-hidden">
-        <h2>Eksport danych i wysyłka</h2>
-        
         <!-- Pole uwag ogólnych do zamówienia -->
         <div class="order-notes-section">
           <label for="order-general-notes">
@@ -518,17 +529,36 @@
             rows="2"
           ></textarea>
         </div>
+      </section>
+
+      <section class="panel panel--note guest-hidden">
+        <h2>Klient zamówienia i wysyłka</h2>
         
-        <p style="margin-top: 1rem;">Pobierz aktualny koszyk w wybranym formacie lub wyślij zamówienie do bazy:</p>
+        <div class="panel__header panel__header--customer">
+          <div class="order-customer">
+            <button id="order-add-customer-btn" class="btn btn--success btn--small" type="button">
+              <i class="fas fa-plus"></i> Dodaj klienta
+            </button>
+          </div>
+          <div class="order-customer__actions">
+            <label class="field field--inline">
+              <span class="field__label">Szukaj</span>
+              <input id="order-customer-search" class="field__input field__input--sm" placeholder="Nazwa, miasto, email" />
+            </label>
+            <label class="field field--inline">
+              <span class="field__label">Wybierz klienta</span>
+              <select id="order-customer-select" class="field__input field__input--sm" aria-label="Wybierz klienta">
+                <option value="">--- wybierz klienta ---</option>
+              </select>
+            </label>
+          </div>
+        </div>
         <div class="export-buttons">
-          <button id="export-json" class="btn" type="button">Pobierz koszyk (JSON)</button>
-          <button id="export-pdf" class="btn btn--primary" type="button">Pobierz zamówienie (PDF)</button>
           <button id="submit-order" class="btn btn--success" type="button">
             <i class="fas fa-paper-plane"></i> Wyślij zamówienie
           </button>
           <p id="cart-status" class="status" aria-live="polite"></p>
         </div>
-        <a id="download-link" class="visually-hidden" download="zamowienie.json">Pobierz</a>
       </section>
 
       <!-- Widok Zamówienia -->
@@ -607,8 +637,6 @@
       </section>
     </main>
 
-    <script src="scripts/vendor/jspdf/jspdf.umd.min.js"></script>
-    <script src="scripts/vendor/jspdf/jspdf.plugin.autotable.min.js"></script>
     <!-- Modal: Lista szablonów -->
     <div id="template-modal" class="modal" style="display: none;">
       <div class="modal__content modal__content--wide">
