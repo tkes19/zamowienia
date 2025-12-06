@@ -279,6 +279,17 @@ oraz w przyszłości przez panel produkcyjny.
   (`/api/gallery/products/:city` lub `/api/gallery/products-object`). W przeciwnym razie select produktu
   pozostaje pusty.
 
+### 6.8. Logika ilości i numerów projektów (frontend)
+
+Formularz zamówień i koszyk używają jednej spójnej logiki rozkładu ilości na projekty (`computePerProjectQuantities`).
+Użytkownik może podać:
+- łączną ilość (`Ilość`), albo
+- ilości na projekty (`Ilości na proj.`: "po X" lub lista liczb).
+
+Źródło prawdy oznaczane jest w pozycji koszyka polem `quantitySource` (`total` lub `perProject`). Numery projektów i
+ilości są po stronie frontendu zawsze oczyszczane (usuwanie zbędnych przecinków, spacji), a drobne błędy formatu są
+naprawiane bez wyświetlania komunikatów błędu użytkownikowi.
+
 ---
 
 ## 7. Workflow zamówień

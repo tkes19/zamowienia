@@ -1,3 +1,32 @@
+// Globalna funkcja escapeHtml - używana w całym pliku
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Globalna funkcja showAdminToast - używana w module produkcyjnym
+function showAdminToast(message, type = 'info', duration = 3000) {
+    const container = document.getElementById('admin-toast-container');
+    if (!container) {
+        console.log(`[Toast ${type}] ${message}`);
+        return;
+    }
+    const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' };
+    const toast = document.createElement('div');
+    toast.className = `admin-toast ${type}`;
+    toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${escapeHtml(message)}</span>`;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.animation = 'toastOut 0.3s ease-out forwards';
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Sprawdź uprawnienia użytkownika i dostosuj UI
     checkUserPermissionsAndAdaptUI();
@@ -50,16 +79,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Konfiguracja
     const LOW_STOCK_THRESHOLD = 5;
-
-    function escapeHtml(str) {
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
 
     // Inicjalizacja
     fetchProducts();
@@ -1157,7 +1176,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const ROLE_STATUS_TRANSITIONS = {
         SALES_REP: [{ from: 'PENDING', to: 'CANCELLED' }],
         SALES_DEPT: [
-            { from: 'PENDING', to: 'APPROVED' }, { from: 'APPROVED', to: 'IN_PRODUCTION' },
+            { from: 'PENDING', to: 'APPROVED' },
+            // SALES_DEPT NIE może: APPROVED → IN_PRODUCTION (to robi produkcja/operator)
             { from: 'APPROVED', to: 'CANCELLED' }, { from: 'IN_PRODUCTION', to: 'CANCELLED' },
             { from: 'READY', to: 'CANCELLED' }, { from: 'SHIPPED', to: 'DELIVERED' }
         ],
@@ -1364,7 +1384,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (filteredOrders.length === 0) {
-            ordersTableBody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-gray-500">Brak zamówień</td></tr>';
+            ordersTableBody.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-500">Brak zamówień</td></tr>';
             if (ordersTableInfo) ordersTableInfo.textContent = 'Pokazuje 0 z 0 zamówień';
             return;
         }
@@ -1405,6 +1425,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? `<button class="text-green-600 hover:text-green-800 p-1" data-action="edit" data-order-id="${order.id}" title="Edytuj zamówienie"><i class="fas fa-edit"></i></button>`
                 : '';
 
+            // Kolumna produkcji z paskiem postępu
+            let productionHtml = '<span class="text-gray-400 text-xs">-</span>';
+            if (order.productionProgress) {
+                const pp = order.productionProgress;
+                const barColor = pp.percent === 100 ? 'bg-green-500' : pp.percent > 0 ? 'bg-amber-500' : 'bg-blue-500';
+                productionHtml = `
+                    <div class="flex items-center gap-2 min-w-[100px]">
+                        <div class="flex-1 bg-gray-200 rounded-full h-2">
+                            <div class="${barColor} h-2 rounded-full transition-all" style="width: ${pp.percent}%"></div>
+                        </div>
+                        <span class="text-xs font-medium text-gray-600 whitespace-nowrap">${pp.label}</span>
+                    </div>
+                `;
+            } else if (order.status === 'PENDING') {
+                productionHtml = '<span class="text-gray-400 text-xs">Oczekuje</span>';
+            }
+
             return `
                 <tr class="hover:bg-gray-50 cursor-pointer order-row" data-order-id="${order.id}">
                     <td class="p-4 w-8"><i class="fas fa-chevron-right chevron-icon text-gray-400" data-order-id="${order.id}"></i></td>
@@ -1413,6 +1450,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-4">${customerNameSafe}</td>
                     <td class="p-4">${userShortSafe}</td>
                     <td class="p-4">${statusContent}</td>
+                    <td class="p-4">${productionHtml}</td>
                     <td class="p-4 text-right font-semibold">${(order.total || 0).toFixed(2)} zł</td>
                     <td class="p-4 text-right">
                         ${editBtn}
@@ -2022,6 +2060,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadCityAccess();
             } else if (viewName === 'product-mapping') {
                 loadProductMappingProjects();
+            } else if (viewName === 'production-rooms') {
+                loadProductionRooms();
+            } else if (viewName === 'production-work-centers') {
+                loadWorkCenters();
+            } else if (viewName === 'production-work-stations') {
+                loadWorkStations();
+            } else if (viewName === 'production-paths') {
+                loadProductionPaths();
+            } else if (viewName === 'production-orders') {
+                loadProductionOrders();
             }
         });
     });
@@ -4602,4 +4650,1155 @@ async function checkUserPermissionsAndAdaptUI() {
     } catch (error) {
         console.error('Błąd sprawdzania uprawnień:', error);
     }
+}
+
+// ============================================
+// MODUŁ: PANEL PRODUKCYJNY
+// ============================================
+
+const WORK_CENTER_TYPE_LABELS = {
+    'laser_co2': 'Laser CO2',
+    'laser_fiber': 'Laser Fiber',
+    'uv_print': 'Druk UV',
+    'cnc': 'CNC',
+    'cutting': 'Cięcie',
+    'assembly': 'Montaż',
+    'packaging': 'Pakowanie',
+    'other': 'Inne'
+};
+
+const WORK_STATION_STATUS_LABELS = {
+    'available': { label: 'Dostępna', color: 'green', icon: 'check-circle' },
+    'in_use': { label: 'W użyciu', color: 'amber', icon: 'play-circle' },
+    'maintenance': { label: 'Konserwacja', color: 'blue', icon: 'wrench' },
+    'breakdown': { label: 'Awaria', color: 'red', icon: 'exclamation-triangle' }
+};
+
+let productionRooms = [];
+let workCenters = [];
+let workStations = [];
+
+// Event listenery dla produkcji
+document.getElementById('new-production-room-btn')?.addEventListener('click', () => openProductionRoomModal());
+document.getElementById('refresh-production-rooms-btn')?.addEventListener('click', loadProductionRooms);
+document.getElementById('new-work-center-btn')?.addEventListener('click', () => openWorkCenterModal());
+document.getElementById('refresh-work-centers-btn')?.addEventListener('click', loadWorkCenters);
+document.getElementById('new-work-station-btn')?.addEventListener('click', () => openWorkStationModal());
+document.getElementById('refresh-work-stations-btn')?.addEventListener('click', loadWorkStations);
+document.getElementById('work-centers-room-filter')?.addEventListener('change', filterWorkCenters);
+document.getElementById('work-stations-center-filter')?.addEventListener('change', filterWorkStations);
+document.getElementById('work-stations-status-filter')?.addEventListener('change', filterWorkStations);
+
+// Ładowanie statystyk produkcji
+async function loadProductionStats() {
+    try {
+        const response = await fetch('/api/production/stats', { credentials: 'include' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            const stats = result.data;
+            document.getElementById('prod-stats-rooms').textContent = stats.rooms || 0;
+            document.getElementById('prod-stats-work-centers').textContent = stats.workCenters || 0;
+            document.getElementById('prod-stats-work-stations').textContent = stats.workStations || 0;
+            document.getElementById('prod-stats-available').textContent = stats.workStationsByStatus?.available || 0;
+        }
+    } catch (error) {
+        console.error('Błąd ładowania statystyk produkcji:', error);
+    }
+}
+
+// Ładowanie pokoi produkcyjnych
+async function loadProductionRooms() {
+    const grid = document.getElementById('production-rooms-grid');
+    if (!grid) return;
+    
+    grid.innerHTML = `
+        <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+            <i class="fas fa-spinner fa-spin text-4xl mb-4"></i>
+            <p class="text-lg">Ładowanie pokoi produkcyjnych...</p>
+        </div>
+    `;
+    
+    try {
+        await loadProductionStats();
+        
+        const response = await fetch('/api/production/rooms', { credentials: 'include' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            productionRooms = result.data || [];
+            renderProductionRooms();
+            populateRoomFilters();
+        } else {
+            throw new Error(result.message || 'Błąd pobierania pokoi');
+        }
+    } catch (error) {
+        console.error('Błąd ładowania pokoi:', error);
+        grid.innerHTML = `
+            <div class="col-span-full flex flex-col items-center justify-center h-64 text-red-400">
+                <i class="fas fa-exclamation-triangle text-4xl mb-4"></i>
+                <p class="text-lg">Błąd ładowania danych</p>
+                <p class="text-sm">${error.message}</p>
+            </div>
+        `;
+    }
+}
+
+function renderProductionRooms() {
+    const grid = document.getElementById('production-rooms-grid');
+    if (!grid) return;
+    
+    if (productionRooms.length === 0) {
+        grid.innerHTML = `
+            <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                <i class="fas fa-door-open text-6xl mb-4"></i>
+                <p class="text-lg">Brak pokoi produkcyjnych</p>
+                <p class="text-sm">Kliknij "Dodaj pokój" aby utworzyć pierwszy</p>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = productionRooms.map(room => `
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+            <div class="bg-gradient-to-r from-amber-500 to-amber-600 px-4 py-3">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-lg font-bold text-white">${escapeHtml(room.name)}</h3>
+                        <p class="text-amber-100 text-sm font-mono">${escapeHtml(room.code)}</p>
+                    </div>
+                    <span class="bg-white/20 text-white text-xs px-2 py-1 rounded-full">
+                        ${room.workCenterCount || 0} gniazd
+                    </span>
+                </div>
+            </div>
+            <div class="p-4">
+                ${room.area ? `<p class="text-sm text-gray-600 mb-2"><i class="fas fa-ruler-combined mr-2"></i>${room.area} m²</p>` : ''}
+                ${room.supervisor ? `<p class="text-sm text-gray-600 mb-2"><i class="fas fa-user-tie mr-2"></i>${escapeHtml(room.supervisor.name)}</p>` : ''}
+                ${room.description ? `<p class="text-sm text-gray-500 mb-3">${escapeHtml(room.description)}</p>` : ''}
+                
+                ${room.workCenters && room.workCenters.length > 0 ? `
+                    <div class="border-t pt-3 mt-3">
+                        <p class="text-xs text-gray-400 uppercase tracking-wide mb-2">Gniazda:</p>
+                        <div class="flex flex-wrap gap-1">
+                            ${room.workCenters.slice(0, 5).map(wc => `
+                                <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">${escapeHtml(wc.name)}</span>
+                            `).join('')}
+                            ${room.workCenters.length > 5 ? `<span class="text-xs text-gray-400">+${room.workCenters.length - 5}</span>` : ''}
+                        </div>
+                    </div>
+                ` : ''}
+                
+                <div class="flex gap-2 mt-4">
+                    <button onclick="editProductionRoom(${room.id})" class="flex-1 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+                        <i class="fas fa-edit mr-1"></i> Edytuj
+                    </button>
+                    <button onclick="deleteProductionRoom(${room.id})" class="px-3 py-1.5 text-sm bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Ładowanie gniazd produkcyjnych
+async function loadWorkCenters() {
+    const grid = document.getElementById('work-centers-grid');
+    if (!grid) return;
+    
+    grid.innerHTML = `
+        <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+            <i class="fas fa-spinner fa-spin text-4xl mb-4"></i>
+            <p class="text-lg">Ładowanie gniazd produkcyjnych...</p>
+        </div>
+    `;
+    
+    try {
+        // Najpierw załaduj pokoje do filtra
+        if (productionRooms.length === 0) {
+            const roomsResponse = await fetch('/api/production/rooms', { credentials: 'include' });
+            const roomsResult = await roomsResponse.json();
+            if (roomsResult.status === 'success') {
+                productionRooms = roomsResult.data || [];
+                populateRoomFilters();
+            }
+        }
+        
+        const response = await fetch('/api/production/work-centers', { credentials: 'include' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            workCenters = result.data || [];
+            renderWorkCenters(workCenters);
+        } else {
+            throw new Error(result.message || 'Błąd pobierania gniazd');
+        }
+    } catch (error) {
+        console.error('Błąd ładowania gniazd:', error);
+        grid.innerHTML = `
+            <div class="col-span-full flex flex-col items-center justify-center h-64 text-red-400">
+                <i class="fas fa-exclamation-triangle text-4xl mb-4"></i>
+                <p class="text-lg">Błąd ładowania danych</p>
+            </div>
+        `;
+    }
+}
+
+function renderWorkCenters(centers) {
+    const grid = document.getElementById('work-centers-grid');
+    if (!grid) return;
+    
+    if (centers.length === 0) {
+        grid.innerHTML = `
+            <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                <i class="fas fa-cogs text-6xl mb-4"></i>
+                <p class="text-lg">Brak gniazd produkcyjnych</p>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = centers.map(wc => `
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+            <div class="bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-3">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-lg font-bold text-white">${escapeHtml(wc.name)}</h3>
+                        <p class="text-blue-100 text-sm font-mono">${escapeHtml(wc.code)}</p>
+                    </div>
+                    <span class="bg-white/20 text-white text-xs px-2 py-1 rounded-full">
+                        ${wc.workStationCount || 0} maszyn
+                    </span>
+                </div>
+            </div>
+            <div class="p-4">
+                <p class="text-sm text-gray-600 mb-2">
+                    <i class="fas fa-tag mr-2"></i>${WORK_CENTER_TYPE_LABELS[wc.type] || wc.type}
+                </p>
+                ${wc.room ? `<p class="text-sm text-gray-600 mb-2"><i class="fas fa-door-open mr-2"></i>${escapeHtml(wc.room.name)}</p>` : ''}
+                ${wc.description ? `<p class="text-sm text-gray-500 mb-3">${escapeHtml(wc.description)}</p>` : ''}
+                
+                <div class="flex gap-2 mt-4">
+                    <button onclick="editWorkCenter(${wc.id})" class="flex-1 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+                        <i class="fas fa-edit mr-1"></i> Edytuj
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function filterWorkCenters() {
+    const roomId = document.getElementById('work-centers-room-filter')?.value;
+    let filtered = workCenters;
+    
+    if (roomId) {
+        filtered = workCenters.filter(wc => wc.roomId == roomId);
+    }
+    
+    renderWorkCenters(filtered);
+}
+
+// Ładowanie maszyn
+async function loadWorkStations() {
+    const grid = document.getElementById('work-stations-grid');
+    if (!grid) return;
+    
+    grid.innerHTML = `
+        <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+            <i class="fas fa-spinner fa-spin text-4xl mb-4"></i>
+            <p class="text-lg">Ładowanie maszyn...</p>
+        </div>
+    `;
+    
+    try {
+        // Załaduj gniazda do filtra
+        if (workCenters.length === 0) {
+            const centersResponse = await fetch('/api/production/work-centers', { credentials: 'include' });
+            const centersResult = await centersResponse.json();
+            if (centersResult.status === 'success') {
+                workCenters = centersResult.data || [];
+                populateWorkCenterFilters();
+            }
+        }
+        
+        const response = await fetch('/api/production/work-stations', { credentials: 'include' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            workStations = result.data || [];
+            renderWorkStations(workStations);
+        } else {
+            throw new Error(result.message || 'Błąd pobierania maszyn');
+        }
+    } catch (error) {
+        console.error('Błąd ładowania maszyn:', error);
+        grid.innerHTML = `
+            <div class="col-span-full flex flex-col items-center justify-center h-64 text-red-400">
+                <i class="fas fa-exclamation-triangle text-4xl mb-4"></i>
+                <p class="text-lg">Błąd ładowania danych</p>
+            </div>
+        `;
+    }
+}
+
+function renderWorkStations(stations) {
+    const grid = document.getElementById('work-stations-grid');
+    if (!grid) return;
+    
+    if (stations.length === 0) {
+        grid.innerHTML = `
+            <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                <i class="fas fa-tools text-6xl mb-4"></i>
+                <p class="text-lg">Brak maszyn</p>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = stations.map(ws => {
+        const statusInfo = WORK_STATION_STATUS_LABELS[ws.status] || { label: ws.status, color: 'gray', icon: 'question' };
+        
+        return `
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+                <div class="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-gray-800">${escapeHtml(ws.name)}</h3>
+                        <p class="text-gray-500 text-xs font-mono">${escapeHtml(ws.code)}</p>
+                    </div>
+                    <span class="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-${statusInfo.color}-100 text-${statusInfo.color}-700">
+                        <i class="fas fa-${statusInfo.icon}"></i>
+                        ${statusInfo.label}
+                    </span>
+                </div>
+                <div class="p-4">
+                    <p class="text-sm text-gray-600 mb-1">
+                        <i class="fas fa-tag mr-2 text-gray-400"></i>${WORK_CENTER_TYPE_LABELS[ws.type] || ws.type}
+                    </p>
+                    ${ws.manufacturer ? `<p class="text-sm text-gray-600 mb-1"><i class="fas fa-industry mr-2 text-gray-400"></i>${escapeHtml(ws.manufacturer)} ${ws.model || ''}</p>` : ''}
+                    ${ws.workCenter ? `<p class="text-sm text-gray-600 mb-1"><i class="fas fa-cogs mr-2 text-gray-400"></i>${escapeHtml(ws.workCenter.name)}</p>` : ''}
+                    ${ws.currentOperator ? `<p class="text-sm text-amber-600"><i class="fas fa-user mr-2"></i>${escapeHtml(ws.currentOperator.name)}</p>` : ''}
+                    
+                    <div class="flex gap-2 mt-3">
+                        <button onclick="changeWorkStationStatus(${ws.id}, '${ws.status}')" class="flex-1 px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200">
+                            <i class="fas fa-exchange-alt mr-1"></i> Status
+                        </button>
+                        <button onclick="editWorkStation(${ws.id})" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function filterWorkStations() {
+    const centerId = document.getElementById('work-stations-center-filter')?.value;
+    const status = document.getElementById('work-stations-status-filter')?.value;
+    
+    let filtered = workStations;
+    
+    if (centerId) {
+        filtered = filtered.filter(ws => ws.workCenterId == centerId);
+    }
+    if (status) {
+        filtered = filtered.filter(ws => ws.status === status);
+    }
+    
+    renderWorkStations(filtered);
+}
+
+// Populowanie filtrów
+function populateRoomFilters() {
+    const filter = document.getElementById('work-centers-room-filter');
+    if (filter) {
+        filter.innerHTML = '<option value="">Wszystkie pokoje</option>' +
+            productionRooms.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+    }
+}
+
+function populateWorkCenterFilters() {
+    const filter = document.getElementById('work-stations-center-filter');
+    if (filter) {
+        filter.innerHTML = '<option value="">Wszystkie gniazda</option>' +
+            workCenters.map(wc => `<option value="${wc.id}">${escapeHtml(wc.name)}</option>`).join('');
+    }
+}
+
+// Placeholder funkcje do edycji (do rozbudowy)
+function openProductionRoomModal(room = null) {
+    const name = prompt('Nazwa pokoju:', room?.name || '');
+    if (!name) return;
+    
+    const code = prompt('Kod pokoju (np. LASER-1):', room?.code || '');
+    if (!code) return;
+    
+    const area = prompt('Powierzchnia (m²):', room?.area || '');
+    
+    saveProductionRoom({ id: room?.id, name, code, area: area ? parseFloat(area) : null });
+}
+
+async function saveProductionRoom(data) {
+    try {
+        const method = data.id ? 'PATCH' : 'POST';
+        const url = data.id ? `/api/production/rooms/${data.id}` : '/api/production/rooms';
+        
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast(data.id ? 'Pokój zaktualizowany' : 'Pokój utworzony', 'success');
+            loadProductionRooms();
+        } else {
+            showAdminToast(result.message || 'Błąd zapisu', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd zapisu pokoju:', error);
+        showAdminToast('Błąd zapisu', 'error');
+    }
+}
+
+function editProductionRoom(id) {
+    const room = productionRooms.find(r => r.id === id);
+    if (room) openProductionRoomModal(room);
+}
+
+async function deleteProductionRoom(id) {
+    if (!confirm('Czy na pewno chcesz dezaktywować ten pokój?')) return;
+    
+    try {
+        const response = await fetch(`/api/production/rooms/${id}`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast('Pokój dezaktywowany', 'success');
+            loadProductionRooms();
+        } else {
+            showAdminToast(result.message || 'Błąd usuwania', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd usuwania pokoju:', error);
+        showAdminToast('Błąd usuwania', 'error');
+    }
+}
+
+function openWorkCenterModal(wc = null) {
+    const name = prompt('Nazwa gniazda:', wc?.name || '');
+    if (!name) return;
+    
+    const code = prompt('Kod gniazda:', wc?.code || '');
+    if (!code) return;
+    
+    const types = Object.entries(WORK_CENTER_TYPE_LABELS).map(([k, v]) => `${k}: ${v}`).join('\n');
+    const type = prompt(`Typ gniazda:\n${types}`, wc?.type || 'laser_co2');
+    if (!type) return;
+    
+    saveWorkCenter({ id: wc?.id, name, code, type });
+}
+
+async function saveWorkCenter(data) {
+    try {
+        const method = data.id ? 'PATCH' : 'POST';
+        const url = data.id ? `/api/production/work-centers/${data.id}` : '/api/production/work-centers';
+        
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast(data.id ? 'Gniazdo zaktualizowane' : 'Gniazdo utworzone', 'success');
+            loadWorkCenters();
+        } else {
+            showAdminToast(result.message || 'Błąd zapisu', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd zapisu gniazda:', error);
+        showAdminToast('Błąd zapisu', 'error');
+    }
+}
+
+function editWorkCenter(id) {
+    const wc = workCenters.find(w => w.id === id);
+    if (wc) openWorkCenterModal(wc);
+}
+
+function openWorkStationModal(ws = null) {
+    const name = prompt('Nazwa maszyny:', ws?.name || '');
+    if (!name) return;
+    
+    const code = prompt('Kod maszyny:', ws?.code || '');
+    if (!code) return;
+    
+    const type = prompt('Typ (np. laser_co2):', ws?.type || 'laser_co2');
+    if (!type) return;
+    
+    const manufacturer = prompt('Producent:', ws?.manufacturer || '');
+    const model = prompt('Model:', ws?.model || '');
+    
+    saveWorkStation({ id: ws?.id, name, code, type, manufacturer, model });
+}
+
+async function saveWorkStation(data) {
+    try {
+        const method = data.id ? 'PATCH' : 'POST';
+        const url = data.id ? `/api/production/work-stations/${data.id}` : '/api/production/work-stations';
+        
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast(data.id ? 'Maszyna zaktualizowana' : 'Maszyna utworzona', 'success');
+            loadWorkStations();
+        } else {
+            showAdminToast(result.message || 'Błąd zapisu', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd zapisu maszyny:', error);
+        showAdminToast('Błąd zapisu', 'error');
+    }
+}
+
+function editWorkStation(id) {
+    const ws = workStations.find(w => w.id === id);
+    if (ws) openWorkStationModal(ws);
+}
+
+async function changeWorkStationStatus(id, currentStatus) {
+    const statuses = Object.entries(WORK_STATION_STATUS_LABELS).map(([k, v]) => `${k}: ${v.label}`).join('\n');
+    const newStatus = prompt(`Nowy status:\n${statuses}`, currentStatus);
+    
+    if (!newStatus || newStatus === currentStatus) return;
+    
+    try {
+        const response = await fetch(`/api/production/work-stations/${id}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ status: newStatus })
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast('Status zmieniony', 'success');
+            loadWorkStations();
+        } else {
+            showAdminToast(result.message || 'Błąd zmiany statusu', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd zmiany statusu:', error);
+        showAdminToast('Błąd zmiany statusu', 'error');
+    }
+}
+
+// ============================================
+// MODUŁ: ŚCIEŻKI PRODUKCYJNE
+// ============================================
+
+let productionPaths = [];
+
+const OPERATION_TYPES = {
+    'solvent': 'Solvent',
+    'laser_co2': 'Laser CO2',
+    'laser_fiber': 'Laser Fiber',
+    'uv_print': 'Druk UV',
+    'sublimation': 'Sublimacja',
+    'assembly': 'Montaż',
+    'packing': 'Pakowanie',
+    'quality_check': 'Kontrola jakości',
+    'graphic_design': 'Projekt graficzny',
+    'cnc': 'CNC',
+    'engraving': 'Grawerowanie',
+    'other': 'Inne'
+};
+
+const PHASE_LABELS = {
+    'PREP': { label: 'Przygotowanie', color: 'blue' },
+    'OP': { label: 'Operacja', color: 'amber' },
+    'PACK': { label: 'Pakowanie', color: 'green' }
+};
+
+// Elementy DOM
+const productionPathsTbody = document.getElementById('production-paths-tbody');
+const newProductionPathBtn = document.getElementById('new-production-path-btn');
+const refreshProductionPathsBtn = document.getElementById('refresh-production-paths-btn');
+const productionPathModal = document.getElementById('production-path-modal');
+const productionPathModalTitle = document.getElementById('production-path-modal-title');
+const productionPathModalClose = document.getElementById('production-path-modal-close');
+const productionPathForm = document.getElementById('production-path-form');
+const productionPathFormCancel = document.getElementById('production-path-form-cancel');
+const productionPathFormError = document.getElementById('production-path-form-error');
+const productionPathSubmitText = document.getElementById('production-path-submit-text');
+const operationsContainer = document.getElementById('operations-container');
+const addOperationBtn = document.getElementById('add-operation-btn');
+
+// Event listenery
+if (newProductionPathBtn) newProductionPathBtn.addEventListener('click', () => openProductionPathModal());
+if (refreshProductionPathsBtn) refreshProductionPathsBtn.addEventListener('click', loadProductionPaths);
+if (productionPathModalClose) productionPathModalClose.addEventListener('click', closeProductionPathModal);
+if (productionPathFormCancel) productionPathFormCancel.addEventListener('click', closeProductionPathModal);
+if (productionPathForm) productionPathForm.addEventListener('submit', handleProductionPathSubmit);
+if (addOperationBtn) addOperationBtn.addEventListener('click', () => addOperationRow());
+if (productionPathsTbody) productionPathsTbody.addEventListener('click', handleProductionPathsTableClick);
+
+async function loadProductionPaths() {
+    if (!productionPathsTbody) return;
+    
+    productionPathsTbody.innerHTML = `
+        <tr>
+            <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p>Ładowanie ścieżek...</p>
+            </td>
+        </tr>
+    `;
+    
+    try {
+        const response = await fetch('/api/production/paths', { credentials: 'include' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            productionPaths = result.data || [];
+            renderProductionPaths();
+        } else {
+            productionPathsTbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="px-6 py-12 text-center text-red-500">
+                        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                        <p>${escapeHtml(result.message || 'Błąd ładowania')}</p>
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (error) {
+        console.error('Błąd ładowania ścieżek:', error);
+        productionPathsTbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-6 py-12 text-center text-red-500">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                    <p>Błąd połączenia z serwerem</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function renderProductionPaths() {
+    if (!productionPathsTbody) return;
+    
+    if (productionPaths.length === 0) {
+        productionPathsTbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                    <i class="fas fa-route text-4xl mb-4"></i>
+                    <p class="text-lg">Brak zdefiniowanych ścieżek</p>
+                    <p class="text-sm mt-2">Kliknij "Dodaj ścieżkę" aby utworzyć pierwszą</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    productionPathsTbody.innerHTML = productionPaths.map(path => {
+        const operations = path.operations || [];
+        const operationsHtml = operations.slice(0, 4).map(op => {
+            const phase = PHASE_LABELS[op.phase] || PHASE_LABELS['OP'];
+            const typeName = OPERATION_TYPES[op.operationType] || op.operationType || 'Nieznana';
+            return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs bg-${phase.color}-100 text-${phase.color}-700">${escapeHtml(typeName)}</span>`;
+        }).join(' → ');
+        
+        const moreOps = operations.length > 4 ? `<span class="text-gray-400 text-xs ml-1">+${operations.length - 4}</span>` : '';
+        
+        return `
+            <tr class="hover:bg-gray-50">
+                <td class="px-6 py-4">
+                    <span class="font-mono font-bold text-amber-600">${escapeHtml(path.code)}</span>
+                </td>
+                <td class="px-6 py-4">
+                    <div class="font-medium text-gray-900">${escapeHtml(path.name)}</div>
+                    ${path.description ? `<div class="text-sm text-gray-500 truncate max-w-xs">${escapeHtml(path.description)}</div>` : ''}
+                </td>
+                <td class="px-6 py-4">
+                    <div class="flex flex-wrap items-center gap-1">
+                        ${operationsHtml}${moreOps}
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1">${operations.length} ${operations.length === 1 ? 'operacja' : operations.length < 5 ? 'operacje' : 'operacji'}</div>
+                </td>
+                <td class="px-6 py-4">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${path.isActive !== false ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}">
+                        ${path.isActive !== false ? 'Aktywna' : 'Nieaktywna'}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-right">
+                    <button class="text-blue-600 hover:text-blue-800 mr-3" data-action="edit" data-id="${path.id}" title="Edytuj">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="text-red-600 hover:text-red-800" data-action="delete" data-id="${path.id}" title="Dezaktywuj">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function handleProductionPathsTableClick(e) {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    
+    const action = btn.dataset.action;
+    const id = parseInt(btn.dataset.id, 10);
+    
+    if (action === 'edit') {
+        editProductionPath(id);
+    } else if (action === 'delete') {
+        deleteProductionPath(id);
+    }
+}
+
+function openProductionPathModal(path = null) {
+    if (!productionPathModal || !productionPathForm) return;
+    
+    productionPathForm.reset();
+    productionPathFormError?.classList.add('hidden');
+    
+    if (path) {
+        productionPathModalTitle.textContent = 'Edytuj ścieżkę';
+        productionPathSubmitText.textContent = 'Zapisz zmiany';
+        productionPathForm.querySelector('[name="id"]').value = path.id;
+        productionPathForm.querySelector('[name="code"]').value = path.code || '';
+        productionPathForm.querySelector('[name="name"]').value = path.name || '';
+        productionPathForm.querySelector('[name="description"]').value = path.description || '';
+        
+        // Wypełnij operacje
+        operationsContainer.innerHTML = '';
+        const operations = path.operations || [];
+        operations.forEach((op, index) => addOperationRow(op, index + 1));
+        
+        if (operations.length === 0) {
+            addOperationRow(null, 1);
+        }
+    } else {
+        productionPathModalTitle.textContent = 'Nowa ścieżka produkcyjna';
+        productionPathSubmitText.textContent = 'Utwórz ścieżkę';
+        productionPathForm.querySelector('[name="id"]').value = '';
+        
+        // Dodaj jedną pustą operację
+        operationsContainer.innerHTML = '';
+        addOperationRow(null, 1);
+    }
+    
+    productionPathModal.classList.remove('hidden');
+}
+
+function closeProductionPathModal() {
+    productionPathModal?.classList.add('hidden');
+}
+
+function addOperationRow(operation = null, step = null) {
+    if (!operationsContainer) return;
+    
+    const existingRows = operationsContainer.querySelectorAll('.operation-row');
+    const stepNum = step || existingRows.length + 1;
+    
+    const phaseOptions = Object.entries(PHASE_LABELS).map(([key, val]) => 
+        `<option value="${key}" ${operation?.phase === key ? 'selected' : ''}>${val.label}</option>`
+    ).join('');
+    
+    const typeOptions = Object.entries(OPERATION_TYPES).map(([key, val]) => 
+        `<option value="${key}" ${operation?.operationType === key ? 'selected' : ''}>${val}</option>`
+    ).join('');
+    
+    const row = document.createElement('div');
+    row.className = 'operation-row flex items-center gap-2 p-3 bg-gray-50 rounded-lg';
+    row.innerHTML = `
+        <span class="w-8 h-8 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full font-bold text-sm">${stepNum}</span>
+        <select name="op_phase" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500">
+            ${phaseOptions}
+        </select>
+        <select name="op_type" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500">
+            ${typeOptions}
+        </select>
+        <input type="number" name="op_time" placeholder="min" value="${operation?.estimatedTimeMin || ''}" class="w-16 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500" min="0">
+        <button type="button" class="remove-operation-btn text-red-500 hover:text-red-700 p-1" title="Usuń operację">
+            <i class="fas fa-times"></i>
+        </button>
+    `;
+    
+    row.querySelector('.remove-operation-btn').addEventListener('click', () => {
+        row.remove();
+        renumberOperations();
+    });
+    
+    operationsContainer.appendChild(row);
+}
+
+function renumberOperations() {
+    const rows = operationsContainer?.querySelectorAll('.operation-row');
+    rows?.forEach((row, index) => {
+        const stepBadge = row.querySelector('span');
+        if (stepBadge) stepBadge.textContent = index + 1;
+    });
+}
+
+function collectOperations() {
+    const operations = [];
+    const rows = operationsContainer?.querySelectorAll('.operation-row');
+    
+    rows?.forEach((row, index) => {
+        const phase = row.querySelector('[name="op_phase"]')?.value;
+        const operationType = row.querySelector('[name="op_type"]')?.value;
+        const estimatedTimeMin = parseInt(row.querySelector('[name="op_time"]')?.value, 10) || null;
+        
+        if (phase && operationType) {
+            operations.push({
+                step: index + 1,
+                phase,
+                operationType,
+                estimatedTimeMin
+            });
+        }
+    });
+    
+    return operations;
+}
+
+async function handleProductionPathSubmit(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(productionPathForm);
+    const id = formData.get('id');
+    const code = formData.get('code')?.trim();
+    const name = formData.get('name')?.trim();
+    const description = formData.get('description')?.trim();
+    const operations = collectOperations();
+    
+    if (!code || !name) {
+        productionPathFormError.textContent = 'Kod i nazwa są wymagane';
+        productionPathFormError.classList.remove('hidden');
+        return;
+    }
+    
+    if (operations.length === 0) {
+        productionPathFormError.textContent = 'Dodaj przynajmniej jedną operację';
+        productionPathFormError.classList.remove('hidden');
+        return;
+    }
+    
+    productionPathFormError?.classList.add('hidden');
+    
+    const data = { code, name, description, operations };
+    
+    try {
+        const url = id ? `/api/production/paths/${id}` : '/api/production/paths';
+        const method = id ? 'PATCH' : 'POST';
+        
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast(id ? 'Ścieżka zaktualizowana' : 'Ścieżka utworzona', 'success');
+            closeProductionPathModal();
+            loadProductionPaths();
+        } else {
+            productionPathFormError.textContent = result.message || 'Błąd zapisu';
+            productionPathFormError.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Błąd zapisu ścieżki:', error);
+        productionPathFormError.textContent = 'Błąd połączenia z serwerem';
+        productionPathFormError.classList.remove('hidden');
+    }
+}
+
+function editProductionPath(id) {
+    const path = productionPaths.find(p => p.id === id);
+    if (path) openProductionPathModal(path);
+}
+
+async function deleteProductionPath(id) {
+    const path = productionPaths.find(p => p.id === id);
+    if (!path) return;
+    
+    if (!confirm(`Czy na pewno chcesz dezaktywować ścieżkę "${path.code} - ${path.name}"?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/production/paths/${id}`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast('Ścieżka dezaktywowana', 'success');
+            loadProductionPaths();
+        } else {
+            showAdminToast(result.message || 'Błąd dezaktywacji', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd dezaktywacji ścieżki:', error);
+        showAdminToast('Błąd połączenia', 'error');
+    }
+}
+
+// ============================================
+// MODUŁ: ZLECENIA PRODUKCYJNE
+// ============================================
+
+let productionOrdersData = [];
+let filteredProductionOrders = [];
+
+const PROD_ORDER_STATUS_LABELS = {
+    planned: 'Zaplanowane',
+    approved: 'Zatwierdzone',
+    in_progress: 'W realizacji',
+    completed: 'Zakończone',
+    cancelled: 'Anulowane'
+};
+
+const PROD_ORDER_STATUS_CLASSES = {
+    planned: 'bg-blue-100 text-blue-800',
+    approved: 'bg-indigo-100 text-indigo-800',
+    in_progress: 'bg-amber-100 text-amber-800',
+    completed: 'bg-green-100 text-green-800',
+    cancelled: 'bg-red-100 text-red-800'
+};
+
+const PRIORITY_LABELS = {
+    1: 'Pilne',
+    2: 'Wysokie',
+    3: 'Normalne',
+    4: 'Niskie',
+    5: 'Bardzo niskie'
+};
+
+const PRIORITY_CLASSES = {
+    1: 'bg-red-100 text-red-800',
+    2: 'bg-orange-100 text-orange-800',
+    3: 'bg-gray-100 text-gray-800',
+    4: 'bg-blue-100 text-blue-800',
+    5: 'bg-gray-50 text-gray-500'
+};
+
+// Elementy DOM
+const productionOrdersTbody = document.getElementById('production-orders-tbody');
+const refreshProductionOrdersBtn = document.getElementById('refresh-production-orders-btn');
+const prodOrdersSearch = document.getElementById('prod-orders-search');
+const prodOrdersStatusFilter = document.getElementById('prod-orders-status-filter');
+const prodOrdersPriorityFilter = document.getElementById('prod-orders-priority-filter');
+
+// Statystyki
+const statTotal = document.getElementById('prod-orders-stat-total');
+const statPlanned = document.getElementById('prod-orders-stat-planned');
+const statInProgress = document.getElementById('prod-orders-stat-in-progress');
+const statCompleted = document.getElementById('prod-orders-stat-completed');
+const statCancelled = document.getElementById('prod-orders-stat-cancelled');
+
+// Event listenery
+if (refreshProductionOrdersBtn) refreshProductionOrdersBtn.addEventListener('click', loadProductionOrders);
+if (prodOrdersSearch) prodOrdersSearch.addEventListener('input', filterProductionOrders);
+if (prodOrdersStatusFilter) prodOrdersStatusFilter.addEventListener('change', filterProductionOrders);
+if (prodOrdersPriorityFilter) prodOrdersPriorityFilter.addEventListener('change', filterProductionOrders);
+
+async function loadProductionOrders() {
+    if (!productionOrdersTbody) return;
+    
+    productionOrdersTbody.innerHTML = `
+        <tr>
+            <td colspan="8" class="px-6 py-12 text-center text-gray-400">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p>Ładowanie zleceń...</p>
+            </td>
+        </tr>
+    `;
+    
+    try {
+        const response = await fetch('/api/production/orders?limit=200', { credentials: 'include' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            productionOrdersData = result.data || [];
+            updateProductionOrdersStats();
+            filterProductionOrders();
+        } else {
+            productionOrdersTbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="px-6 py-12 text-center text-red-500">
+                        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                        <p>${result.message || 'Błąd ładowania zleceń'}</p>
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (error) {
+        console.error('Błąd ładowania zleceń produkcyjnych:', error);
+        productionOrdersTbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="px-6 py-12 text-center text-red-500">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                    <p>Błąd połączenia z serwerem</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function updateProductionOrdersStats() {
+    const stats = {
+        total: productionOrdersData.length,
+        planned: 0,
+        in_progress: 0,
+        completed: 0,
+        cancelled: 0
+    };
+    
+    productionOrdersData.forEach(order => {
+        if (order.status === 'planned' || order.status === 'approved') stats.planned++;
+        else if (order.status === 'in_progress') stats.in_progress++;
+        else if (order.status === 'completed') stats.completed++;
+        else if (order.status === 'cancelled') stats.cancelled++;
+    });
+    
+    if (statTotal) statTotal.textContent = stats.total;
+    if (statPlanned) statPlanned.textContent = stats.planned;
+    if (statInProgress) statInProgress.textContent = stats.in_progress;
+    if (statCompleted) statCompleted.textContent = stats.completed;
+    if (statCancelled) statCancelled.textContent = stats.cancelled;
+}
+
+function filterProductionOrders() {
+    const searchTerm = (prodOrdersSearch?.value || '').toLowerCase();
+    const statusFilter = prodOrdersStatusFilter?.value || '';
+    const priorityFilter = prodOrdersPriorityFilter?.value || '';
+    
+    filteredProductionOrders = productionOrdersData.filter(order => {
+        // Filtr wyszukiwania
+        const orderNum = (order.ordernumber || '').toLowerCase();
+        const sourceOrderNum = (order.sourceOrder?.orderNumber || order.sourceOrder?.ordernumber || '').toLowerCase();
+        const productName = (order.product?.name || order.product?.identifier || '').toLowerCase();
+        const matchesSearch = !searchTerm || 
+            orderNum.includes(searchTerm) || 
+            sourceOrderNum.includes(searchTerm) ||
+            productName.includes(searchTerm);
+        
+        // Filtr statusu
+        const matchesStatus = !statusFilter || order.status === statusFilter;
+        
+        // Filtr priorytetu
+        const matchesPriority = !priorityFilter || order.priority === parseInt(priorityFilter, 10);
+        
+        return matchesSearch && matchesStatus && matchesPriority;
+    });
+    
+    renderProductionOrders();
+}
+
+function renderProductionOrders() {
+    if (!productionOrdersTbody) return;
+    
+    if (filteredProductionOrders.length === 0) {
+        productionOrdersTbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="px-6 py-12 text-center text-gray-400">
+                    <i class="fas fa-clipboard-list text-4xl mb-4"></i>
+                    <p class="text-lg">Brak zleceń produkcyjnych</p>
+                    <p class="text-sm mt-1">Zlecenia pojawią się automatycznie po zatwierdzeniu zamówień</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    productionOrdersTbody.innerHTML = filteredProductionOrders.map(order => {
+        const orderNumber = order.ordernumber || '-';
+        const sourceOrderNumber = order.sourceOrder?.orderNumber || order.sourceOrder?.ordernumber || '-';
+        const productName = order.product?.identifier || order.product?.name || order.product?.code || '-';
+        const quantity = order.quantity || 0;
+        const priority = order.priority || 3;
+        const status = order.status || 'planned';
+        const progress = order.progress || { completed: 0, total: 0, percent: 0, label: '0/0' };
+        const createdAt = order.createdat ? new Date(order.createdat).toLocaleDateString('pl-PL') : '-';
+        
+        const statusLabel = PROD_ORDER_STATUS_LABELS[status] || status;
+        const statusClass = PROD_ORDER_STATUS_CLASSES[status] || 'bg-gray-100 text-gray-800';
+        const priorityLabel = PRIORITY_LABELS[priority] || priority;
+        const priorityClass = PRIORITY_CLASSES[priority] || 'bg-gray-100 text-gray-800';
+        
+        // Pasek postępu
+        const progressBarColor = status === 'completed' ? 'bg-green-500' : 
+                                 status === 'cancelled' ? 'bg-red-300' : 
+                                 progress.percent > 0 ? 'bg-amber-500' : 'bg-blue-500';
+        
+        const progressHtml = `
+            <div class="flex items-center gap-2">
+                <div class="flex-1 bg-gray-200 rounded-full h-2 min-w-[60px]">
+                    <div class="${progressBarColor} h-2 rounded-full transition-all" style="width: ${progress.percent}%"></div>
+                </div>
+                <span class="text-xs font-medium text-gray-600 whitespace-nowrap">${progress.label}</span>
+            </div>
+        `;
+        
+        return `
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3">
+                    <div class="font-medium text-gray-900">${escapeHtml(orderNumber)}</div>
+                    ${order.branchcode ? `<div class="text-xs text-gray-500">Gałąź ${order.branchcode}</div>` : ''}
+                </td>
+                <td class="px-4 py-3">
+                    <div class="text-sm text-gray-700">${escapeHtml(sourceOrderNumber)}</div>
+                    ${order.sourceOrder?.customer?.name ? `<div class="text-xs text-gray-500">${escapeHtml(order.sourceOrder.customer.name)}</div>` : ''}
+                </td>
+                <td class="px-4 py-3">
+                    <div class="text-sm text-gray-900 max-w-[200px] truncate" title="${escapeHtml(productName)}">${escapeHtml(productName)}</div>
+                </td>
+                <td class="px-4 py-3 text-center">
+                    <span class="font-medium text-gray-900">${quantity}</span>
+                </td>
+                <td class="px-4 py-3 text-center">
+                    <span class="px-2 py-1 rounded text-xs font-medium ${priorityClass}">${priorityLabel}</span>
+                </td>
+                <td class="px-4 py-3 min-w-[140px]">
+                    ${progressHtml}
+                </td>
+                <td class="px-4 py-3 text-center">
+                    <span class="px-2 py-1 rounded text-xs font-medium ${statusClass}">${statusLabel}</span>
+                </td>
+                <td class="px-4 py-3 text-right text-sm text-gray-500">
+                    ${createdAt}
+                </td>
+            </tr>
+        `;
+    }).join('');
 }

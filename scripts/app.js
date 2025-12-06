@@ -1650,6 +1650,14 @@ async function submitOrder() {
         ? JSON.stringify(item.perProjectQuantities)
         : null;
 
+      const rawStockAtOrder = (item.stockAtOrder !== undefined && item.stockAtOrder !== null)
+        ? Number(item.stockAtOrder)
+        : (item.product && item.product.stock !== undefined && item.product.stock !== null
+          ? Number(item.product.stock)
+          : null);
+      const stockAtOrder = Number.isFinite(rawStockAtOrder) ? rawStockAtOrder : null;
+      const belowStock = stockAtOrder !== null && qty > stockAtOrder;
+
       items.push({
         productCode: item.product.pc_id,
         quantity: qty,
@@ -1660,7 +1668,9 @@ async function submitOrder() {
         totalQuantity: qty,
         locationName: item.locationName || null,
         source: item.source || 'MIEJSCOWOSCI',
-        productionNotes: item.itemNotes || null  // Uwagi produkcyjne do pozycji
+        productionNotes: item.itemNotes || null,  // Uwagi produkcyjne do pozycji
+        stockAtOrder,
+        belowStock
       });
     }
 
@@ -2390,7 +2400,7 @@ function renderResults(products) {
       <td class="price-column">${priceSafe}</td>
       <td class="stock-cell">${createBadge(product.stock, product.stock_optimal)}</td>
       <td class="qty-cell">
-        <input type="number" class="qty-input" min="1" ${product.stock > 0 ? '' : 'disabled'} placeholder="1" title="Łącznie szt." />
+        <input type="number" class="qty-input" min="1" placeholder="1" title="Łącznie szt." />
       </td>
       <td class="notes-cell">
         <div class="notes-cell__wrapper">
@@ -2398,7 +2408,7 @@ function renderResults(products) {
         </div>
       </td>
       <td>
-        <button type="button" class="btn btn--success btn--sm" ${product.stock > 0 ? '' : 'disabled'}>Dodaj</button>
+        <button type="button" class="btn btn--success btn--sm">Dodaj</button>
       </td>
     `;
 
@@ -2646,15 +2656,38 @@ function renderResults(products) {
 }
 
 function addToCart(product, quantity, projects, itemNotes = '') {
-  const stock = product.stock ?? 0;
-  if (stock <= 0) {
-    setStatus(`Produkt ${product.name} jest niedostępny.`, 'error');
-    return;
-  }
+  if (!product) return;
+
+  const rawStock = (product.stock !== undefined && product.stock !== null)
+    ? Number(product.stock)
+    : null;
+  const stock = Number.isFinite(rawStock) ? rawStock : null;
 
   const key = product._id;
   const entry = cart.get(key);
-  const newQty = Math.min((entry?.quantity ?? 0) + quantity, stock);
+  const currentQty = entry?.quantity ?? 0;
+  const requestedQty = Number(quantity);
+
+  if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
+    setStatus('Podaj dodatnią ilość sztuk.', 'error');
+    return;
+  }
+
+  const newQty = currentQty + requestedQty;
+
+  if (stock !== null && stock >= 0 && newQty > stock) {
+    const lines = [
+      `Na stanie: ${stock} szt.`,
+      `Po dodaniu w koszyku będzie: ${newQty} szt.`,
+      '',
+      'Dodać mimo to?'
+    ];
+
+    if (!confirm(lines.join('\n'))) {
+      setStatus('Pozycja nie została dodana (przekroczony stan magazynu).', 'info');
+      return;
+    }
+  }
 
   const sanitizedProjects = sanitizeProjectsValue(projects);
   const currentProjects = sanitizedProjects || entry?.projects || '';
@@ -2672,7 +2705,7 @@ function addToCart(product, quantity, projects, itemNotes = '') {
     source = 'KATALOG_INDYWIDUALNY';
   }
 
-  // Automatycznie oblicz rozkład na projekty jeśli są projekty i ilość
+  // Automatycznie oblicz rozkład na projekty jeśli są projekty i dodatnia ilość
   let perProjectQuantities = [];
   let quantityInputPerProject = '';
   if (currentProjects && newQty > 0) {
@@ -2683,34 +2716,60 @@ function addToCart(product, quantity, projects, itemNotes = '') {
     }
   }
 
+  const belowStock = stock !== null && newQty > stock;
+
   cart.set(key, { 
     product, 
     quantity: newQty, 
     projects: currentProjects,
-    quantityInputTotal: String(newQty),  // Pole A: łącznie sztuk
-    quantityInputPerProject: quantityInputPerProject,  // Pole B: ilości na projekty
-    perProjectQuantities: perProjectQuantities,  // Rozkład na projekty
-    quantitySource: 'total',  // Źródło prawdy: 'total' (suma) lub 'perProject' (ilości na projekt)
-    locationName,  // Nazwa miejscowości (PM) lub obiektu KI
-    source,  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
-    itemNotes: currentNotes  // Uwagi do pozycji
+    quantityInputTotal: String(newQty),
+    quantityInputPerProject,
+    perProjectQuantities,
+    quantitySource: 'total',
+    locationName,
+    source,
+    itemNotes: currentNotes,
+    stockAtOrder: stock,
+    belowStock
   });
   renderCart();
   saveCartToStorage();
-  setStatus(`Dodano produkt ${product.name} do koszyka.`, 'success');
+  const statusType = belowStock ? 'warning' : 'success';
+  setStatus(`Dodano produkt ${product.name} do koszyka.`, statusType);
 }
 
 function addToCartWithQuantityBreakdown(product, computeResult, itemNotes = '') {
-  const stock = product.stock ?? 0;
-  if (stock <= 0) {
-    setStatus(`Produkt ${product.name} jest niedostępny.`, 'error');
-    return;
-  }
+  if (!product || !computeResult) return;
+
+  const rawStock = (product.stock !== undefined && product.stock !== null)
+    ? Number(product.stock)
+    : null;
+  const stock = Number.isFinite(rawStock) ? rawStock : null;
 
   const key = product._id;
   const entry = cart.get(key);
   const { totalQuantity, perProjectQuantities, mode, quantityInputPerProject } = computeResult;
   const currentNotes = itemNotes || entry?.itemNotes || '';
+
+  const targetQty = Number(totalQuantity);
+  if (!Number.isFinite(targetQty) || targetQty <= 0) {
+    setStatus('Podaj dodatnią ilość sztuk.', 'error');
+    return;
+  }
+
+  if (stock !== null && stock >= 0 && targetQty > stock) {
+    const lines = [
+      `Na stanie: ${stock} szt.`,
+      `Po dodaniu w koszyku będzie: ${targetQty} szt.`,
+      '',
+      'Dodać mimo to?'
+    ];
+
+    if (!confirm(lines.join('\n'))) {
+      setStatus('Pozycja nie została dodana (przekroczony stan magazynu).', 'info');
+      return;
+    }
+  }
 
   // Pobierz nazwę lokalizacji i źródło w zależności od trybu
   let locationName = null;
@@ -2724,24 +2783,27 @@ function addToCartWithQuantityBreakdown(product, computeResult, itemNotes = '') 
     source = 'KATALOG_INDYWIDUALNY';
   }
 
-  // Określ źródło prawdy na podstawie mode z computeResult
   const quantitySource = mode === 'total' ? 'total' : 'perProject';
+  const belowStock = stock !== null && targetQty > stock;
 
   cart.set(key, { 
     product, 
-    quantity: totalQuantity, 
+    quantity: targetQty, 
     projects: computeResult.projects?.join(',') || '',
-    quantityInputTotal: mode === 'total' ? String(totalQuantity) : '',
+    quantityInputTotal: mode === 'total' ? String(targetQty) : '',
     quantityInputPerProject: quantityInputPerProject || '',
-    perProjectQuantities: perProjectQuantities,
-    quantitySource,  // Źródło prawdy: 'total' lub 'perProject'
-    locationName,  // Nazwa miejscowości (PM) lub obiektu KI
-    source,  // 'MIEJSCOWOSCI' lub 'KATALOG_INDYWIDUALNY'
-    itemNotes: currentNotes  // Uwagi do pozycji
+    perProjectQuantities,
+    quantitySource,
+    locationName,
+    source,
+    itemNotes: currentNotes,
+    stockAtOrder: stock,
+    belowStock
   });
   renderCart();
   saveCartToStorage();
-  setStatus(`Dodano produkt ${product.name} do koszyka (rozkład na projekty).`, 'success');
+  const statusType = belowStock ? 'warning' : 'success';
+  setStatus(`Dodano produkt ${product.name} do koszyka (rozkład na projekty).`, statusType);
 }
 
 function isValidProjectInput(value) {
@@ -2791,7 +2853,9 @@ function renderCart() {
     quantityInputPerProject = '',
     perProjectQuantities = [],
     quantitySource = 'total',
-    itemNotes = ''
+    itemNotes = '',
+    stockAtOrder = null,
+    belowStock = false
   }]) => {
     const price = Number(product.price ?? 0);
     const lineTotal = price * quantity;
@@ -2817,12 +2881,25 @@ function renderCart() {
     const lineTotalText = formatCurrency(lineTotal);
     const lineTotalSafe = escapeHtml(lineTotalText);
 
+    const productStockRaw = (product && product.stock !== undefined && product.stock !== null)
+      ? Number(product.stock)
+      : null;
+    const baseStock = Number.isFinite(Number(stockAtOrder))
+      ? Number(stockAtOrder)
+      : (Number.isFinite(productStockRaw) ? productStockRaw : null);
+
+    const isBelowStock = (belowStock === true) || (baseStock !== null && quantity > baseStock);
+    const stockWarningHtml = isBelowStock && baseStock !== null
+      ? `<div class="cart-stock-warning" style="color:#b3261e;font-size:0.75rem;margin-top:2px;">Poniżej stanu (stan: ${escapeHtml(String(baseStock))})</div>`
+      : '';
+
     // Główny wiersz
     rowsHtml.push(`
       <tr data-id="${id}" class="${qtySourceClass}">
         <td class="product-identifiers" title="${productNameSafe}">
           <div class="product-name">${productNameSafe}</div>
           <div class="product-id">${productIdSafe}</div>
+          ${stockWarningHtml}
         </td>
         <td class="cart-projects-col">
           <input type="text" class="projects-input" value="${projectsSafe}" placeholder="1-5,7" data-id="${id}" inputmode="numeric" pattern="[0-9,\-\s]*" title="Nr projektów" />
@@ -2888,7 +2965,10 @@ function renderCart() {
       if (!entry) return;
 
       const value = parseInt(qtyInput.value, 10);
-      const stock = entry?.product?.stock ?? Infinity;
+      const rawStock = (entry?.product && entry.product.stock !== undefined && entry.product.stock !== null)
+        ? Number(entry.product.stock)
+        : null;
+      const stock = Number.isFinite(rawStock) ? rawStock : null;
 
       // Walidacja
       if (!Number.isFinite(value) || value < 1) {
@@ -2896,10 +2976,21 @@ function renderCart() {
         return;
       }
 
-      const finalQty = Math.min(value, stock);
-      if (value > stock) {
-        qtyInput.value = finalQty;
-        setStatus(`Maksymalna dostępna ilość: ${stock}`, 'error', 'cart');
+      const previousQty = entry.quantity ?? 1;
+      let finalQty = value;
+
+      if (stock !== null && stock >= 0 && value > stock) {
+        const lines = [
+          `Na stanie: ${stock} szt.`,
+          `Wpisujesz: ${value} szt.`,
+          '',
+          'Dodać mimo to?'
+        ];
+
+        if (!confirm(lines.join('\n'))) {
+          qtyInput.value = previousQty;
+          return;
+        }
       }
 
       // Przelicz rozkład na projekty (jeśli są)
@@ -2909,7 +3000,9 @@ function renderCart() {
       updateCartEntry(id, {
         quantity: finalQty,
         ...breakdown,
-        quantitySource: 'total'
+        quantitySource: 'total',
+        stockAtOrder: stock,
+        belowStock: stock !== null && finalQty > stock
       });
       renderCart();
     });
@@ -3253,9 +3346,16 @@ async function exportToPDF() {
     let total = 0;
     
     // Rysowanie listy produktów w kolejności z koszyka
-    cartItems.forEach(([index, { product, quantity, locationName, source }], i) => {
+    cartItems.forEach(([index, { product, quantity, locationName, source, stockAtOrder, belowStock }], i) => {
       const productTotal = product.price * quantity;
       total += productTotal;
+      
+      // Sprawdź czy pozycja jest poniżej stanu
+      const rawStock = (stockAtOrder !== undefined && stockAtOrder !== null)
+        ? Number(stockAtOrder)
+        : (product.stock !== undefined && product.stock !== null ? Number(product.stock) : null);
+      const stock = Number.isFinite(rawStock) ? rawStock : null;
+      const isBelowStock = (belowStock === true) || (stock !== null && quantity > stock);
       
       // Nowa strona jeśli zabraknie miejsca
       if (currentY > 260) {
@@ -3284,11 +3384,22 @@ async function exportToPDF() {
       });
       
       // ID produktu (mniejszą czcionką pod nazwą)
+      let extraInfoOffset = 0;
       if (product.pc_id) {
         doc.setFontSize(7);
         setFont('normal');
         doc.setTextColor(100);
         addText(`ID: ${product.pc_id}`, 25, currentY + (nameLines.length * lineHeight) + 1);
+        extraInfoOffset = 4;
+      }
+      
+      // Ostrzeżenie "poniżej stanu" w PDF
+      if (isBelowStock && stock !== null) {
+        doc.setFontSize(7);
+        setFont('normal');
+        doc.setTextColor(179, 38, 30); // #b3261e
+        addText(`Poniżej stanu (stan: ${stock})`, 25, currentY + (nameLines.length * lineHeight) + 1 + extraInfoOffset);
+        doc.setTextColor(0, 0, 0);
       }
 
       // Lokalizacja (PM: miejscowość, KI: obiekt) z opcjonalnym badge'em źródła
@@ -3313,7 +3424,8 @@ async function exportToPDF() {
       doc.setTextColor(0, 0, 0);
       
       // Oblicz wysokość dla wielolinijkowej nazwy produktu
-      const nameHeight = nameLines.length * lineHeight + (product.pc_id ? 5 : 0);
+      const belowStockExtra = (isBelowStock && stock !== null) ? 4 : 0;
+      const nameHeight = nameLines.length * lineHeight + (product.pc_id ? 5 : 0) + belowStockExtra;
       const contentHeight = Math.max(nameHeight, 8); // Minimalna wysokość wiersza
       
       // Wyśrodkuj ilość i ceny względem całego wiersza
@@ -4269,9 +4381,22 @@ async function showOrderDetails(orderId) {
       const lineTotalText = formatPrice(item.quantity * item.unitPrice);
       const unitPriceSafe = escapeHtml(unitPriceText);
       const lineTotalSafe = escapeHtml(lineTotalText);
+
+      const rawStockAtOrder = (item.stockAtOrder !== undefined && item.stockAtOrder !== null)
+        ? Number(item.stockAtOrder)
+        : null;
+      const stockAtOrder = Number.isFinite(rawStockAtOrder) ? rawStockAtOrder : null;
+      const isBelowStock = (item.belowStock === true) || (stockAtOrder !== null && item.quantity > stockAtOrder);
+      let stockWarningHtml = '';
+      if (isBelowStock) {
+        stockWarningHtml = stockAtOrder !== null
+          ? `<div style="color:#b3261e;font-size:0.75rem;margin-top:2px;">Poniżej stanu (stan: ${escapeHtml(String(stockAtOrder))})</div>`
+          : `<div style="color:#b3261e;font-size:0.75rem;margin-top:2px;">Poniżej stanu</div>`;
+      }
+
       return `
         <tr>
-          <td>${productNameSafe}</td>
+          <td>${productNameSafe}${stockWarningHtml}</td>
           <td>${projectsSafe}</td>
           <td>${qtySafe}</td>
           <td class="price-column">${unitPriceSafe}</td>

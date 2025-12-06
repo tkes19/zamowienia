@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const ordersTableHeaderUser = document.getElementById('orders-table-header-user');
     const ordersDateFrom = document.getElementById('orders-date-from');
     const ordersDateTo = document.getElementById('orders-date-to');
+    const ordersBelowStockOnly = document.getElementById('orders-below-stock-only');
     const refreshOrdersBtn = document.getElementById('refresh-orders-btn');
     const logoutBtn = document.getElementById('logout-btn');
     const adminLink = document.getElementById('admin-link');
@@ -24,8 +25,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let allOrders = [];
     let currentUserRole = null;
+    let currentUserId = null;
     let allSalesReps = [];
     const loadingOrders = new Set(); // Blokada podczas ładowania
+    const ordersInEditMode = new Set(); // Zamówienia w trybie edycji
 
     function escapeHtml(str) {
         if (str === null || str === undefined) return '';
@@ -35,6 +38,109 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function sanitizeProjectsValue(value) {
+        if (!value) return '';
+        return value
+            .split(',')
+            .map(segment => segment.trim())
+            .filter(Boolean)
+            .map(segment => {
+                if (segment.includes('-')) {
+                    const parts = segment.split('-').map(num => num.trim());
+                    if (!parts[0] || !parts[1]) {
+                        return '';
+                    }
+                    return `${parts[0]}-${parts[1]}`;
+                }
+                return segment;
+            })
+            .filter(Boolean)
+            .join(', ');
+    }
+
+    function sanitizePerProjectValue(value) {
+        if (!value) return '';
+        return String(value)
+            .split(',')
+            .map(part => part.trim())
+            .filter(Boolean)
+            .join(',');
+    }
+
+    function updatePerProjectFromTotalRow(row) {
+        const logic = window.ProjectQuantityLogic || {};
+        const computePerProjectQuantities = logic.computePerProjectQuantities;
+        if (!computePerProjectQuantities) return;
+
+        const qtyInput = row.querySelector('input[name="quantity"]');
+        const projectsInput = row.querySelector('input[name="projects"]');
+        const perProjectInput = row.querySelector('input[name="projectQuantities"]');
+        const preview = row.querySelector('.per-project-preview');
+
+        if (!qtyInput || !projectsInput || !perProjectInput) return;
+
+        const qty = parseInt(qtyInput.value, 10) || 0;
+        const projectsValue = sanitizeProjectsValue(projectsInput.value);
+
+        if (!projectsValue || !Number.isFinite(qty) || qty <= 0) return;
+
+        const result = computePerProjectQuantities(projectsValue, qty, '');
+        if (!result || !result.success || !Array.isArray(result.perProjectQuantities)) return;
+
+        const quantitiesStr = result.perProjectQuantities.map(p => p.qty).join(',');
+        perProjectInput.value = quantitiesStr;
+
+        if (preview) {
+            preview.textContent = result.perProjectQuantities
+                .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
+                .join(' | ');
+        }
+    }
+
+    function updateTotalFromPerProjectRow(row) {
+        const logic = window.ProjectQuantityLogic || {};
+        const computePerProjectQuantities = logic.computePerProjectQuantities;
+        if (!computePerProjectQuantities) return;
+
+        const qtyInput = row.querySelector('input[name="quantity"]');
+        const projectsInput = row.querySelector('input[name="projects"]');
+        const perProjectInput = row.querySelector('input[name="projectQuantities"]');
+        const preview = row.querySelector('.per-project-preview');
+        if (!qtyInput || !projectsInput || !perProjectInput) return;
+
+        const projectsValue = sanitizeProjectsValue(projectsInput.value);
+        const perValue = sanitizePerProjectValue(perProjectInput.value);
+        if (!projectsValue || !perValue) return;
+
+        const result = computePerProjectQuantities(projectsValue, '', perValue);
+        if (!result || !result.success || !Array.isArray(result.perProjectQuantities)) return;
+
+        const totalQty = result.totalQuantity;
+        qtyInput.value = totalQty;
+
+        const unitPrice = parseFloat(row.dataset.unitPrice) || 0;
+        const lineTotal = row.querySelector('.line-total');
+        if (lineTotal) {
+            lineTotal.textContent = (totalQty * unitPrice).toFixed(2) + ' zł';
+        }
+
+        const stock = row.dataset.stock !== '' ? parseInt(row.dataset.stock, 10) : null;
+        const badgeContainer = row.querySelector('.below-stock-badge');
+        if (badgeContainer) {
+            if (stock !== null && totalQty > stock) {
+                badgeContainer.innerHTML = `<span class="ml-1 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700">Poniżej stanu (stan: ${stock})</span>`;
+            } else {
+                badgeContainer.innerHTML = '';
+            }
+        }
+
+        if (preview) {
+            preview.textContent = result.perProjectQuantities
+                .map(p => `Proj. ${p.projectNo}: ${p.qty}`)
+                .join(' | ');
+        }
     }
 
     const STATUS_LABELS = {
@@ -57,7 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
         CANCELLED: 'bg-red-100 text-red-800'
     };
 
-    const STATUS_SELECT_BASE = 'order-status-select px-3 py-1 rounded-full text-xs font-semibold border border-transparent focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all cursor-pointer';
+    const STATUS_SELECT_BASE = 'order-status-select rounded-full text-xs font-semibold border border-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 transition-colors cursor-pointer';
 
     // Mapowanie źródeł na skróty i kolory
     const SOURCE_LABELS = {
@@ -136,6 +242,217 @@ document.addEventListener('DOMContentLoaded', () => {
         newClasses.forEach(cls => element.classList.add(cls));
     }
 
+    // Sprawdza czy użytkownik może edytować zamówienie
+    function canEditOrder(order) {
+        if (!order || !currentUserRole) return false;
+        
+        const editableStatuses = {
+            SALES_REP: ['PENDING'],
+            SALES_DEPT: ['PENDING', 'APPROVED'],
+            ADMIN: ['PENDING', 'APPROVED']
+        };
+        
+        const allowedStatuses = editableStatuses[currentUserRole] || [];
+        
+        // SALES_REP może edytować tylko własne zamówienia
+        if (currentUserRole === 'SALES_REP' && order.userId !== currentUserId) {
+            return false;
+        }
+        
+        return allowedStatuses.includes(order.status);
+    }
+
+    // Wejście w tryb edycji pozycji zamówienia
+    window.enterEditMode = function(orderId) {
+        ordersInEditMode.add(orderId);
+        const order = allOrders.find(o => o.id === orderId);
+        if (order) {
+            const tableRow = document.querySelector(`tr[data-order-id="${orderId}"]`);
+            if (tableRow) {
+                // Zamknij i otwórz ponownie, żeby przeładować z trybem edycji
+                const detailsRow = document.getElementById(`details-${orderId}`);
+                if (detailsRow) detailsRow.remove();
+                loadingOrders.add(orderId);
+                showOrderDetailsInline(order, tableRow).finally(() => {
+                    loadingOrders.delete(orderId);
+                });
+            }
+        }
+    };
+
+    // Wyjście z trybu edycji
+    window.exitEditMode = function(orderId) {
+        ordersInEditMode.delete(orderId);
+        const order = allOrders.find(o => o.id === orderId);
+        if (order) {
+            const tableRow = document.querySelector(`tr[data-order-id="${orderId}"]`);
+            if (tableRow) {
+                const detailsRow = document.getElementById(`details-${orderId}`);
+                if (detailsRow) detailsRow.remove();
+                loadingOrders.add(orderId);
+                showOrderDetailsInline(order, tableRow).finally(() => {
+                    loadingOrders.delete(orderId);
+                });
+            }
+        }
+    };
+
+    // Zapisz zmiany pozycji zamówienia
+    window.saveOrderItems = async function(orderId) {
+        const itemRows = document.querySelectorAll(`#details-${orderId} tr[data-item-id]`);
+        if (!itemRows.length) {
+            showToast('Brak pozycji do zapisania', 'warning');
+            return;
+        }
+
+        const items = [];
+        let hasError = false;
+        const logic = window.ProjectQuantityLogic || {};
+        const computePerProjectQuantities = logic.computePerProjectQuantities;
+
+        itemRows.forEach(row => {
+            const itemId = row.dataset.itemId;
+            const qtyInput = row.querySelector('input[name="quantity"]');
+            const projectsInput = row.querySelector('input[name="projects"]');
+            const perProjectInput = row.querySelector('input[name="projectQuantities"]');
+            const locationInput = row.querySelector('input[name="location"]');
+            const notesInput = row.querySelector('input[name="notes"]');
+
+            let quantity = qtyInput ? parseInt(qtyInput.value, 10) || 0 : 0;
+            let selectedProjects = projectsInput ? sanitizeProjectsValue(projectsInput.value) : '';
+            let perProjectStr = perProjectInput ? sanitizePerProjectValue(perProjectInput.value) : '';
+
+            let projectQuantities = undefined;
+            let quantitySource = undefined;
+
+            if (selectedProjects && computePerProjectQuantities) {
+                // Jeśli użytkownik podał ilości na projekty - traktujemy je jako źródło prawdy
+                if (perProjectStr) {
+                    const result = computePerProjectQuantities(selectedProjects, '', perProjectStr);
+                    if (!result.success) {
+                        hasError = true;
+                        showToast(`Pozycja ${itemId}: ${result.error}`, 'error');
+                        return;
+                    }
+                    quantity = result.totalQuantity;
+                    projectQuantities = JSON.stringify(result.perProjectQuantities);
+                    quantitySource = 'perProject';
+                } else if (Number.isFinite(quantity) && quantity > 0) {
+                    // Tylko łączna ilość i projekty -> rozłóż równomiernie
+                    const result = computePerProjectQuantities(selectedProjects, quantity, '');
+                    if (result.success) {
+                        projectQuantities = JSON.stringify(result.perProjectQuantities);
+                        quantitySource = 'total';
+                    }
+                }
+            }
+
+            items.push({
+                id: itemId,
+                quantity,
+                selectedProjects: selectedProjects || undefined,
+                projectQuantities,
+                quantitySource,
+                locationName: locationInput ? locationInput.value : undefined,
+                productionNotes: notesInput ? notesInput.value : undefined
+            });
+        });
+
+        if (hasError) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/items`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ items })
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showToast('Pozycje zostały zapisane', 'success');
+                // Aktualizuj total w lokalnych danych
+                const order = allOrders.find(o => o.id === orderId);
+                if (order && result.data?.total !== undefined) {
+                    order.total = result.data.total;
+                }
+
+                // Jeśli w panelu edycji jest pole notatek do zamówienia, zapisz je w tym samym kroku
+                const notesTextarea = document.getElementById(`order-notes-${orderId}`);
+                if (notesTextarea) {
+                    try {
+                        await saveOrderNotes(orderId, { silent: true });
+                    } catch (notesError) {
+                        console.error('Błąd zapisu notatek podczas zapisu pozycji:', notesError);
+                    }
+                }
+                // Wyjdź z trybu edycji i odśwież widok
+                exitEditMode(orderId);
+                // Odśwież tabelę główną (dla nowego total)
+                renderOrdersTable();
+            } else {
+                showToast(result.message || 'Nie udało się zapisać zmian', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd zapisu pozycji:', error);
+            showToast('Błąd połączenia z serwerem', 'error');
+        }
+    };
+
+    // Usuń pozycję zamówienia
+    window.deleteOrderItem = async function(orderId, itemId) {
+        if (!confirm('Czy na pewno chcesz usunąć tę pozycję z zamówienia? Tej operacji nie można cofnąć.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/items/${itemId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+
+            let result = null;
+            try {
+                result = await response.json();
+            } catch (parseError) {
+                // Jeśli odpowiedź nie jest JSON (np. HTML 404 z proxy), obsłuż niżej na podstawie statusu
+            }
+
+            if (response.ok && result && result.status === 'success') {
+                showToast('Pozycja została usunięta', 'success');
+
+                const order = allOrders.find(o => o.id === orderId);
+                if (order && result.data?.total !== undefined) {
+                    order.total = result.data.total;
+                }
+
+                // Odśwież szczegóły w trybie edycji
+                ordersInEditMode.add(orderId);
+                const tableRow = document.querySelector(`tr[data-order-id="${orderId}"]`);
+                if (tableRow) {
+                    const detailsRow = document.getElementById(`details-${orderId}`);
+                    if (detailsRow) detailsRow.remove();
+                    loadingOrders.add(orderId);
+                    showOrderDetailsInline(order, tableRow).finally(() => {
+                        loadingOrders.delete(orderId);
+                    });
+                }
+                renderOrdersTable();
+            } else {
+                const message = (result && result.message)
+                    ? result.message
+                    : `Nie udało się usunąć pozycji (HTTP ${response.status})`;
+                showToast(message, 'error');
+            }
+        } catch (error) {
+            console.error('Błąd usuwania pozycji:', error);
+            showToast('Błąd połączenia z serwerem', 'error');
+        }
+    };
+
     // Sprawdzenie autoryzacji i roli użytkownika
     async function checkAuth() {
         try {
@@ -150,6 +467,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const userData = await response.json();
             currentUserRole = userData.role;
+            currentUserId = userData.id;
 
             // Pokaż linki w zależności od roli
             if (currentUserRole === 'ADMIN') {
@@ -224,6 +542,10 @@ document.addEventListener('DOMContentLoaded', () => {
     ordersStatusFilter.addEventListener('change', debouncedFetchOrders);
     ordersDateFrom.addEventListener('change', debouncedFetchOrders);
     ordersDateTo.addEventListener('change', debouncedFetchOrders);
+
+    if (ordersBelowStockOnly) {
+        ordersBelowStockOnly.addEventListener('change', debouncedFetchOrders);
+    }
 
     if (ordersUserFilter) {
         ordersUserFilter.addEventListener('change', debouncedFetchOrders);
@@ -325,6 +647,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (ordersUserFilter && ordersUserFilter.value) params.append('userId', ordersUserFilter.value);
             if (ordersDateFrom.value) params.append('dateFrom', ordersDateFrom.value);
             if (ordersDateTo.value) params.append('dateTo', ordersDateTo.value);
+            if (ordersBelowStockOnly && ordersBelowStockOnly.checked) params.append('belowStockOnly', 'true');
 
             const url = `/api/orders?${params.toString()}`;
             const response = await fetch(url, {
@@ -474,6 +797,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const userDisplayRaw = order.User?.shortCode || order.User?.name || '-';
             const userDisplaySafe = escapeHtml(userDisplayRaw);
             const orderNumberSafe = escapeHtml(order.orderNumber || '');
+            const hasBelowStock = order.hasBelowStock === true;
+            const belowStockBadge = hasBelowStock
+                ? '<span class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700">Poniżej stanu</span>'
+                : '';
 
             const allowedTransitions = canCurrentRoleChangeStatus
                 ? getAllowedStatusTransitions(order.status, currentUserRole)
@@ -482,14 +809,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusClass = STATUS_CLASSES[order.status] || 'bg-gray-100 text-gray-800';
             const statusLabel = STATUS_LABELS[order.status] || order.status;
 
+            const availableStatuses = [order.status, ...allowedTransitions]
+                .filter((status, index, arr) => arr.indexOf(status) === index);
+
             const statusContent = canChangeStatus
-                ? `<select class="${STATUS_SELECT_BASE} ${statusClass}" data-order-id="${order.id}" data-original-status="${order.status}" onclick="event.stopPropagation()">
-                        ${[order.status, ...allowedTransitions]
-                            .filter((status, index, arr) => arr.indexOf(status) === index)
-                            .map(status => `<option value="${status}" ${status === order.status ? 'selected' : ''}>${STATUS_LABELS[status] || status}</option>`)
-                            .join('')}
-                   </select>`
-                : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabel}</span>`;
+                ? `<div class="project-filter__switch order-status-switch" role="radiogroup" aria-label="Status zamówienia" onclick="event.stopPropagation()">
+                        ${availableStatuses.map(status => `
+                            <button type="button"
+                                class="project-filter__option ${status === order.status ? 'project-filter__option--active' : ''}"
+                                data-order-id="${order.id}"
+                                data-status="${status}"
+                                onclick="handleOrderStatusClick('${order.id}', '${order.status}', '${status}', event)">
+                                ${STATUS_LABELS[status] || status}
+                            </button>
+                        `).join('')}
+                   </div>`
+                : `<span class="px-3 py-0.5 rounded-full text-xs font-medium ${statusClass}">${statusLabel}</span>`;
 
             const userCell = showUserColumn 
                 ? `<td class="p-4">${userDisplaySafe}</td>`
@@ -500,7 +835,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-4">
                         <div class="flex items-center gap-2">
                             <i class="fas fa-chevron-right text-gray-400 transition-transform order-chevron"></i>
-                            <div class="font-semibold text-blue-600">${orderNumberSafe}</div>
+                            <div class="font-semibold text-blue-600 flex items-center">${orderNumberSafe}${belowStockBadge}</div>
                         </div>
                     </td>
                     <td class="p-4 text-gray-600">${date}</td>
@@ -689,17 +1024,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const orderItems = fullOrder.items || fullOrder.OrderItem || [];
             const showSourceBadge = true; // zawsze pokazuj źródło (PM/KI)
+            const isEditMode = ordersInEditMode.has(order.id);
+            const canEdit = canEditOrder(fullOrder);
+            const canDeleteItems = ['SALES_DEPT', 'ADMIN'].includes(currentUserRole) && ['PENDING', 'APPROVED'].includes(fullOrder.status);
             
             const itemsHtml = orderItems.map(item => {
                 const identifier = item.Product?.identifier || '-';
                 const index = item.Product?.index || '-';
                 const productLabel = (index && index !== '-' && index !== identifier) ? `${identifier} (${index})` : identifier;
                 const sourceBadge = getSourceBadge(item.source, showSourceBadge);
-                const locationDisplay = item.locationName || '-';
+                const locationDisplay = item.locationName || '';
                 const notesDisplay = item.productionNotes || '';
                 
                 // Formatuj projekty z ilościami
-                let projectsDisplay = item.selectedProjects || '-';
+                let projectsDisplay = item.selectedProjects || '';
+                let perProjectInput = '';
                 if (item.projectQuantities) {
                     try {
                         const pq = typeof item.projectQuantities === 'string' 
@@ -707,29 +1046,88 @@ document.addEventListener('DOMContentLoaded', () => {
                             : item.projectQuantities;
                         if (Array.isArray(pq) && pq.length > 0) {
                             projectsDisplay = pq.map(p => `${p.projectNo}: ${p.qty}`).join(', ');
+                            perProjectInput = pq.map(p => p.qty).join(',');
                         }
                     } catch (e) { /* ignore parse errors */ }
                 }
 
                 const productLabelSafe = escapeHtml(productLabel);
                 const projectsDisplaySafe = escapeHtml(projectsDisplay);
+                const projectsInputSafe = escapeHtml(item.selectedProjects || '');
+                const perProjectInputSafe = escapeHtml(perProjectInput);
                 const locationDisplaySafe = escapeHtml(locationDisplay);
                 const notesDisplaySafe = escapeHtml(notesDisplay);
+
+                // Flaga pozycji poniżej stanu
+                const rawStockAtOrder = (item.stockAtOrder !== undefined && item.stockAtOrder !== null)
+                    ? Number(item.stockAtOrder)
+                    : null;
+                const stockAtOrder = Number.isFinite(rawStockAtOrder) ? rawStockAtOrder : null;
+                const isBelowStock = (item.belowStock === true) || (stockAtOrder !== null && item.quantity > stockAtOrder);
+                const belowStockBadge = isBelowStock
+                    ? `<span class="ml-1 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700">Poniżej stanu${stockAtOrder !== null ? ` (stan: ${stockAtOrder})` : ''}</span>`
+                    : '';
                 
                 // Oznaczenie źródła prawdy
                 const isPerProjectSource = item.quantitySource === 'perProject';
                 const qtyClass = isPerProjectSource ? '' : 'font-bold text-blue-700 underline';
                 const projectsClass = isPerProjectSource ? 'font-bold text-blue-700 underline' : '';
+
+                // Tryb edycji - inputy zamiast tekstu
+                if (isEditMode) {
+                    const unitPrice = item.unitPrice || 0;
+                    return `
+                    <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors edit-item-row" 
+                        data-item-id="${item.id}" 
+                        data-stock="${stockAtOrder !== null ? stockAtOrder : ''}" 
+                        data-unit-price="${unitPrice}">
+                        <td class="p-2 text-xs font-medium text-gray-800">
+                            <span class="product-label">${productLabelSafe}</span>
+                            <span class="below-stock-badge">${belowStockBadge}</span>
+                        </td>
+                        <td class="p-1">
+                            <input type="text" name="projects" value="${projectsInputSafe}" 
+                                class="w-full mb-0.5 px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                                placeholder="Nr projektów (np. 1-5,10)">
+                            <input type="text" name="projectQuantities" value="${perProjectInputSafe}" 
+                                class="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                                placeholder="Ilości na proj. (np. po 20 lub 20,30,40)">
+                            <div class="per-project-preview text-[10px] text-gray-500 mt-0.5">${projectsDisplaySafe}</div>
+                        </td>
+                        <td class="p-1 text-center">
+                            <input type="number" name="quantity" value="${item.quantity}" min="1" 
+                                class="qty-input w-16 px-1 py-0.5 text-xs text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                        </td>
+                        <td class="p-2 text-xs text-right text-gray-700">${unitPrice.toFixed(2)} zł</td>
+                        <td class="p-2 text-xs text-right font-semibold text-gray-900 line-total">${(item.quantity * unitPrice).toFixed(2)} zł</td>
+                        <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplaySafe || '-'}</td>
+                        <td class="p-1">
+                            <div class="flex items-center gap-1">
+                                <input type="text" name="notes" value="${notesDisplaySafe}" 
+                                    class="flex-1 px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                                    placeholder="Uwagi produkcyjne">
+                                ${canDeleteItems ? `
+                                    <button type="button" onclick="deleteOrderItem('${fullOrder.id}', '${item.id}')" 
+                                        class="text-red-600 hover:text-red-700 text-xs" title="Usuń pozycję">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </td>
+                    </tr>
+                    `;
+                }
                 
+                // Tryb podglądu - zwykły tekst
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
-                    <td class="p-2 text-xs font-medium text-gray-800">${productLabelSafe}</td>
-                    <td class="p-2 text-xs text-gray-700 ${projectsClass}">${projectsDisplaySafe}</td>
+                    <td class="p-2 text-xs font-medium text-gray-800">${productLabelSafe}${belowStockBadge}</td>
+                    <td class="p-2 text-xs text-gray-700 ${projectsClass}">${projectsDisplaySafe || '-'}</td>
                     <td class="p-2 text-xs text-center text-gray-700 ${qtyClass}">${item.quantity}</td>
                     <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplaySafe}</td>
-                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplaySafe}</td>
+                    <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplaySafe || '-'}</td>
+                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplaySafe || '-'}</td>
                 </tr>
                 `;
             }).join('');
@@ -811,15 +1209,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
                             <!-- Przyciski akcji -->
                             <div class="flex gap-2">
-                                <button onclick="toggleOrderHistory('${fullOrder.id}')" class="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
-                                    <i id="history-icon-${fullOrder.id}" class="fas fa-history"></i> Historia
-                                </button>
-                                
-                                ${canEditNotes ? `
-                                    <button onclick="saveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap">
-                                        <i class="fas fa-save"></i> Zapisz
+                                ${isEditMode ? `
+                                    <button onclick="saveOrderItems('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
+                                        <i class="fas fa-save"></i> Zapisz zmiany
                                     </button>
-                                ` : ''}
+                                    ${canEditNotes ? `
+                                        <button onclick="saveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-emerald-600 text-white text-xs rounded hover:bg-emerald-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
+                                            <i class="fas fa-sticky-note"></i> Zapisz notatki
+                                        </button>
+                                    ` : ''}
+                                    <button onclick="exitEditMode('${fullOrder.id}')" class="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
+                                        <i class="fas fa-times"></i> Anuluj
+                                    </button>
+                                ` : `
+                                    ${canEdit ? `
+                                        <button onclick="enterEditMode('${fullOrder.id}')" class="px-3 py-1 bg-amber-500 text-white text-xs rounded hover:bg-amber-600 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
+                                            <i class="fas fa-edit"></i> Edytuj pozycje
+                                        </button>
+                                    ` : ''}
+                                    <button onclick="toggleOrderHistory('${fullOrder.id}')" class="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
+                                        <i id="history-icon-${fullOrder.id}" class="fas fa-history"></i> Historia
+                                    </button>
+                                    
+                                    ${canEditNotes ? `
+                                        <button onclick="saveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap">
+                                            <i class="fas fa-save"></i> Zapisz
+                                        </button>
+                                    ` : ''}
+                                `}
                                 <div class="relative inline-block">
                                     <button onclick="togglePrintMenu('${fullOrder.id}')" class="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 transition-colors font-medium whitespace-nowrap">
                                         <i class="fas fa-print"></i> Drukuj <i class="fas fa-chevron-down text-xs ml-1"></i>
@@ -852,6 +1269,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Dodaj animację
             detailsRow.style.animation = 'slideDown 0.3s ease-out';
+
+            // W trybie edycji - dodaj listenery do przeliczania wartości i stanu
+            if (isEditMode) {
+                const qtyInputs = detailsRow.querySelectorAll('.qty-input');
+                qtyInputs.forEach(input => {
+                    input.addEventListener('input', function() {
+                        const row = this.closest('.edit-item-row');
+                        if (!row) return;
+
+                        const qty = parseInt(this.value, 10) || 0;
+                        const unitPrice = parseFloat(row.dataset.unitPrice) || 0;
+                        const stock = row.dataset.stock !== '' ? parseInt(row.dataset.stock, 10) : null;
+
+                        // Przelicz wartość linii
+                        const lineTotal = row.querySelector('.line-total');
+                        if (lineTotal) {
+                            lineTotal.textContent = (qty * unitPrice).toFixed(2) + ' zł';
+                        }
+
+                        // Aktualizuj badge "poniżej stanu"
+                        const badgeContainer = row.querySelector('.below-stock-badge');
+                        if (badgeContainer) {
+                            if (stock !== null && qty > stock) {
+                                badgeContainer.innerHTML = `<span class="ml-1 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700">Poniżej stanu (stan: ${stock})</span>`;
+                            } else {
+                                badgeContainer.innerHTML = '';
+                            }
+                        }
+
+                        updatePerProjectFromTotalRow(row);
+                    });
+                });
+
+                const perProjectInputs = detailsRow.querySelectorAll('input[name="projectQuantities"]');
+                perProjectInputs.forEach(input => {
+                    input.addEventListener('blur', function() {
+                        const row = this.closest('.edit-item-row');
+                        if (!row) return;
+                        updateTotalFromPerProjectRow(row);
+                    });
+                });
+            }
         } catch (error) {
             console.error('Błąd pobierania szczegółów:', error);
             showToast('Nie udało się pobrać szczegółów zamówienia', 'error');
@@ -879,7 +1338,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Zapisz notatki
-    async function saveOrderNotes(orderId) {
+    // options.silent = true -> brak zielonego bannera przy sukcesie (używane z saveOrderItems)
+    async function saveOrderNotes(orderId, options = {}) {
+        const { silent = false } = options;
         const textarea = document.getElementById(`order-notes-${orderId}`);
         const notes = textarea?.value || '';
 
@@ -894,7 +1355,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
 
             if (result.status === 'success') {
-                showToast('Notatki zostały zapisane', 'success');
+                // Zaktualizuj notatki w lokalnej liście zamówień, żeby od razu było widać zmianę
+                const order = allOrders.find(o => o.id === orderId);
+                if (order) {
+                    order.notes = notes;
+                }
+                if (!silent) {
+                    showToast('Notatki zostały zapisane', 'success');
+                }
             } else {
                 showToast(result.message || 'Nie udało się zapisać notatek', 'error');
             }
@@ -904,18 +1372,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Obsługa zmiany statusu inline (select w tabeli)
-    async function handleInlineStatusSelectChange(e) {
-        const select = e.target;
-        const orderId = select.dataset.orderId;
-        const originalStatus = select.dataset.originalStatus;
-        const newStatus = select.value;
-
-        if (newStatus === originalStatus) {
-            return;
-        }
-
-        select.disabled = true;
+    async function changeOrderStatus(orderId, originalStatus, newStatus) {
+        if (newStatus === originalStatus) return;
 
         try {
             const response = await fetch(`/api/orders/${orderId}/status`, {
@@ -928,26 +1386,41 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
 
             if (result.status === 'success') {
-                // Aktualizuj dane lokalne
                 const order = allOrders.find(o => o.id === orderId);
                 if (order) {
                     order.status = newStatus;
                 }
-                // Aktualizuj wygląd selecta
-                select.dataset.originalStatus = newStatus;
-                applyStatusStyles(select, newStatus);
             } else {
                 showToast(result.message || 'Nie udało się zmienić statusu', 'error');
-                select.value = originalStatus;
             }
         } catch (error) {
             console.error('Błąd zmiany statusu:', error);
             showToast('Błąd połączenia z serwerem', 'error');
-            select.value = originalStatus;
         } finally {
-            select.disabled = false;
+            // Zawsze odśwież tabelę, żeby mieć spójny widok
+            renderOrdersTable();
         }
     }
+
+    // Obsługa zmiany statusu inline (select w tabeli - pozostawiona dla kompatybilności)
+    async function handleInlineStatusSelectChange(e) {
+        const select = e.target;
+        const orderId = select.dataset.orderId;
+        const originalStatus = select.dataset.originalStatus;
+        const newStatus = select.value;
+
+        select.disabled = true;
+        await changeOrderStatus(orderId, originalStatus, newStatus);
+        select.disabled = false;
+    }
+
+    // Obsługa kliknięcia w przycisk statusu (przełącznik w stylu project-filter__switch)
+    window.handleOrderStatusClick = async function(orderId, originalStatus, newStatus, event) {
+        if (event) {
+            event.stopPropagation();
+        }
+        await changeOrderStatus(orderId, originalStatus, newStatus);
+    };
 
     // Edytuj status (placeholder - stara funkcja)
     function editOrderStatus(orderId) {
@@ -1045,6 +1518,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     const locationDisplaySafe = escapeHtml(locationDisplay);
                     const notesDisplaySafe = escapeHtml(notesDisplay || '');
 
+                    const rawStockAtOrder = (item.stockAtOrder !== undefined && item.stockAtOrder !== null)
+                        ? Number(item.stockAtOrder)
+                        : null;
+                    const stockAtOrder = Number.isFinite(rawStockAtOrder) ? rawStockAtOrder : null;
+                    const isBelowStock = (item.belowStock === true) || (stockAtOrder !== null && item.quantity > stockAtOrder);
+                    const belowStockHtml = isBelowStock
+                        ? `<div style="color:#b91c1c;font-size:8px;margin-top:2px;">Poniżej stanu${stockAtOrder !== null ? ` (stan: ${stockAtOrder})` : ''}</div>`
+                        : '';
+
                     const priceColumns = includePrices ? `
                         <td style="text-align: right; font-size: 9px;">${(item.unitPrice || 0).toFixed(2)} zł</td>
                         <td style="text-align: right; font-size: 9px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>` : '';
@@ -1054,7 +1536,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     return `
                     <tr>
-                        <td style="font-size: 9px;">${productLabelSafe}</td>
+                        <td style="font-size: 9px;">${productLabelSafe}${belowStockHtml}</td>
                         <td style="font-size: 9px; ${projectsStyle}">${projectsDisplaySafe}</td>
                         <td style="text-align: center; font-size: 9px; ${qtyStyle}">${item.quantity}</td>
                         ${priceColumns}
@@ -1276,10 +1758,21 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     } catch (e) { /* ignore parse errors */ }
                 }
+
+                const productLabel = item.Product?.identifier || item.Product?.name || '-';
+
+                const rawStockAtOrder = (item.stockAtOrder !== undefined && item.stockAtOrder !== null)
+                    ? Number(item.stockAtOrder)
+                    : null;
+                const stockAtOrder = Number.isFinite(rawStockAtOrder) ? rawStockAtOrder : null;
+                const isBelowStock = (item.belowStock === true) || (stockAtOrder !== null && item.quantity > stockAtOrder);
+                const belowStockInfo = isBelowStock
+                    ? `<div class="text-xs text-red-700 mt-1">Poniżej stanu${stockAtOrder !== null ? ` (stan: ${stockAtOrder})` : ''}</div>`
+                    : '';
                 
                 return `
                 <tr class="border-b">
-                    <td class="p-3">${item.Product?.identifier || item.Product?.name || '-'}</td>
+                    <td class="p-3">${productLabel}${belowStockInfo}</td>
                     <td class="p-3">${projectsDisplay}</td>
                     <td class="p-3 text-center">${item.quantity}</td>
                     <td class="p-3 text-right">${(item.unitPrice || 0).toFixed(2)} zł</td>

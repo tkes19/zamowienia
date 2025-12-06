@@ -137,6 +137,9 @@ Po zalogowaniu w nagłówku widać:
      źródłem stają się **ilości na projekty**, a suma jest liczona z nich;
    - przejście TAB‑em przez pole **bez zmiany wartości** nie przelicza ilości.
 
+   Drobne literówki w polach **„Nr projektów”** i **„Ilości na proj.”** (np. przecinek na końcu, podwójne przecinki)
+   są automatycznie poprawiane – system czyści wpis i przelicza wartości bez wyświetlania błędów.
+
 4. **Uwagi do zamówienia:**
    - **Uwagi do pozycji** – pole w koszyku przy każdym produkcie (np. "druk dwustronny", "kolor złoty")
    - **Uwagi ogólne** – pole przed wysłaniem zamówienia (np. termin realizacji, sposób dostawy)

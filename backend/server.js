@@ -307,7 +307,7 @@ const ROLE_STATUS_TRANSITIONS = {
     ],
     SALES_DEPT: [
         { from: 'PENDING', to: 'APPROVED' },
-        { from: 'APPROVED', to: 'IN_PRODUCTION' },
+        // SALES_DEPT NIE może: APPROVED → IN_PRODUCTION (to robi produkcja/operator)
         { from: 'APPROVED', to: 'CANCELLED' },
         { from: 'IN_PRODUCTION', to: 'CANCELLED' },
         { from: 'READY', to: 'CANCELLED' },
@@ -533,6 +533,39 @@ app.patch('/api/orders/:id/status', async (req, res) => {
         if (historyError) {
             console.error('Błąd zapisu do historii zmian:', historyError);
             // Nie przerywamy operacji, tylko logujemy błąd
+        }
+
+        // ============================================
+        // AUTOMATYCZNE AKCJE PO ZMIANIE STATUSU
+        // ============================================
+        
+        // Przy przejściu na APPROVED → automatycznie tworzymy zlecenia produkcyjne
+        if (nextStatus === 'APPROVED') {
+            try {
+                const result = await createProductionOrdersForOrder(orderId, { userId: requesterId });
+                if (result.created > 0) {
+                    console.log(`[PATCH /api/orders/:id/status] Automatycznie utworzono ${result.created} zleceń produkcyjnych dla zamówienia ${orderId}`);
+                }
+                if (result.errors && result.errors.length > 0) {
+                    console.warn(`[PATCH /api/orders/:id/status] Błędy przy tworzeniu zleceń:`, result.errors);
+                }
+            } catch (prodError) {
+                console.error('[PATCH /api/orders/:id/status] Błąd automatycznego tworzenia zleceń:', prodError);
+                // Nie blokujemy zmiany statusu - zlecenia można utworzyć ręcznie później
+            }
+        }
+
+        // Przy przejściu na CANCELLED → automatycznie anulujemy zlecenia produkcyjne
+        if (nextStatus === 'CANCELLED') {
+            try {
+                const result = await cancelProductionOrdersForOrder(orderId);
+                if (result.cancelled > 0) {
+                    console.log(`[PATCH /api/orders/:id/status] Automatycznie anulowano ${result.cancelled} zleceń produkcyjnych dla zamówienia ${orderId}`);
+                }
+            } catch (cancelError) {
+                console.error('[PATCH /api/orders/:id/status] Błąd automatycznego anulowania zleceń:', cancelError);
+                // Nie blokujemy zmiany statusu
+            }
         }
 
         return res.json({ status: 'success', data: { id: orderId, status: nextStatus } });
@@ -3874,7 +3907,9 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
             locationName: item.locationName || null,
             projectName: item.projectName || null,
             customization: item.customization || null,
-            productionNotes: item.productionNotes || null
+            productionNotes: item.productionNotes || null,
+            stockAtOrder: Number.isFinite(Number(item.stockAtOrder)) ? Number(item.stockAtOrder) : null,
+            belowStock: item.belowStock === true
         }));
 
         const { error: itemsError } = await supabase
@@ -4599,7 +4634,7 @@ app.get('/api/orders', async (req, res) => {
             return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu' });
         }
 
-        const { status, userId: filterUserId, customerId, dateFrom, dateTo } = req.query;
+        const { status, userId: filterUserId, customerId, dateFrom, dateTo, belowStockOnly } = req.query;
 
         let query = supabase
             .from('Order')
@@ -4652,11 +4687,38 @@ app.get('/api/orders', async (req, res) => {
             return res.status(500).json({ status: 'error', message: 'Błąd pobierania zamówień' });
         }
 
-        console.log('[GET /api/orders] returning', { count: (orders || []).length });
+        let enrichedOrders = orders || [];
+
+        if (enrichedOrders.length > 0) {
+            const orderIds = enrichedOrders.map(o => o.id).filter(Boolean);
+
+            const { data: belowStockItems, error: belowStockError } = await supabase
+                .from('OrderItem')
+                .select('orderId')
+                .in('orderId', orderIds)
+                .eq('belowStock', true);
+
+            if (belowStockError) {
+                console.error('Błąd Supabase w GET /api/orders (belowStock):', belowStockError);
+            }
+
+            const belowStockSet = new Set((belowStockItems || []).map(row => row.orderId));
+
+            enrichedOrders = enrichedOrders.map(o => ({
+                ...o,
+                hasBelowStock: belowStockSet.has(o.id)
+            }));
+
+            if (belowStockOnly && ['true', '1', 'on'].includes(String(belowStockOnly).toLowerCase())) {
+                enrichedOrders = enrichedOrders.filter(o => o.hasBelowStock);
+            }
+        }
+
+        console.log('[GET /api/orders] returning', { count: enrichedOrders.length });
 
         return res.json({
             status: 'success',
-            data: orders || []
+            data: enrichedOrders
         });
     } catch (error) {
         console.error('Błąd w GET /api/orders:', error);
@@ -4735,14 +4797,355 @@ app.get('/api/admin/orders', async (req, res) => {
             return res.status(500).json({ status: 'error', message: 'Błąd pobierania zamówień' });
         }
 
-        console.log('[GET /api/admin/orders] returning', { count: (orders || []).length });
+        // Pobierz postęp produkcji dla wszystkich zamówień
+        const orderIds = (orders || []).map(o => o.id);
+        let productionProgressMap = {};
+
+        if (orderIds.length > 0) {
+            // Pobierz zlecenia produkcyjne dla tych zamówień
+            const { data: prodOrders, error: prodError } = await supabase
+                .from('ProductionOrder')
+                .select('id, sourceorderid, status')
+                .in('sourceorderid', orderIds);
+
+            if (!prodError && prodOrders && prodOrders.length > 0) {
+                // Pobierz operacje dla tych zleceń
+                const prodOrderIds = prodOrders.map(po => po.id);
+                const { data: operations, error: opsError } = await supabase
+                    .from('ProductionOperation')
+                    .select('id, productionorderid, status')
+                    .in('productionorderid', prodOrderIds);
+
+                // Grupuj po zamówieniu źródłowym
+                prodOrders.forEach(po => {
+                    const sourceId = po.sourceorderid;
+                    if (!productionProgressMap[sourceId]) {
+                        productionProgressMap[sourceId] = {
+                            totalOrders: 0,
+                            completedOrders: 0,
+                            totalOps: 0,
+                            completedOps: 0
+                        };
+                    }
+                    productionProgressMap[sourceId].totalOrders++;
+                    if (po.status === 'completed') {
+                        productionProgressMap[sourceId].completedOrders++;
+                    }
+                });
+
+                // Dodaj operacje
+                if (!opsError && operations) {
+                    operations.forEach(op => {
+                        const prodOrder = prodOrders.find(po => po.id === op.productionorderid);
+                        if (prodOrder) {
+                            const sourceId = prodOrder.sourceorderid;
+                            if (productionProgressMap[sourceId]) {
+                                productionProgressMap[sourceId].totalOps++;
+                                if (op.status === 'completed') {
+                                    productionProgressMap[sourceId].completedOps++;
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        // Dodaj informacje o postępie do każdego zamówienia
+        const ordersWithProgress = (orders || []).map(order => {
+            const progress = productionProgressMap[order.id];
+            if (progress) {
+                const percent = progress.totalOps > 0 
+                    ? Math.round((progress.completedOps / progress.totalOps) * 100) 
+                    : 0;
+                return {
+                    ...order,
+                    productionProgress: {
+                        totalOrders: progress.totalOrders,
+                        completedOrders: progress.completedOrders,
+                        totalOps: progress.totalOps,
+                        completedOps: progress.completedOps,
+                        percent,
+                        label: `${progress.completedOps}/${progress.totalOps}`
+                    }
+                };
+            }
+            return {
+                ...order,
+                productionProgress: null
+            };
+        });
+
+        console.log('[GET /api/admin/orders] returning', { count: ordersWithProgress.length });
 
         return res.json({
             status: 'success',
-            data: orders || []
+            data: ordersWithProgress
         });
     } catch (error) {
         console.error('Błąd w GET /api/admin/orders:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// PATCH /api/orders/:id/items - Edycja pozycji zamówienia
+// ============================================
+app.patch('/api/orders/:id/items', async (req, res) => {
+    try {
+        const { userId, role } = await getAuthContext(req);
+        
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const { id: orderId } = req.params;
+        const { items } = req.body; // Array of { id, quantity, selectedProjects, projectQuantities, quantitySource, locationName, productionNotes }
+
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Brak pozycji do aktualizacji' });
+        }
+
+        // Pobierz zamówienie
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .select('id, userId, status')
+            .eq('id', orderId)
+            .single();
+
+        if (orderError || !order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+        }
+
+        // Sprawdź uprawnienia do edycji
+        const canEditStatuses = {
+            SALES_REP: ['PENDING'],
+            SALES_DEPT: ['PENDING', 'APPROVED'],
+            ADMIN: ['PENDING', 'APPROVED']
+        };
+
+        const allowedStatuses = canEditStatuses[role] || [];
+        
+        // SALES_REP może edytować tylko własne zamówienia
+        if (role === 'SALES_REP' && order.userId !== userId) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do edycji tego zamówienia' });
+        }
+
+        // Sprawdź czy status pozwala na edycję
+        if (!allowedStatuses.includes(order.status)) {
+            return res.status(403).json({ 
+                status: 'error', 
+                message: `Nie można edytować zamówienia w statusie "${order.status}". Dozwolone statusy: ${allowedStatuses.join(', ') || 'brak'}` 
+            });
+        }
+
+        // Pobierz istniejące pozycje zamówienia
+        const { data: existingItems, error: existingError } = await supabase
+            .from('OrderItem')
+            .select('id, productId, quantity, unitPrice')
+            .eq('orderId', orderId);
+
+        if (existingError) {
+            console.error('Błąd pobierania pozycji:', existingError);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania pozycji zamówienia' });
+        }
+
+        // Pobierz produkty dla stanów magazynowych
+        const productIds = [...new Set(existingItems.map(i => i.productId).filter(Boolean))];
+        let productsMap = new Map();
+        if (productIds.length > 0) {
+            const { data: products } = await supabase
+                .from('Product')
+                .select('id, stock')
+                .in('id', productIds);
+            if (products) {
+                productsMap = new Map(products.map(p => [p.id, p]));
+            }
+        }
+
+        const existingItemsMap = new Map(existingItems.map(item => [item.id, item]));
+
+        // Przygotuj aktualizacje
+        const updates = [];
+        let newTotal = 0;
+
+        for (const item of items) {
+            const existing = existingItemsMap.get(item.id);
+            if (!existing) {
+                console.warn(`Pozycja ${item.id} nie istnieje w zamówieniu ${orderId}`);
+                continue;
+            }
+
+            const quantity = Number(item.quantity) || existing.quantity;
+            const unitPrice = existing.unitPrice;
+            const lineTotal = quantity * unitPrice;
+            newTotal += lineTotal;
+
+            // Oblicz stockAtOrder i belowStock
+            const product = productsMap.get(existing.productId);
+            const currentStock = product?.stock;
+            const stockAtOrder = (currentStock !== undefined && currentStock !== null) ? Number(currentStock) : null;
+            const belowStock = (stockAtOrder !== null && quantity > stockAtOrder);
+
+            updates.push({
+                id: item.id,
+                quantity,
+                selectedProjects: item.selectedProjects !== undefined ? item.selectedProjects : undefined,
+                projectQuantities: item.projectQuantities !== undefined ? item.projectQuantities : undefined,
+                quantitySource: item.quantitySource !== undefined ? item.quantitySource : undefined,
+                locationName: item.locationName !== undefined ? item.locationName : undefined,
+                productionNotes: item.productionNotes !== undefined ? item.productionNotes : undefined,
+                totalQuantity: quantity,
+                stockAtOrder,
+                belowStock
+            });
+        }
+
+        // Wykonaj aktualizacje pozycji
+        for (const update of updates) {
+            const { id, ...fields } = update;
+            // Usuń undefined pola
+            const cleanFields = Object.fromEntries(
+                Object.entries(fields).filter(([_, v]) => v !== undefined)
+            );
+
+            const { error: updateError } = await supabase
+                .from('OrderItem')
+                .update(cleanFields)
+                .eq('id', id);
+
+            if (updateError) {
+                console.error(`Błąd aktualizacji pozycji ${id}:`, updateError);
+            }
+        }
+
+        // Przelicz total dla całego zamówienia (pobierz wszystkie pozycje)
+        const { data: allItems, error: allItemsError } = await supabase
+            .from('OrderItem')
+            .select('quantity, unitPrice')
+            .eq('orderId', orderId);
+
+        if (!allItemsError && allItems) {
+            newTotal = allItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+        }
+
+        // Zaktualizuj total zamówienia
+        const { error: orderUpdateError } = await supabase
+            .from('Order')
+            .update({ total: newTotal, updatedAt: new Date().toISOString() })
+            .eq('id', orderId);
+
+        if (orderUpdateError) {
+            console.error('Błąd aktualizacji total zamówienia:', orderUpdateError);
+        }
+
+        console.log(`[PATCH /api/orders/${orderId}/items] Zaktualizowano ${updates.length} pozycji, nowy total: ${newTotal}`);
+
+        return res.json({
+            status: 'success',
+            message: `Zaktualizowano ${updates.length} pozycji`,
+            data: { total: newTotal }
+        });
+
+    } catch (error) {
+        console.error('Błąd w PATCH /api/orders/:id/items:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// DELETE /api/orders/:orderId/items/:itemId - Usunięcie pozycji zamówienia
+// ============================================
+app.delete('/api/orders/:orderId/items/:itemId', async (req, res) => {
+    try {
+        const { userId, role } = await getAuthContext(req);
+        
+        if (!userId || !role) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        const { orderId, itemId } = req.params;
+
+        // Pobierz zamówienie
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .select('id, userId, status')
+            .eq('id', orderId)
+            .single();
+
+        if (orderError || !order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+        }
+
+        // Uprawnienia do usuwania pozycji
+        const canDeleteStatuses = {
+            SALES_DEPT: ['PENDING', 'APPROVED'],
+            ADMIN: ['PENDING', 'APPROVED']
+        };
+
+        const allowedStatuses = canDeleteStatuses[role] || [];
+        if (allowedStatuses.length === 0) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do usuwania pozycji zamówienia' });
+        }
+
+        if (!allowedStatuses.includes(order.status)) {
+            return res.status(403).json({ 
+                status: 'error', 
+                message: `Nie można usuwać pozycji w statusie "${order.status}". Dozwolone statusy: ${allowedStatuses.join(', ') || 'brak'}` 
+            });
+        }
+
+        // Sprawdź, czy pozycja należy do tego zamówienia
+        const { data: item, error: itemError } = await supabase
+            .from('OrderItem')
+            .select('id, orderId')
+            .eq('id', itemId)
+            .single();
+
+        if (itemError || !item || item.orderId !== orderId) {
+            return res.status(404).json({ status: 'error', message: 'Pozycja zamówienia nie znaleziona' });
+        }
+
+        const { error: deleteError } = await supabase
+            .from('OrderItem')
+            .delete()
+            .eq('id', itemId);
+
+        if (deleteError) {
+            console.error('Błąd usuwania pozycji zamówienia:', deleteError);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć pozycji zamówienia' });
+        }
+
+        // Przelicz total po usunięciu (może zostać 0 jeśli to była jedyna pozycja)
+        let newTotal = 0;
+        const { data: remainingItems, error: remainingError } = await supabase
+            .from('OrderItem')
+            .select('quantity, unitPrice')
+            .eq('orderId', orderId);
+
+        if (!remainingError && remainingItems) {
+            newTotal = remainingItems.reduce((sum, row) => sum + (row.quantity * row.unitPrice), 0);
+        }
+
+        const { error: orderUpdateError } = await supabase
+            .from('Order')
+            .update({ total: newTotal, updatedAt: new Date().toISOString() })
+            .eq('id', orderId);
+
+        if (orderUpdateError) {
+            console.error('Błąd aktualizacji total zamówienia po usunięciu pozycji:', orderUpdateError);
+        }
+
+        console.log(`[DELETE /api/orders/${orderId}/items/${itemId}] Nowy total: ${newTotal}`);
+
+        return res.json({
+            status: 'success',
+            message: 'Pozycja została usunięta',
+            data: { total: newTotal }
+        });
+
+    } catch (error) {
+        console.error('Błąd w DELETE /api/orders/:orderId/items/:itemId:', error);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
@@ -4806,6 +5209,8 @@ app.get('/api/orders/:id', async (req, res) => {
                 projectName,
                 customization,
                 productionNotes,
+                stockAtOrder,
+                belowStock,
                 Product:productId(id, name, identifier, index)
             `)
             .eq('orderId', id);
@@ -4825,6 +5230,1169 @@ app.get('/api/orders/:id', async (req, res) => {
     } catch (error) {
         console.error('Błąd w GET /api/orders/:id:', error);
         res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// PANEL PRODUKCYJNY - API
+// ============================================
+
+// Typy gniazd produkcyjnych
+const WORK_CENTER_TYPES = ['laser_co2', 'laser_fiber', 'uv_print', 'cnc', 'cutting', 'assembly', 'packaging', 'other'];
+
+// Statusy maszyn
+const WORK_STATION_STATUSES = ['available', 'in_use', 'maintenance', 'breakdown'];
+
+// ============================================
+// GET /api/production/rooms - lista pokoi produkcyjnych
+// ============================================
+app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data: rooms, error } = await supabase
+            .from('ProductionRoom')
+            .select(`
+                *,
+                supervisor:User!ProductionRoom_supervisorId_fkey(id, name, email),
+                workCenters:WorkCenter(id, name, code, type)
+            `)
+            .eq('isActive', true)
+            .order('name');
+
+        if (error) {
+            console.error('[GET /api/production/rooms] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania pokoi' });
+        }
+
+        // Dodaj liczniki
+        const roomsWithCounts = (rooms || []).map(room => ({
+            ...room,
+            workCenterCount: room.workCenters?.length || 0
+        }));
+
+        return res.json({ status: 'success', data: roomsWithCounts });
+    } catch (error) {
+        console.error('[GET /api/production/rooms] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/production/rooms/:id - szczegóły pokoju
+// ============================================
+app.get('/api/production/rooms/:id', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+
+        const { data: room, error } = await supabase
+            .from('ProductionRoom')
+            .select(`
+                *,
+                supervisor:User!ProductionRoom_supervisorId_fkey(id, name, email),
+                workCenters:WorkCenter(
+                    id, name, code, type, description, isActive,
+                    workStations:WorkStation(id, name, code, type, status, manufacturer, model)
+                )
+            `)
+            .eq('id', id)
+            .single();
+
+        if (error) {
+            console.error('[GET /api/production/rooms/:id] Błąd:', error);
+            return res.status(404).json({ status: 'error', message: 'Pokój nie znaleziony' });
+        }
+
+        return res.json({ status: 'success', data: room });
+    } catch (error) {
+        console.error('[GET /api/production/rooms/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// POST /api/production/rooms - tworzenie pokoju
+// ============================================
+app.post('/api/production/rooms', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { name, code, area, description, supervisorId } = req.body;
+
+        if (!name || !code) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa i kod są wymagane' });
+        }
+
+        // Sprawdź unikalność kodu
+        const { data: existing } = await supabase
+            .from('ProductionRoom')
+            .select('id')
+            .eq('code', code.toUpperCase())
+            .single();
+
+        if (existing) {
+            return res.status(400).json({ status: 'error', message: 'Pokój o tym kodzie już istnieje' });
+        }
+
+        const { data: room, error } = await supabase
+            .from('ProductionRoom')
+            .insert({
+                name: name.trim(),
+                code: code.toUpperCase().trim(),
+                area: area || null,
+                description: description || null,
+                supervisorId: supervisorId || null,
+                isActive: true
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[POST /api/production/rooms] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć pokoju' });
+        }
+
+        return res.status(201).json({ status: 'success', data: room });
+    } catch (error) {
+        console.error('[POST /api/production/rooms] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// PATCH /api/production/rooms/:id - aktualizacja pokoju
+// ============================================
+app.patch('/api/production/rooms/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+        const { name, code, area, description, supervisorId, isActive } = req.body;
+
+        const updates = {};
+        if (name !== undefined) updates.name = name.trim();
+        if (code !== undefined) updates.code = code.toUpperCase().trim();
+        if (area !== undefined) updates.area = area;
+        if (description !== undefined) updates.description = description;
+        if (supervisorId !== undefined) updates.supervisorId = supervisorId || null;
+        if (isActive !== undefined) updates.isActive = isActive;
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Brak danych do aktualizacji' });
+        }
+
+        const { data: room, error } = await supabase
+            .from('ProductionRoom')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[PATCH /api/production/rooms/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować pokoju' });
+        }
+
+        return res.json({ status: 'success', data: room });
+    } catch (error) {
+        console.error('[PATCH /api/production/rooms/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// DELETE /api/production/rooms/:id - usunięcie pokoju
+// ============================================
+app.delete('/api/production/rooms/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+
+        // Soft delete - ustawiamy isActive = false
+        const { error } = await supabase
+            .from('ProductionRoom')
+            .update({ isActive: false })
+            .eq('id', id);
+
+        if (error) {
+            console.error('[DELETE /api/production/rooms/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć pokoju' });
+        }
+
+        return res.json({ status: 'success', message: 'Pokój został dezaktywowany' });
+    } catch (error) {
+        console.error('[DELETE /api/production/rooms/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/production/work-centers - lista gniazd
+// ============================================
+app.get('/api/production/work-centers', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { roomId } = req.query;
+
+        let query = supabase
+            .from('WorkCenter')
+            .select(`
+                *,
+                room:ProductionRoom(id, name, code),
+                workStations:WorkStation(id, name, code, type, status)
+            `)
+            .eq('isActive', true)
+            .order('name');
+
+        if (roomId) {
+            query = query.eq('roomId', roomId);
+        }
+
+        const { data: workCenters, error } = await query;
+
+        if (error) {
+            console.error('[GET /api/production/work-centers] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania gniazd' });
+        }
+
+        const centersWithCounts = (workCenters || []).map(wc => ({
+            ...wc,
+            workStationCount: wc.workStations?.length || 0
+        }));
+
+        return res.json({ status: 'success', data: centersWithCounts });
+    } catch (error) {
+        console.error('[GET /api/production/work-centers] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// POST /api/production/work-centers - tworzenie gniazda
+// ============================================
+app.post('/api/production/work-centers', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { name, code, roomId, type, description } = req.body;
+
+        if (!name || !code || !type) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa, kod i typ są wymagane' });
+        }
+
+        if (!WORK_CENTER_TYPES.includes(type)) {
+            return res.status(400).json({ 
+                status: 'error', 
+                message: `Nieprawidłowy typ. Dozwolone: ${WORK_CENTER_TYPES.join(', ')}` 
+            });
+        }
+
+        const { data: workCenter, error } = await supabase
+            .from('WorkCenter')
+            .insert({
+                name: name.trim(),
+                code: code.toUpperCase().trim(),
+                roomId: roomId || null,
+                type,
+                description: description || null,
+                isActive: true
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[POST /api/production/work-centers] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć gniazda' });
+        }
+
+        return res.status(201).json({ status: 'success', data: workCenter });
+    } catch (error) {
+        console.error('[POST /api/production/work-centers] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/production/work-stations - lista maszyn
+// ============================================
+app.get('/api/production/work-stations', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { workCenterId, status } = req.query;
+
+        let query = supabase
+            .from('WorkStation')
+            .select(`
+                *,
+                workCenter:WorkCenter(id, name, code, type),
+                currentOperator:User!WorkStation_currentOperatorId_fkey(id, name)
+            `)
+            .eq('isActive', true)
+            .order('name');
+
+        if (workCenterId) {
+            query = query.eq('workCenterId', workCenterId);
+        }
+        if (status) {
+            query = query.eq('status', status);
+        }
+
+        const { data: workStations, error } = await query;
+
+        if (error) {
+            console.error('[GET /api/production/work-stations] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania maszyn' });
+        }
+
+        return res.json({ status: 'success', data: workStations || [] });
+    } catch (error) {
+        console.error('[GET /api/production/work-stations] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// POST /api/production/work-stations - tworzenie maszyny
+// ============================================
+app.post('/api/production/work-stations', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { name, code, workCenterId, type, manufacturer, model, capabilities } = req.body;
+
+        if (!name || !code || !type) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa, kod i typ są wymagane' });
+        }
+
+        const { data: workStation, error } = await supabase
+            .from('WorkStation')
+            .insert({
+                name: name.trim(),
+                code: code.toUpperCase().trim(),
+                workCenterId: workCenterId || null,
+                type,
+                manufacturer: manufacturer || null,
+                model: model || null,
+                capabilities: capabilities || null,
+                status: 'available',
+                isActive: true
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[POST /api/production/work-stations] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć maszyny' });
+        }
+
+        return res.status(201).json({ status: 'success', data: workStation });
+    } catch (error) {
+        console.error('[POST /api/production/work-stations] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// PATCH /api/production/work-stations/:id/status - zmiana statusu maszyny
+// ============================================
+app.patch('/api/production/work-stations/:id/status', requireRole(['ADMIN', 'PRODUCTION']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+        const { status, currentOperatorId } = req.body;
+
+        if (!status || !WORK_STATION_STATUSES.includes(status)) {
+            return res.status(400).json({ 
+                status: 'error', 
+                message: `Nieprawidłowy status. Dozwolone: ${WORK_STATION_STATUSES.join(', ')}` 
+            });
+        }
+
+        const updates = { status };
+        if (status === 'in_use' && currentOperatorId) {
+            updates.currentOperatorId = currentOperatorId;
+        } else if (status === 'available') {
+            updates.currentOperatorId = null;
+        }
+
+        const { data: workStation, error } = await supabase
+            .from('WorkStation')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[PATCH /api/production/work-stations/:id/status] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zmienić statusu' });
+        }
+
+        return res.json({ status: 'success', data: workStation });
+    } catch (error) {
+        console.error('[PATCH /api/production/work-stations/:id/status] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// GET /api/production/stats - statystyki produkcji
+// ============================================
+app.get('/api/production/stats', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        // Pobierz liczniki
+        const [roomsResult, workCentersResult, workStationsResult] = await Promise.all([
+            supabase.from('ProductionRoom').select('id', { count: 'exact' }).eq('isActive', true),
+            supabase.from('WorkCenter').select('id', { count: 'exact' }).eq('isActive', true),
+            supabase.from('WorkStation').select('id, status', { count: 'exact' }).eq('isActive', true)
+        ]);
+
+        const workStations = workStationsResult.data || [];
+        const statusCounts = {
+            available: workStations.filter(ws => ws.status === 'available').length,
+            in_use: workStations.filter(ws => ws.status === 'in_use').length,
+            maintenance: workStations.filter(ws => ws.status === 'maintenance').length,
+            breakdown: workStations.filter(ws => ws.status === 'breakdown').length
+        };
+
+        return res.json({
+            status: 'success',
+            data: {
+                rooms: roomsResult.count || 0,
+                workCenters: workCentersResult.count || 0,
+                workStations: workStationsResult.count || 0,
+                workStationsByStatus: statusCounts
+            }
+        });
+    } catch (error) {
+        console.error('[GET /api/production/stats] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// ŚCIEŻKI PRODUKCYJNE - API
+// ============================================
+
+// GET /api/production/paths - lista ścieżek produkcyjnych
+app.get('/api/production/paths', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data: paths, error } = await supabase
+            .from('ProductionPath')
+            .select('*')
+            .eq('isActive', true)
+            .order('code');
+
+        if (error) {
+            console.error('[GET /api/production/paths] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania ścieżek' });
+        }
+
+        return res.json({ status: 'success', data: paths || [] });
+    } catch (error) {
+        console.error('[GET /api/production/paths] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// GET /api/production/paths/:id - szczegóły ścieżki
+app.get('/api/production/paths/:id', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+
+        const { data: path, error } = await supabase
+            .from('ProductionPath')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (error) {
+            console.error('[GET /api/production/paths/:id] Błąd:', error);
+            return res.status(404).json({ status: 'error', message: 'Ścieżka nie znaleziona' });
+        }
+
+        return res.json({ status: 'success', data: path });
+    } catch (error) {
+        console.error('[GET /api/production/paths/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// POST /api/production/paths - tworzenie ścieżki
+app.post('/api/production/paths', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { code, name, description, operations } = req.body;
+
+        if (!code || !name) {
+            return res.status(400).json({ status: 'error', message: 'Kod i nazwa są wymagane' });
+        }
+
+        if (!operations || !Array.isArray(operations)) {
+            return res.status(400).json({ status: 'error', message: 'Lista operacji jest wymagana' });
+        }
+
+        // Sprawdź unikalność kodu
+        const { data: existing } = await supabase
+            .from('ProductionPath')
+            .select('id')
+            .eq('code', code)
+            .single();
+
+        if (existing) {
+            return res.status(400).json({ status: 'error', message: 'Ścieżka o tym kodzie już istnieje' });
+        }
+
+        const { data: path, error } = await supabase
+            .from('ProductionPath')
+            .insert({
+                code: code.trim(),
+                name: name.trim(),
+                description: description || null,
+                operations: operations
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[POST /api/production/paths] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd tworzenia ścieżki' });
+        }
+
+        return res.status(201).json({ status: 'success', data: path });
+    } catch (error) {
+        console.error('[POST /api/production/paths] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// PATCH /api/production/paths/:id - aktualizacja ścieżki
+app.patch('/api/production/paths/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+        const { code, name, description, operations, isActive } = req.body;
+
+        const updateData = {};
+        if (code !== undefined) updateData.code = code.trim();
+        if (name !== undefined) updateData.name = name.trim();
+        if (description !== undefined) updateData.description = description;
+        if (operations !== undefined) updateData.operations = operations;
+        if (isActive !== undefined) updateData.isActive = isActive;
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Brak danych do aktualizacji' });
+        }
+
+        const { data: path, error } = await supabase
+            .from('ProductionPath')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[PATCH /api/production/paths/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd aktualizacji ścieżki' });
+        }
+
+        return res.json({ status: 'success', data: path });
+    } catch (error) {
+        console.error('[PATCH /api/production/paths/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// DELETE /api/production/paths/:id - dezaktywacja ścieżki
+app.delete('/api/production/paths/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+
+        const { data: path, error } = await supabase
+            .from('ProductionPath')
+            .update({ isActive: false })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[DELETE /api/production/paths/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd dezaktywacji ścieżki' });
+        }
+
+        return res.json({ status: 'success', message: 'Ścieżka dezaktywowana', data: path });
+    } catch (error) {
+        console.error('[DELETE /api/production/paths/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// ZLECENIA PRODUKCYJNE - API
+// ============================================
+
+// Parser wyrażeń ścieżek produkcyjnych (np. "5%3$2.1")
+// % = sekwencja (po kolei), $ = gałęzie równoległe
+function parseProductionPathExpression(expression) {
+    if (!expression) return { branches: [] };
+    
+    // Dzielimy po $ na gałęzie równoległe
+    const branches = expression.split('$').map(branch => {
+        // Każdą gałąź dzielimy po % na sekwencję ścieżek
+        const pathCodes = branch.split('%').map(code => code.trim()).filter(Boolean);
+        return { pathCodes };
+    }).filter(b => b.pathCodes.length > 0);
+    
+    return { branches };
+}
+
+// Generowanie numeru zlecenia produkcyjnego powiązanego z konkretnym zamówieniem
+// Format: {orderNumber}/{NN}, np. 2025/120/JKO/01, 2025/120/JKO/02
+async function generateProductionOrderNumber(supabase, sourceOrderId, baseOrderNumber) {
+	const prefix = `${baseOrderNumber}/`;
+
+	// Pobierz istniejące zlecenia dla tego zamówienia, żeby znaleźć najwyższy sufiks
+	const { data: existingOrders, error } = await supabase
+		.from('ProductionOrder')
+		.select('ordernumber')
+		.eq('sourceorderid', sourceOrderId);
+
+	if (error) {
+		console.error('[generateProductionOrderNumber] Błąd pobierania istniejących zleceń:', error);
+		throw new Error('Nie udało się wygenerować numeru zlecenia produkcyjnego');
+	}
+
+	let maxSuffix = 0;
+	(existingOrders || []).forEach(row => {
+		const num = row.ordernumber || row.orderNumber;
+		if (typeof num === 'string' && num.startsWith(prefix)) {
+			const tail = num.slice(prefix.length);
+			const n = parseInt(tail, 10);
+			if (!isNaN(n) && n > maxSuffix) {
+				maxSuffix = n;
+			}
+		}
+	});
+
+	const next = maxSuffix + 1;
+	const suffix = String(next).padStart(2, '0');
+	return `${prefix}${suffix}`;
+}
+
+// ============================================
+// HELPER: Tworzenie zleceń produkcyjnych dla zamówienia
+// Wywoływany automatycznie przy zmianie statusu na APPROVED
+// ============================================
+async function createProductionOrdersForOrder(orderId, options = {}) {
+    if (!supabase) {
+        throw new Error('Supabase nie jest skonfigurowany');
+    }
+
+    const { priority = 3, notes = null, userId = null } = options;
+
+    // Sprawdź czy już istnieją zlecenia dla tego zamówienia (unikamy duplikatów)
+    const { data: existingOrders, error: checkError } = await supabase
+        .from('ProductionOrder')
+        .select('id')
+        .eq('sourceorderid', orderId)
+        .limit(1);
+
+    if (checkError) {
+        console.error('[createProductionOrdersForOrder] Błąd sprawdzania istniejących zleceń:', checkError);
+        throw new Error('Błąd sprawdzania istniejących zleceń');
+    }
+
+    if (existingOrders && existingOrders.length > 0) {
+        console.log(`[createProductionOrdersForOrder] Zlecenia dla zamówienia ${orderId} już istnieją, pomijam.`);
+        return { created: 0, skipped: true, orders: [], errors: [] };
+    }
+
+    // Pobierz zamówienie z pozycjami
+    const { data: order, error: orderError } = await supabase
+        .from('Order')
+        .select(`
+            *,
+            items:OrderItem(
+                id, productId, quantity, productionNotes,
+                product:Product(id, name, code, productionPath)
+            )
+        `)
+        .eq('id', orderId)
+        .single();
+
+    if (orderError || !order) {
+        console.error('[createProductionOrdersForOrder] Błąd pobierania zamówienia:', orderError);
+        throw new Error('Zamówienie nie znalezione');
+    }
+
+    if (!order.items || order.items.length === 0) {
+        console.log(`[createProductionOrdersForOrder] Zamówienie ${orderId} nie ma pozycji.`);
+        return { created: 0, skipped: false, orders: [], errors: [{ error: 'Zamówienie nie ma pozycji' }] };
+    }
+
+    // Pobierz wszystkie ścieżki produkcyjne (do mapowania kodów)
+    const { data: allPaths } = await supabase
+        .from('ProductionPath')
+        .select('*')
+        .eq('isActive', true);
+
+    const pathsByCode = {};
+    (allPaths || []).forEach(p => { pathsByCode[p.code] = p; });
+
+    const createdOrders = [];
+    const errors = [];
+
+    // Dla każdej pozycji zamówienia
+    for (const item of order.items) {
+        const product = item.product;
+        if (!product) continue;
+
+        // Pobierz expression ścieżki z produktu
+        const pathExpression = product.productionPath || product.productionpath;
+        
+        if (!pathExpression) {
+            errors.push({ itemId: item.id, productCode: product.code, error: 'Brak ścieżki produkcyjnej' });
+            continue;
+        }
+
+        // Parsuj expression
+        const parsed = parseProductionPathExpression(pathExpression);
+
+        if (parsed.branches.length === 0) {
+            errors.push({ itemId: item.id, productCode: product.code, error: 'Nieprawidłowe wyrażenie ścieżki' });
+            continue;
+        }
+
+        // Dla każdej gałęzi tworzymy osobne zlecenie
+        for (let branchIndex = 0; branchIndex < parsed.branches.length; branchIndex++) {
+            const branch = parsed.branches[branchIndex];
+            const branchCode = parsed.branches.length > 1 ? String.fromCharCode(65 + branchIndex) : null;
+
+            try {
+                const baseOrderNumber = order.orderNumber || order.ordernumber;
+                const orderNumber = await generateProductionOrderNumber(supabase, orderId, baseOrderNumber);
+
+                const firstPathCode = branch.pathCodes[0];
+                const firstPath = pathsByCode[firstPathCode];
+
+                // Utwórz zlecenie produkcyjne
+                const { data: prodOrder, error: prodError } = await supabase
+                    .from('ProductionOrder')
+                    .insert({
+                        ordernumber: orderNumber,
+                        sourceorderid: orderId,
+                        sourceorderitemid: item.id,
+                        productid: product.id,
+                        productionpathexpression: pathExpression,
+                        branchcode: branchCode,
+                        quantity: item.quantity,
+                        priority: priority,
+                        status: 'planned',
+                        productionpathid: firstPath?.id || null,
+                        productionnotes: notes || item.productionNotes || null,
+                        createdby: userId
+                    })
+                    .select()
+                    .single();
+
+                if (prodError) {
+                    console.error('[createProductionOrdersForOrder] Błąd tworzenia zlecenia:', prodError);
+                    errors.push({ itemId: item.id, productCode: product.code, branchCode, error: prodError.message });
+                    continue;
+                }
+
+                // Utwórz operacje dla każdej ścieżki w sekwencji
+                let operationNumber = 1;
+                for (const pathCode of branch.pathCodes) {
+                    const pathDef = pathsByCode[pathCode];
+                    
+                    if (!pathDef) {
+                        await supabase
+                            .from('ProductionOperation')
+                            .insert({
+                                productionorderid: prodOrder.id,
+                                operationnumber: operationNumber++,
+                                branchcode: branchCode,
+                                phase: 'OP',
+                                operationtype: `path_${pathCode}`,
+                                status: 'pending'
+                            });
+                    } else {
+                        const operations = pathDef.operations || [];
+                        for (const op of operations) {
+                            await supabase
+                                .from('ProductionOperation')
+                                .insert({
+                                    productionorderid: prodOrder.id,
+                                    operationnumber: operationNumber++,
+                                    branchcode: branchCode,
+                                    phase: op.phase || 'OP',
+                                    operationtype: op.operationType || op.operationtype || 'unknown',
+                                    plannedtime: op.estimatedTimeMin || null,
+                                    status: 'pending'
+                                });
+                        }
+                    }
+                }
+
+                createdOrders.push(prodOrder);
+            } catch (branchError) {
+                console.error('[createProductionOrdersForOrder] Błąd gałęzi:', branchError);
+                errors.push({ itemId: item.id, productCode: product.code, branchCode, error: branchError.message });
+            }
+        }
+    }
+
+    console.log(`[createProductionOrdersForOrder] Utworzono ${createdOrders.length} zleceń dla zamówienia ${orderId}, błędów: ${errors.length}`);
+    return { created: createdOrders.length, skipped: false, orders: createdOrders, errors };
+}
+
+// ============================================
+// HELPER: Anulowanie zleceń produkcyjnych dla zamówienia
+// Wywoływany automatycznie przy zmianie statusu na CANCELLED
+// ============================================
+async function cancelProductionOrdersForOrder(orderId) {
+    if (!supabase) {
+        throw new Error('Supabase nie jest skonfigurowany');
+    }
+
+    // Pobierz wszystkie zlecenia dla tego zamówienia, które można anulować
+    const { data: orders, error: fetchError } = await supabase
+        .from('ProductionOrder')
+        .select('id, status')
+        .eq('sourceorderid', orderId)
+        .in('status', ['planned', 'approved', 'in_progress']);
+
+    if (fetchError) {
+        console.error('[cancelProductionOrdersForOrder] Błąd pobierania zleceń:', fetchError);
+        throw new Error('Błąd pobierania zleceń do anulowania');
+    }
+
+    if (!orders || orders.length === 0) {
+        console.log(`[cancelProductionOrdersForOrder] Brak zleceń do anulowania dla zamówienia ${orderId}`);
+        return { cancelled: 0 };
+    }
+
+    const orderIds = orders.map(o => o.id);
+
+    // Anuluj zlecenia produkcyjne
+    const { error: updateOrdersError } = await supabase
+        .from('ProductionOrder')
+        .update({ status: 'cancelled' })
+        .in('id', orderIds);
+
+    if (updateOrdersError) {
+        console.error('[cancelProductionOrdersForOrder] Błąd anulowania zleceń:', updateOrdersError);
+        throw new Error('Błąd anulowania zleceń produkcyjnych');
+    }
+
+    // Anuluj operacje powiązane z tymi zleceniami
+    const { error: updateOpsError } = await supabase
+        .from('ProductionOperation')
+        .update({ status: 'cancelled' })
+        .in('productionorderid', orderIds)
+        .in('status', ['pending', 'active']);
+
+    if (updateOpsError) {
+        console.error('[cancelProductionOrdersForOrder] Błąd anulowania operacji:', updateOpsError);
+        // Nie przerywamy - zlecenia już anulowane
+    }
+
+    console.log(`[cancelProductionOrdersForOrder] Anulowano ${orders.length} zleceń dla zamówienia ${orderId}`);
+    return { cancelled: orders.length };
+}
+
+// POST /api/production/orders/from-order/:orderId - tworzenie zleceń z zamówienia (ręczne)
+app.post('/api/production/orders/from-order/:orderId', requireRole(['ADMIN', 'PRODUCTION']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { orderId } = req.params;
+        const { priority, notes } = req.body;
+        const userId = req.cookies.auth_id;
+
+        // Pobierz zamówienie z pozycjami
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .select(`
+                *,
+                items:OrderItem(
+                    id, productId, quantity, productionNotes,
+                    product:Product(id, name, code, productionPath)
+                )
+            `)
+            .eq('id', orderId)
+            .single();
+
+        if (orderError || !order) {
+            console.error('[POST /api/production/orders/from-order] Błąd pobierania zamówienia:', orderError);
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+        }
+
+        if (!order.items || order.items.length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Zamówienie nie ma pozycji' });
+        }
+
+        // Pobierz wszystkie ścieżki produkcyjne (do mapowania kodów)
+        const { data: allPaths } = await supabase
+            .from('ProductionPath')
+            .select('*')
+            .eq('isActive', true);
+
+        const pathsByCode = {};
+        (allPaths || []).forEach(p => { pathsByCode[p.code] = p; });
+
+        const createdOrders = [];
+        const errors = [];
+
+        // Dla każdej pozycji zamówienia
+        for (const item of order.items) {
+            const product = item.product;
+            if (!product) continue;
+
+            // Pobierz expression ścieżki z produktu
+            const pathExpression = product.productionPath || product.productionpath;
+            
+            if (!pathExpression) {
+                errors.push({ itemId: item.id, productCode: product.code, error: 'Brak ścieżki produkcyjnej' });
+                continue;
+            }
+
+            // Parsuj expression
+            const parsed = parseProductionPathExpression(pathExpression);
+
+            if (parsed.branches.length === 0) {
+                errors.push({ itemId: item.id, productCode: product.code, error: 'Nieprawidłowe wyrażenie ścieżki' });
+                continue;
+            }
+
+            // Dla każdej gałęzi tworzymy osobne zlecenie
+            for (let branchIndex = 0; branchIndex < parsed.branches.length; branchIndex++) {
+                const branch = parsed.branches[branchIndex];
+                const branchCode = parsed.branches.length > 1 ? String.fromCharCode(65 + branchIndex) : null; // A, B, C...
+
+                try {
+                    const baseOrderNumber = order.orderNumber || order.ordernumber;
+                    const orderNumber = await generateProductionOrderNumber(supabase, orderId, baseOrderNumber);
+
+                    // Znajdź pierwszą ścieżkę w sekwencji (dla przypisania productionPathId)
+                    const firstPathCode = branch.pathCodes[0];
+                    const firstPath = pathsByCode[firstPathCode];
+
+                    // Utwórz zlecenie produkcyjne
+                    const { data: prodOrder, error: prodError } = await supabase
+                        .from('ProductionOrder')
+                        .insert({
+                            ordernumber: orderNumber,
+                            sourceorderid: orderId,
+                            sourceorderitemid: item.id,
+                            productid: product.id,
+                            productionpathexpression: pathExpression,
+                            branchcode: branchCode,
+                            quantity: item.quantity,
+                            priority: priority || 3,
+                            status: 'planned',
+                            productionpathid: firstPath?.id || null,
+                            productionnotes: notes || item.productionNotes || null,
+                            createdby: userId
+                        })
+                        .select()
+                        .single();
+
+                    if (prodError) {
+                        console.error('[POST /api/production/orders/from-order] Błąd tworzenia zlecenia:', prodError);
+                        errors.push({ itemId: item.id, productCode: product.code, branchCode, error: prodError.message });
+                        continue;
+                    }
+
+                    // Utwórz operacje dla każdej ścieżki w sekwencji
+                    let operationNumber = 1;
+                    for (const pathCode of branch.pathCodes) {
+                        const pathDef = pathsByCode[pathCode];
+                        
+                        if (!pathDef) {
+                            // Ścieżka nie zdefiniowana w systemie - tworzymy jedną generyczną operację
+                            await supabase
+                                .from('ProductionOperation')
+                                .insert({
+                                    productionorderid: prodOrder.id,
+                                    operationnumber: operationNumber++,
+                                    branchcode: branchCode,
+                                    phase: 'OP',
+                                    operationtype: `path_${pathCode}`,
+                                    status: 'pending'
+                                });
+                        } else {
+                            // Mamy definicję ścieżki - tworzymy operacje wg jej kroków
+                            const operations = pathDef.operations || [];
+                            for (const op of operations) {
+                                await supabase
+                                    .from('ProductionOperation')
+                                    .insert({
+                                        productionorderid: prodOrder.id,
+                                        operationnumber: operationNumber++,
+                                        branchcode: branchCode,
+                                        phase: op.phase || 'OP',
+                                        operationtype: op.operationType || op.operationtype || 'unknown',
+                                        plannedtime: op.estimatedTimeMin || null,
+                                        status: 'pending'
+                                    });
+                            }
+                        }
+                    }
+
+                    createdOrders.push(prodOrder);
+                } catch (branchError) {
+                    console.error('[POST /api/production/orders/from-order] Błąd gałęzi:', branchError);
+                    errors.push({ itemId: item.id, productCode: product.code, branchCode, error: branchError.message });
+                }
+            }
+        }
+
+        return res.status(201).json({
+            status: 'success',
+            message: `Utworzono ${createdOrders.length} zleceń produkcyjnych`,
+            data: {
+                orders: createdOrders,
+                errors: errors.length > 0 ? errors : undefined
+            }
+        });
+    } catch (error) {
+        console.error('[POST /api/production/orders/from-order] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// GET /api/production/orders - lista zleceń produkcyjnych z postępem operacji
+app.get('/api/production/orders', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT', 'SALES_REP']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { status, sourceOrderId, priority, limit = 100 } = req.query;
+
+        let query = supabase
+            .from('ProductionOrder')
+            .select(`
+                *,
+                product:Product(id, name, code, identifier),
+                sourceOrder:Order(id, orderNumber, customerId, customer:Customer(id, name))
+            `)
+            .order('priority', { ascending: true })
+            .order('createdat', { ascending: false })
+            .limit(parseInt(limit, 10));
+
+        if (status) {
+            query = query.eq('status', status);
+        }
+        if (sourceOrderId) {
+            query = query.eq('sourceorderid', sourceOrderId);
+        }
+        if (priority) {
+            query = query.eq('priority', parseInt(priority, 10));
+        }
+
+        const { data: orders, error } = await query;
+
+        if (error) {
+            console.error('[GET /api/production/orders] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania zleceń' });
+        }
+
+        // Pobierz operacje dla wszystkich zleceń, żeby obliczyć postęp
+        const orderIds = (orders || []).map(o => o.id);
+        let operationsMap = {};
+
+        if (orderIds.length > 0) {
+            const { data: operations, error: opsError } = await supabase
+                .from('ProductionOperation')
+                .select('id, productionorderid, status')
+                .in('productionorderid', orderIds);
+
+            if (!opsError && operations) {
+                // Grupuj operacje po zleceniu
+                operations.forEach(op => {
+                    const orderId = op.productionorderid;
+                    if (!operationsMap[orderId]) {
+                        operationsMap[orderId] = { total: 0, completed: 0 };
+                    }
+                    operationsMap[orderId].total++;
+                    if (op.status === 'completed') {
+                        operationsMap[orderId].completed++;
+                    }
+                });
+            }
+        }
+
+        // Dodaj informacje o postępie do każdego zlecenia
+        const ordersWithProgress = (orders || []).map(order => {
+            const ops = operationsMap[order.id] || { total: 0, completed: 0 };
+            const progressPercent = ops.total > 0 ? Math.round((ops.completed / ops.total) * 100) : 0;
+            return {
+                ...order,
+                progress: {
+                    completed: ops.completed,
+                    total: ops.total,
+                    percent: progressPercent,
+                    label: `${ops.completed}/${ops.total}`
+                }
+            };
+        });
+
+        return res.json({ status: 'success', data: ordersWithProgress });
+    } catch (error) {
+        console.error('[GET /api/production/orders] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
 

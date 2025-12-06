@@ -1943,7 +1943,105 @@ OrderItem (
 );
 ```
 
-Na start można operować tylko na poziomie `Order` (globalnie dla zamówienia).
+Na start można operować tylko na poziomie `Order` (globalnie dla zamówienia),
+jednak docelowo zamówienia **tylko na projekty** będą przeniesione do osobnego
+bytu `GraphicRequest` (patrz 9.2.3), aby nie mieszać ich z numeracją i raportami
+zamówień produkcyjnych.
+
+### 9.2.3 Byt `GraphicRequest` – osobna numeracja zleceń graficznych
+
+Ponieważ dział sprzedaży nie musi widzieć zleceń **tylko na projekty** w swoim
+zestawieniu zamówień, a jednocześnie chcemy zachować ciągłą numerację
+zamówień produkcyjnych, wprowadzamy osobny byt `GraphicRequest`.
+
+Główne założenia:
+
+- `Order` – reprezentuje zamówienia handlowe / produkcyjne (produkty, produkty + projekty).
+  Ma dotychczasową numerację, np. `2025/15/JRO`. Widziany w modułach sprzedaży
+  i produkcji.
+- `GraphicRequest` – reprezentuje zlecenia **tylko na projekty** (bez rezerwacji
+  mocy produkcyjnych). Ma osobną numerację, np. `G-2025/015`. Widoczny
+  głównie w module Grafiki i ewentualnym widoku „Zlecenia graficzne” dla
+  handlowców.
+
+Przykładowy szkic tabel:
+
+```sql
+CREATE TABLE public."GraphicRequest" (
+  id serial PRIMARY KEY,
+
+  requestNumber varchar(30) UNIQUE NOT NULL,
+  -- Np. G-2025/015/JRO (osobna sekwencja niezależna od Order.orderNumber)
+
+  customerId integer REFERENCES "Customer"(id) ON DELETE SET NULL,
+  sourceType varchar(30) NOT NULL DEFAULT 'manual',
+  -- manual, from_order
+
+  sourceOrderId integer REFERENCES "Order"(id) ON DELETE SET NULL,
+  -- opcjonalne powiązanie, jeśli zlecenie powstało z istniejącego zamówienia
+
+  status varchar(30) NOT NULL DEFAULT 'open',
+  -- open, in_progress, completed, cancelled
+
+  priority integer NOT NULL DEFAULT 3,
+  dueDate timestamp,
+
+  createdBy text REFERENCES "User"(id) ON DELETE SET NULL,
+  createdAt timestamp DEFAULT CURRENT_TIMESTAMP,
+  updatedAt timestamp DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE public."GraphicRequestItem" (
+  id serial PRIMARY KEY,
+
+  "graphicRequestId" integer NOT NULL
+    REFERENCES "GraphicRequest"(id) ON DELETE CASCADE,
+
+  "orderItemId" integer REFERENCES "OrderItem"(id) ON DELETE SET NULL,
+  -- jeśli pozycja projektowa jest powiązana z konkretną pozycją zamówienia
+
+  productId integer REFERENCES "Product"(id) ON DELETE SET NULL,
+  description text NOT NULL,
+  -- opis od handlowca: co dorobić, jakie zdjęcia, jakie warianty
+
+  requiresProduction boolean NOT NULL DEFAULT false,
+  -- czy docelowo z tych projektów ma powstać produkcja
+
+  quantity integer,
+  city varchar(100),
+  kiReference text,
+
+  createdAt timestamp DEFAULT CURRENT_TIMESTAMP,
+  updatedAt timestamp DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Relacja z `GraphicTask`:
+
+- `GraphicTask` reprezentuje **konkretne zadanie grafika**.
+- Zadanie może być powiązane bezpośrednio z `Order` / `OrderItem` **lub**
+  z `GraphicRequest` / `GraphicRequestItem`.
+
+Proponowane rozszerzenia `GraphicTask`:
+
+```sql
+ALTER TABLE public."GraphicTask" ADD COLUMN "graphicRequestId" integer
+  REFERENCES "GraphicRequest"(id) ON DELETE SET NULL;
+
+ALTER TABLE public."GraphicTask" ADD COLUMN "graphicRequestItemId" integer
+  REFERENCES "GraphicRequestItem"(id) ON DELETE SET NULL;
+```
+
+Zasady użycia:
+
+- Zamówienia produkcyjne (`Order.orderType = 'PRODUCTS_ONLY'` lub
+  `'PRODUCTS_AND_PROJECTS'`) → zadania grafika (`GraphicTask`) powiązane są
+  z `Order` / `OrderItem`.
+- Zlecenia **tylko na projekty** → tworzone jest `GraphicRequest` +
+  `GraphicRequestItem`, a `GraphicTask` wskazuje na te rekordy.
+- Moduł sprzedaży w widoku „Zamówienia” operuje wyłącznie na `Order`, dzięki
+  czemu numeracja zamówień pozostaje ciągła i nie jest „dziurawiona” przez
+  zlecenia czysto graficzne.
 
 ---
 

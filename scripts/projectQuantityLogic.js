@@ -221,10 +221,18 @@ function formatResult(result) {
     return `✓ Łącznie sztuk: ${result.totalQuantity}\n${projectsStr}`;
 }
 
+// Upewnij się, że logika jest dostępna globalnie w przeglądarce
+if (typeof window !== 'undefined') {
+  window.ProjectQuantityLogic = {
+    computePerProjectQuantities,
+    parseProjects,
+    formatResult
+  };
+}
+
 // Eksport dla modułów ES6
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { computePerProjectQuantities, parseProjects, formatResult };
 }
 
-// Eksport dla ES6 modules (import/export)
 export { computePerProjectQuantities, parseProjects, formatResult };

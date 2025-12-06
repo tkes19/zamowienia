@@ -232,6 +232,7 @@ cd "C:\Users\Tomek\OneDrive\000 CURSOR\ZAMÓWIENIA"
 git add .
 git commit -m "Opis zmian"
 git push
+cd backend
 
 w domu
 cd "C:\Users\kocie\OneDrive\000 CURSOR\ZAMÓWIENIA"
@@ -239,6 +240,7 @@ git status
 git add backend/server.js scripts/app.js README.md
 git commit -m "fix: proxy obrazków galerii dla HTTPS"
 git push
+cd backend
 
 
 

@@ -97,6 +97,32 @@
                     <i class="fas fa-link w-5"></i>
                     <span>Mapowanie produktów</span>
                 </a>
+                
+                <!-- Sekcja Produkcja -->
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <p class="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Produkcja</p>
+                    <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-rooms">
+                        <i class="fas fa-door-open w-5"></i>
+                        <span>Pokoje</span>
+                    </a>
+                    <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-work-centers">
+                        <i class="fas fa-cogs w-5"></i>
+                        <span>Gniazda</span>
+                    </a>
+                    <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-work-stations">
+                        <i class="fas fa-tools w-5"></i>
+                        <span>Maszyny</span>
+                    </a>
+                    <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-paths">
+                        <i class="fas fa-route w-5"></i>
+                        <span>Ścieżki</span>
+                    </a>
+                    <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-orders">
+                        <i class="fas fa-clipboard-list w-5"></i>
+                        <span>Zlecenia</span>
+                    </a>
+                </div>
+                
                 <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="settings">
                     <i class="fas fa-cog w-5"></i>
                     <span>Ustawienia</span>
@@ -271,6 +297,7 @@
                                     <th class="p-4 sortable-header cursor-pointer hover:bg-gray-100" data-sort="status">
                                         Status <i class="fas fa-sort sort-icon ml-1 opacity-50"></i>
                                     </th>
+                                    <th class="p-4">Produkcja</th>
                                     <th class="p-4 text-right sortable-header cursor-pointer hover:bg-gray-100" data-sort="total">
                                         Suma <i class="fas fa-sort sort-icon ml-1 opacity-50"></i>
                                     </th>
@@ -279,7 +306,7 @@
                             </thead>
                             <tbody id="orders-table-body" class="divide-y divide-gray-100 text-sm">
                                 <tr>
-                                    <td colspan="8" class="p-8 text-center text-gray-500">
+                                    <td colspan="9" class="p-8 text-center text-gray-500">
                                         <div class="flex flex-col items-center gap-2">
                                             <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
                                             <span>Ładowanie zamówień...</span>
@@ -869,6 +896,372 @@
                 </div>
             </div>
             <!-- Koniec widoku: Mapowanie produktów -->
+
+            <!-- Widok: Produkcja - Pokoje -->
+            <div id="view-production-rooms" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Pokoje produkcyjne</h2>
+                        <p class="text-gray-600 mt-1">Zarządzaj pokojami i halami produkcyjnymi</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="new-production-room-btn" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj pokój
+                        </button>
+                        <button id="refresh-production-rooms-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Statystyki -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-amber-100 rounded-lg">
+                                <i class="fas fa-door-open text-amber-600 text-xl"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-sm font-medium">Pokoje</div>
+                                <div class="text-2xl font-bold text-amber-600" id="prod-stats-rooms">0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-blue-100 rounded-lg">
+                                <i class="fas fa-cogs text-blue-600 text-xl"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-sm font-medium">Gniazda</div>
+                                <div class="text-2xl font-bold text-blue-600" id="prod-stats-work-centers">0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-green-100 rounded-lg">
+                                <i class="fas fa-tools text-green-600 text-xl"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-sm font-medium">Maszyny</div>
+                                <div class="text-2xl font-bold text-green-600" id="prod-stats-work-stations">0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-purple-100 rounded-lg">
+                                <i class="fas fa-check-circle text-purple-600 text-xl"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-sm font-medium">Dostępne</div>
+                                <div class="text-2xl font-bold text-purple-600" id="prod-stats-available">0</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Siatka pokoi -->
+                <div id="production-rooms-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                        <i class="fas fa-spinner fa-spin text-4xl mb-4"></i>
+                        <p class="text-lg">Ładowanie pokoi produkcyjnych...</p>
+                    </div>
+                </div>
+
+                <!-- Informacje -->
+                <div class="mt-8 bg-amber-50 border border-amber-200 rounded-xl p-6">
+                    <h3 class="text-lg font-semibold text-amber-800 mb-2 flex items-center gap-2">
+                        <i class="fas fa-info-circle"></i> Struktura produkcji
+                    </h3>
+                    <ul class="text-sm text-amber-700 space-y-1 list-disc list-inside">
+                        <li><strong>Pokój</strong> – fizyczne pomieszczenie (np. hala laserów, pokój UV)</li>
+                        <li><strong>Gniazdo</strong> – logiczna grupa maszyn tego samego typu w pokoju</li>
+                        <li><strong>Maszyna</strong> – konkretne stanowisko robocze (np. Laser CO2 #1)</li>
+                    </ul>
+                </div>
+            </div>
+            <!-- Koniec widoku: Produkcja - Pokoje -->
+
+            <!-- Widok: Produkcja - Gniazda -->
+            <div id="view-production-work-centers" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Gniazda produkcyjne</h2>
+                        <p class="text-gray-600 mt-1">Logiczne grupy maszyn w pokojach</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="new-work-center-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj gniazdo
+                        </button>
+                        <button id="refresh-work-centers-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Filtr po pokoju -->
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
+                    <div class="flex items-center gap-4">
+                        <label class="text-sm font-medium text-gray-700">Filtruj po pokoju:</label>
+                        <select id="work-centers-room-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                            <option value="">Wszystkie pokoje</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Siatka gniazd -->
+                <div id="work-centers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                        <i class="fas fa-spinner fa-spin text-4xl mb-4"></i>
+                        <p class="text-lg">Ładowanie gniazd produkcyjnych...</p>
+                    </div>
+                </div>
+            </div>
+            <!-- Koniec widoku: Produkcja - Gniazda -->
+
+            <!-- Widok: Produkcja - Maszyny -->
+            <div id="view-production-work-stations" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Maszyny i stanowiska</h2>
+                        <p class="text-gray-600 mt-1">Zarządzaj maszynami produkcyjnymi</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="new-work-station-btn" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj maszynę
+                        </button>
+                        <button id="refresh-work-stations-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Filtry -->
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
+                    <div class="flex flex-wrap items-center gap-4">
+                        <div>
+                            <label class="text-sm font-medium text-gray-700 mr-2">Gniazdo:</label>
+                            <select id="work-stations-center-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-700">
+                                <option value="">Wszystkie gniazda</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-sm font-medium text-gray-700 mr-2">Status:</label>
+                            <select id="work-stations-status-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-700">
+                                <option value="">Wszystkie statusy</option>
+                                <option value="available">🟢 Dostępna</option>
+                                <option value="in_use">🟠 W użyciu</option>
+                                <option value="maintenance">🔵 Konserwacja</option>
+                                <option value="breakdown">🔴 Awaria</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Siatka maszyn -->
+                <div id="work-stations-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                        <i class="fas fa-spinner fa-spin text-4xl mb-4"></i>
+                        <p class="text-lg">Ładowanie maszyn...</p>
+                    </div>
+                </div>
+
+                <!-- Legenda statusów -->
+                <div class="mt-6 flex flex-wrap gap-6 justify-center text-sm">
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded-full bg-green-500"></div>
+                        <span class="text-gray-600">Dostępna</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded-full bg-amber-500"></div>
+                        <span class="text-gray-600">W użyciu</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded-full bg-blue-500"></div>
+                        <span class="text-gray-600">Konserwacja</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded-full bg-red-500"></div>
+                        <span class="text-gray-600">Awaria</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Koniec widoku: Produkcja - Maszyny -->
+
+            <!-- Widok: Produkcja - Ścieżki -->
+            <div id="view-production-paths" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Ścieżki produkcyjne</h2>
+                        <p class="text-gray-500 mt-1">Definiuj sekwencje operacji technologicznych</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="new-production-path-btn" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj ścieżkę
+                        </button>
+                        <button id="refresh-production-paths-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Tabela ścieżek -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kod</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nazwa</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Operacje</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                                <th class="px-6 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Akcje</th>
+                            </tr>
+                        </thead>
+                        <tbody id="production-paths-tbody" class="divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                                    <p>Ładowanie ścieżek...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Legenda typów operacji -->
+                <div class="mt-6 flex flex-wrap gap-4 text-sm">
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">PREP</span>
+                        <span class="text-gray-600">Przygotowanie</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs">OP</span>
+                        <span class="text-gray-600">Operacja</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">PACK</span>
+                        <span class="text-gray-600">Pakowanie</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Koniec widoku: Produkcja - Ścieżki -->
+
+            <!-- Widok: Zlecenia produkcyjne -->
+            <div id="view-production-orders" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Zlecenia produkcyjne</h2>
+                        <p class="text-gray-500 mt-1">Monitoruj postęp realizacji zleceń</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="refresh-production-orders-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Filtry -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
+                    <div class="flex flex-wrap gap-4 items-center">
+                        <div class="flex-1 min-w-[200px]">
+                            <input type="text" id="prod-orders-search" placeholder="Szukaj po numerze zlecenia lub zamówienia..." class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
+                        </div>
+                        <div>
+                            <select id="prod-orders-status-filter" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                <option value="">Wszystkie statusy</option>
+                                <option value="planned">Zaplanowane</option>
+                                <option value="approved">Zatwierdzone</option>
+                                <option value="in_progress">W realizacji</option>
+                                <option value="completed">Zakończone</option>
+                                <option value="cancelled">Anulowane</option>
+                            </select>
+                        </div>
+                        <div>
+                            <select id="prod-orders-priority-filter" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500">
+                                <option value="">Wszystkie priorytety</option>
+                                <option value="1">Pilne (1)</option>
+                                <option value="2">Wysokie (2)</option>
+                                <option value="3">Normalne (3)</option>
+                                <option value="4">Niskie (4)</option>
+                                <option value="5">Bardzo niskie (5)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statystyki -->
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                        <div class="text-2xl font-bold text-gray-800" id="prod-orders-stat-total">0</div>
+                        <div class="text-sm text-gray-500">Wszystkich</div>
+                    </div>
+                    <div class="bg-blue-50 rounded-xl shadow-sm border border-blue-200 p-4">
+                        <div class="text-2xl font-bold text-blue-700" id="prod-orders-stat-planned">0</div>
+                        <div class="text-sm text-blue-600">Zaplanowanych</div>
+                    </div>
+                    <div class="bg-amber-50 rounded-xl shadow-sm border border-amber-200 p-4">
+                        <div class="text-2xl font-bold text-amber-700" id="prod-orders-stat-in-progress">0</div>
+                        <div class="text-sm text-amber-600">W realizacji</div>
+                    </div>
+                    <div class="bg-green-50 rounded-xl shadow-sm border border-green-200 p-4">
+                        <div class="text-2xl font-bold text-green-700" id="prod-orders-stat-completed">0</div>
+                        <div class="text-sm text-green-600">Zakończonych</div>
+                    </div>
+                    <div class="bg-red-50 rounded-xl shadow-sm border border-red-200 p-4">
+                        <div class="text-2xl font-bold text-red-700" id="prod-orders-stat-cancelled">0</div>
+                        <div class="text-sm text-red-600">Anulowanych</div>
+                    </div>
+                </div>
+
+                <!-- Tabela zleceń -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nr zlecenia</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Zamówienie</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Produkt</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Ilość</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Priorytet</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Postęp</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Utworzono</th>
+                            </tr>
+                        </thead>
+                        <tbody id="production-orders-tbody" class="divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="8" class="px-6 py-12 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                                    <p>Ładowanie zleceń...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Legenda statusów -->
+                <div class="mt-6 flex flex-wrap gap-4 text-sm">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+                        <span class="text-gray-600">Zaplanowane</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-amber-500"></span>
+                        <span class="text-gray-600">W realizacji</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-green-500"></span>
+                        <span class="text-gray-600">Zakończone</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-red-500"></span>
+                        <span class="text-gray-600">Anulowane</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Koniec widoku: Zlecenia produkcyjne -->
         </main>
     </div>
 
@@ -1181,6 +1574,59 @@
                     <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
                         <i class="fas fa-save"></i>
                         <span>Utwórz użytkownika</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal ścieżki produkcyjnej -->
+    <div id="production-path-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl border border-gray-200 max-h-[90vh] overflow-hidden flex flex-col">
+            <div class="flex justify-between items-center px-6 py-4 border-b">
+                <h3 id="production-path-modal-title" class="text-lg font-semibold text-gray-800">Nowa ścieżka produkcyjna</h3>
+                <button id="production-path-modal-close" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="production-path-form" class="px-6 py-4 space-y-4 overflow-y-auto flex-1">
+                <input type="hidden" name="id" value="">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Kod ścieżki *</label>
+                        <input type="text" name="code" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="np. 2, 2.1, 5">
+                        <p class="mt-1 text-xs text-gray-500">Unikalny kod zgodny z arkuszem technologicznym</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Nazwa *</label>
+                        <input type="text" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="np. Solvent z żywicą">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Opis</label>
+                    <textarea name="description" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Opcjonalny opis ścieżki..."></textarea>
+                </div>
+
+                <!-- Operacje -->
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="block text-sm font-medium text-gray-700">Operacje *</label>
+                        <button type="button" id="add-operation-btn" class="text-sm text-amber-600 hover:text-amber-700 flex items-center gap-1">
+                            <i class="fas fa-plus"></i> Dodaj operację
+                        </button>
+                    </div>
+                    <div id="operations-container" class="space-y-3">
+                        <!-- Operacje będą dodawane dynamicznie -->
+                    </div>
+                    <p class="mt-2 text-xs text-gray-500">Dodaj kolejne kroki technologiczne w tej ścieżce</p>
+                </div>
+
+                <div id="production-path-form-error" class="text-sm text-red-600 hidden"></div>
+                <div class="flex justify-end gap-3 pt-2 border-t mt-4">
+                    <button type="button" id="production-path-form-cancel" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Anuluj</button>
+                    <button type="submit" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center gap-2">
+                        <i class="fas fa-save"></i>
+                        <span id="production-path-submit-text">Utwórz ścieżkę</span>
                     </button>
                 </div>
             </form>
