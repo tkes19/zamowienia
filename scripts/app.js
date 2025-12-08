@@ -41,6 +41,7 @@ let selectedTemplate = null;
 // Inicjalizacja elementów DOM
 const resultsBody = document.getElementById('results-body');
 const clientsLink = document.getElementById('clients-link');
+const productionLink = document.getElementById('production-link');
 const adminLink = document.getElementById('admin-link');
 const logoutBtn = document.getElementById('logout-btn');
 const cartBody = document.getElementById('cart-body');
@@ -1669,6 +1670,7 @@ async function submitOrder() {
         locationName: item.locationName || null,
         source: item.source || 'MIEJSCOWOSCI',
         productionNotes: item.itemNotes || null,  // Uwagi produkcyjne do pozycji
+        projectviewurl: item.projectViewUrl || null,  // Use URL captured when added to cart
         stockAtOrder,
         belowStock
       });
@@ -2655,7 +2657,41 @@ function renderResults(products) {
   });
 }
 
-function addToCart(product, quantity, projects, itemNotes = '') {
+// Build gallery URL with current product image for project view context
+function buildGalleryUrl() {
+  // Get current product slug from gallery selection
+  const currentProduct = galleryProductSelect?.value || '';
+  
+  console.log('[buildGalleryUrl] Current product:', currentProduct);
+  console.log('[buildGalleryUrl] Gallery files cache length:', galleryFilesCache.length);
+  
+  if (!currentProduct || !galleryFilesCache.length) {
+    console.log('[buildGalleryUrl] No product or empty cache');
+    // Fallback to base URL if no product or image found
+    return window.location.origin + window.location.pathname;
+  }
+  
+  // Find the product data in the cache array
+  const productData = galleryFilesCache.find(file => file.product === currentProduct);
+  console.log('[buildGalleryUrl] Found product data:', productData);
+  
+  if (!productData || !productData.url) {
+    console.log('[buildGalleryUrl] No product data or URL found');
+    // Fallback if no image URL found
+    return window.location.origin + window.location.pathname;
+  }
+  
+  // Return the proxied image URL (same as used in gallery preview)
+  const fullApiBase = GALLERY_API_BASE.startsWith('http') 
+    ? GALLERY_API_BASE 
+    : `${window.location.origin}${GALLERY_API_BASE}`;
+  const finalUrl = `${fullApiBase}/image?url=${encodeURIComponent(productData.url)}`;
+  console.log('[buildGalleryUrl] Final proxied URL:', finalUrl);
+  
+  return finalUrl;
+}
+
+function addToCart(product, quantity, projects = '', itemNotes = '') {
   if (!product) return;
 
   const rawStock = (product.stock !== undefined && product.stock !== null)
@@ -2729,6 +2765,7 @@ function addToCart(product, quantity, projects, itemNotes = '') {
     locationName,
     source,
     itemNotes: currentNotes,
+    projectViewUrl: buildGalleryUrl(),  // Capture gallery URL with filters when adding to cart
     stockAtOrder: stock,
     belowStock
   });
@@ -2797,6 +2834,7 @@ function addToCartWithQuantityBreakdown(product, computeResult, itemNotes = '') 
     locationName,
     source,
     itemNotes: currentNotes,
+    projectViewUrl: buildGalleryUrl(),  // Capture gallery URL with filters when adding to cart
     stockAtOrder: stock,
     belowStock
   });
@@ -4071,6 +4109,16 @@ function showUserNavigation(role) {
   
   if (clientsLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(role)) {
     clientsLink.style.display = 'flex';
+  }
+  
+  if (productionLink && ['ADMIN', 'PRODUCTION', 'OPERATOR'].includes(role)) {
+    productionLink.style.display = 'flex';
+  }
+  
+  // Panel grafika - dla grafików i adminów
+  const graphicsLink = document.getElementById('graphics-link');
+  if (graphicsLink && ['GRAPHICS', 'ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION'].includes(role)) {
+    graphicsLink.style.display = 'flex';
   }
   
   // Panel admina - tylko dla ADMIN

@@ -80,7 +80,8 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 - [ ] **Faza 1: Fundamenty produkcyjne**
   - [ ] Migracja bazodanowa: ProductionRoom, WorkCenter, WorkStation, ProductionPath, ProductionOrder, ProductionOperation
   - [ ] Backend API: zarządzanie pokojami, gniazdami, stanowiskami, ścieżkami
-  - [ ] Integracja: automatyczne zamowienie → zlecenie produkcyjne
+  - [ ] Integracja: automatyczne zamówienie → zlecenia produkcyjne (`ProductionOrder`) na podstawie ścieżek produkcji
+  - [ ] System numeracji zleceń `OrderNumber/NN` (np. `2025/40/ATU/01`) + automatyczne tworzenie/anulowanie zleceń przy zmianach statusu zamówienia (APPROVED/CANCELLED)
   - [ ] Podstawowy routing w panelu admina
 
 - [ ] **Faza 2: Panel operatora**

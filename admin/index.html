@@ -6,6 +6,7 @@
     <title>Panel Administratora - Rezon</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="../assets/vendor/fontawesome/all.min.css">
+    <link rel="stylesheet" href="../assets/styles.css">
     <style>
         /* Style dla tooltipa z dostępnymi miejscowościami */
         #available-cities-tooltip {
@@ -260,7 +261,7 @@
                         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
                         <input type="text" id="orders-search-input" placeholder="Szukaj po numerze, kliencie..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     </div>
-                    <div class="flex gap-2">
+                    <div class="flex gap-2 items-center">
                         <select id="orders-status-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszystkie statusy</option>
                             <option value="PENDING">Oczekujące</option>
@@ -274,6 +275,15 @@
                         <select id="orders-user-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszyscy handlowcy</option>
                         </select>
+                        <!-- Przełącznik widoku statusów -->
+                        <div class="flex items-center gap-1 ml-2 border border-gray-300 rounded-lg p-1 bg-gray-50" title="Widok zmiany statusu">
+                            <button id="status-view-pills" class="status-view-btn px-2 py-1 rounded text-xs font-medium transition-colors" title="Pigułki (szybkie klikanie)">
+                                <i class="fas fa-grip-horizontal"></i>
+                            </button>
+                            <button id="status-view-dropdown" class="status-view-btn px-2 py-1 rounded text-xs font-medium transition-colors" title="Lista rozwijana">
+                                <i class="fas fa-list"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -1223,16 +1233,18 @@
                                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nr zlecenia</th>
                                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Zamówienie</th>
                                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Produkt</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Ścieżka</th>
                                 <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Ilość</th>
-                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Priorytet</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Aktualny etap</th>
                                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Postęp</th>
                                 <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Utworzono</th>
+                                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Akcje</th>
                             </tr>
                         </thead>
                         <tbody id="production-orders-tbody" class="divide-y divide-gray-200">
                             <tr>
-                                <td colspan="8" class="px-6 py-12 text-center text-gray-400">
+                                <td colspan="10" class="px-6 py-12 text-center text-gray-400">
                                     <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
                                     <p>Ładowanie zleceń...</p>
                                 </td>
@@ -1552,7 +1564,8 @@
                         <option value="SALES_REP">Handlowiec</option>
                         <option value="WAREHOUSE">Magazyn</option>
                         <option value="SALES_DEPT">Dział Sprzedaży</option>
-                        <option value="PRODUCTION">Produkcja</option>
+                        <option value="PRODUCTION">Produkcja (Manager)</option>
+                        <option value="OPERATOR">Operator Produkcji</option>
                         <option value="GRAPHICS">Graficy</option>
                         <option value="NEW_USER">Nowy Użytkownik</option>
                     </select>
@@ -1563,6 +1576,13 @@
                         <option value="">Brak działu</option>
                     </select>
                     <p class="mt-1 text-xs text-gray-500">Opcjonalnie przypisz użytkownika do działu.</p>
+                </div>
+                <div id="production-room-field" class="hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Pokój produkcyjny</label>
+                    <select name="productionRoomId" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Brak przypisanego pokoju</option>
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500">Dla operatorów: określa widoczność zleceń.</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <input type="checkbox" name="isActive" id="field-user-isActive" class="h-4 w-4 text-blue-600 border-gray-300 rounded" checked>
@@ -1696,9 +1716,6 @@
         .print-table tbody tr:last-child td { border-bottom: none; }
         .print-total { text-align: right; font-size: 10px; font-weight: bold; color: #1f2937; margin-top: 6px; padding-top: 4px; border-top: 1px solid #d1d5db; }
         .print-footer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8px; color: #6b7280; text-align: center; }
-
-        /* Status select */
-        .order-status-select { appearance: none; cursor: pointer; }
     </style>
 
     <script src="admin.js"></script>

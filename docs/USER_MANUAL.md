@@ -193,11 +193,16 @@ Na wydruku obok lokalizacji widoczny jest skrót źródła:
 
 ### 5.3. Zmiana statusów
 
-Dozwolone przejścia:
-- PENDING → APPROVED (zatwierdzenie)
-- APPROVED → IN_PRODUCTION (przekazanie do produkcji)
-- SHIPPED → DELIVERED (potwierdzenie dostawy)
-- Dowolny → CANCELLED (anulowanie)
+Dozwolone przejścia (dla roli **SALES_DEPT**):
+
+- **PENDING → APPROVED** – zatwierdzenie zamówienia do realizacji,
+- **APPROVED → CANCELLED** – anulowanie jeszcze przed startem produkcji,
+- **IN_PRODUCTION → CANCELLED** – wyjątkowe anulowanie w trakcie produkcji (po uzgodnieniu z produkcją),
+- **READY → CANCELLED** – anulowanie tuż przed wysyłką,
+- **SHIPPED → DELIVERED** – potwierdzenie dostawy do klienta.
+
+Uwaga: dział sprzedaży **nie uruchamia produkcji** – przejście na `IN_PRODUCTION`
+wykonuje dział produkcji / operatorzy w panelu produkcyjnym.
 
 ---
 
@@ -360,6 +365,57 @@ WAREHOUSE wysyła → SHIPPED
     ↓
 SALES_DEPT potwierdza → DELIVERED
 ```
+
+### 9.3. Zlecenia produkcyjne – jak to działa
+
+Po zatwierdzeniu zamówienia (`APPROVED`) system automatycznie tworzy **zlecenia
+produkcyjne** na podstawie pozycji zamówienia i przypisanych ścieżek produkcji.
+
+- Dla każdego zamówienia (`Order`) numer wciąż wygląda tak samo, np.
+  `2025/40/ATU`.
+- Każde zlecenie produkcyjne (`ProductionOrder`) dostaje **numer związany z
+  tym zamówieniem** w formacie:
+
+  ```text
+  {numer zamówienia}/{NN}
+  np. 2025/40/ATU/01, 2025/40/ATU/02
+  ```
+
+  gdzie `{NN}` to kolejne zlecenie dla danego zamówienia (`01`, `02`, ...).
+
+Co ważne:
+
+- końcówka `/01`, `/02` **nie oznacza numeru działu ani ścieżki**, tylko
+  **kolejny numer zlecenia** powiązanego z zamówieniem;
+- informacja o tym, **jak produkt jest wykonywany** (które działy, jaka kolejność)
+  wynika ze **ścieżki produkcyjnej** przypisanej do produktu – to widzi
+  produkcja w swoim panelu.
+
+#### Automatyczne tworzenie zleceń
+
+Z punktu widzenia działu sprzedaży:
+
+- po zmianie statusu zamówienia na `APPROVED` system **sam tworzy zlecenia
+  produkcyjne**, nie trzeba klikać dodatkowych przycisków;
+- jeśli zlecenia dla danego zamówienia już istnieją (np. ktoś drugi ponownie
+  ustawi `APPROVED`), system **nie tworzy duplikatów**.
+
+#### Automatyczne anulowanie zleceń
+
+- jeśli zamówienie otrzyma status `CANCELLED`, powiązane z nim zlecenia
+  produkcyjne zostaną oznaczone jako `cancelled` (w miarę możliwości także ich
+  operacje techniczne);
+- dzięki temu produkcja i sprzedaż zawsze widzą spójny obraz – zamówienie
+  anulowane nie ma aktywnych zleceń na produkcji.
+
+#### Gdzie widać postęp produkcji
+
+- w **widoku zamówień w panelu admina** znajduje się kolumna „Produkcja” –
+  pokazuje postęp zleceń powiązanych z danym zamówieniem w formie np. `2/5`
+  (2 zakończone operacje na 5 zaplanowanych) oraz pasek postępu;
+- w **widoku „Zlecenia produkcyjne”** (zakładka w panelu admina → Produkcja →
+  Zlecenia) widać listę wszystkich zleceń z numerami `OrderNumber/NN`,
+  produktami, ilościami i szczegółowym postępem.
 
 ---
 

@@ -149,6 +149,16 @@ Rozszerzenia tabeli `Order` i (opcjonalnie) `OrderItem` pod moduł grafiki
 opisane są w `docs/SPEC_PRODUCTION_PANEL.md` (sekcja 9.2) i będą wdrażane w
 ramach wersji v2.x systemu.
 
+**Szacowanie czasu operacji (Time Estimation)**
+
+- Czas trwania poszczególnych operacji technologicznych jest **konfigurowalny** w edytorze ścieżki/operacji (moduł admina produkcji) poprzez:
+  - czas jednostkowy na sztukę (Tj),
+  - czas przygotowawczo‑zakończeniowy (TPZ),
+  - ewentualny bufor.
+- Wartości te zasilają pola `ProductionPath.estimatedTime`, `ProductionOrder.estimatedTime` oraz `ProductionOperation.plannedTime`.
+- Panel operatora **nie edytuje** tych czasów – wyłącznie je odczytuje i pokazuje szacowany czas na kafelkach zleceń / operacji.
+- Szczegółowy opis znajduje się w `SPEC_PRODUCTION_PANEL.md`, sekcja **6. System Szacowania Czasów Produkcyjnych**.
+
 ### 5.5. Projekty galerii i mapowanie produktów
 
 ```sql
@@ -309,7 +319,7 @@ naprawiane bez wyświetlania komunikatów błędu użytkownikowi.
 | Rola | Dozwolone przejścia |
 |------|---------------------|
 | SALES_REP | PENDING → CANCELLED |
-| SALES_DEPT | PENDING → APPROVED, APPROVED → IN_PRODUCTION, SHIPPED → DELIVERED, * → CANCELLED |
+| SALES_DEPT | PENDING → APPROVED, SHIPPED → DELIVERED, * → CANCELLED |
 | PRODUCTION | APPROVED → IN_PRODUCTION, IN_PRODUCTION → READY |
 | WAREHOUSE | READY → SHIPPED |
 | ADMIN | Wszystkie przejścia |

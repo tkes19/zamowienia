@@ -18,6 +18,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const orderDetailsTitle = document.getElementById('order-details-title');
     const orderDetailsContent = document.getElementById('order-details-content');
     const exportCsvBtn = document.getElementById('export-csv-btn');
+    // Product Image Modal elements
+    const productImageModal = document.getElementById('product-image-modal');
+    const productImageClose = document.getElementById('product-image-close');
+    const productImageContent = document.getElementById('product-image-content');
+    const productImageTitle = document.getElementById('product-image-title');
+    const productImageDetails = document.getElementById('product-image-details');
+    const productImageDownload = document.getElementById('product-image-download');
+    const productImageZoom = document.getElementById('product-image-zoom');
     const printPreviewModal = document.getElementById('print-preview-modal');
     const printPreviewContent = document.getElementById('print-preview-content');
     const printPreviewPrintBtn = document.getElementById('print-preview-print');
@@ -143,6 +151,42 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Tryb widoku statusów: 'pills' (domyślny) lub 'dropdown' (lista rozwijana)
+    let ordersStatusViewMode = localStorage.getItem('ordersStatusViewMode') || 'pills';
+    const ordersStatusViewSwitchBtn = document.getElementById('orders-status-view-switch');
+    const ordersStatusViewDropdownBtn = document.getElementById('orders-status-view-dropdown');
+
+    function updateOrdersStatusViewButtons() {
+        if (ordersStatusViewSwitchBtn) {
+            ordersStatusViewSwitchBtn.classList.toggle('active', ordersStatusViewMode === 'pills');
+        }
+        if (ordersStatusViewDropdownBtn) {
+            ordersStatusViewDropdownBtn.classList.toggle('active', ordersStatusViewMode === 'dropdown');
+        }
+    }
+
+    function initOrdersStatusViewToggle() {
+        updateOrdersStatusViewButtons();
+
+        if (ordersStatusViewSwitchBtn) {
+            ordersStatusViewSwitchBtn.addEventListener('click', () => {
+                ordersStatusViewMode = 'pills';
+                localStorage.setItem('ordersStatusViewMode', 'pills');
+                updateOrdersStatusViewButtons();
+                renderOrdersTable();
+            });
+        }
+
+        if (ordersStatusViewDropdownBtn) {
+            ordersStatusViewDropdownBtn.addEventListener('click', () => {
+                ordersStatusViewMode = 'dropdown';
+                localStorage.setItem('ordersStatusViewMode', 'dropdown');
+                updateOrdersStatusViewButtons();
+                renderOrdersTable();
+            });
+        }
+    }
+
     const STATUS_LABELS = {
         PENDING: 'Oczekujące',
         APPROVED: 'Zatwierdzone',
@@ -163,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
         CANCELLED: 'bg-red-100 text-red-800'
     };
 
-    const STATUS_SELECT_BASE = 'order-status-select rounded-full text-xs font-semibold border border-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 transition-colors cursor-pointer';
+    const STATUS_SELECT_BASE = 'order-status-select';
 
     // Mapowanie źródeł na skróty i kolory
     const SOURCE_LABELS = {
@@ -617,6 +661,28 @@ document.addEventListener('DOMContentLoaded', () => {
         orderDetailsClose.addEventListener('click', closeOrderDetails);
     }
 
+    // Product Image Modal event listeners
+    if (productImageClose) {
+        productImageClose.addEventListener('click', closeProductImage);
+    }
+    
+    if (productImageZoom) {
+        productImageZoom.addEventListener('click', toggleImageZoom);
+    }
+    
+    if (productImageDownload) {
+        productImageDownload.addEventListener('click', downloadImage);
+    }
+    
+    // Close modal on backdrop click
+    if (productImageModal) {
+        productImageModal.addEventListener('click', (e) => {
+            if (e.target === productImageModal) {
+                closeProductImage();
+            }
+        });
+    }
+
     logoutBtn.addEventListener('click', async () => {
         try {
             await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
@@ -808,12 +874,33 @@ document.addEventListener('DOMContentLoaded', () => {
             const canChangeStatus = allowedTransitions.length > 0;
             const statusClass = STATUS_CLASSES[order.status] || 'bg-gray-100 text-gray-800';
             const statusLabel = STATUS_LABELS[order.status] || order.status;
+            const statusLabelSafe = escapeHtml(statusLabel);
 
             const availableStatuses = [order.status, ...allowedTransitions]
                 .filter((status, index, arr) => arr.indexOf(status) === index);
 
-            const statusContent = canChangeStatus
-                ? `<div class="project-filter__switch order-status-switch" role="radiogroup" aria-label="Status zamówienia" onclick="event.stopPropagation()">
+            let statusContent;
+            if (!canChangeStatus) {
+                // Brak możliwości zmiany - statyczna pigułka o identycznym wyglądzie jak select
+                statusContent = `<span class="status-pill-static" data-status="${order.status}">${statusLabelSafe}</span>`;
+            } else if (ordersStatusViewMode === 'dropdown') {
+                // Widok listy rozwijanej - styl jak przycisk z wypełnionym tłem
+                statusContent = `
+                    <select class="${STATUS_SELECT_BASE}"
+                        data-status="${order.status}"
+                        data-order-id="${order.id}"
+                        data-original-status="${order.status}"
+                        onclick="event.stopPropagation()">
+                        ${availableStatuses.map(status => {
+                            const optionLabel = escapeHtml(STATUS_LABELS[status] || status);
+                            return `<option value="${status}" ${status === order.status ? 'selected' : ''}>${optionLabel}</option>`;
+                        }).join('')}
+                    </select>
+                `;
+            } else {
+                // Widok pigułek (domyślny)
+                statusContent = `
+                    <div class="project-filter__switch order-status-switch" role="radiogroup" aria-label="Status zamówienia" onclick="event.stopPropagation()">
                         ${availableStatuses.map(status => `
                             <button type="button"
                                 class="project-filter__option ${status === order.status ? 'project-filter__option--active' : ''}"
@@ -823,8 +910,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ${STATUS_LABELS[status] || status}
                             </button>
                         `).join('')}
-                   </div>`
-                : `<span class="px-3 py-0.5 rounded-full text-xs font-medium ${statusClass}">${statusLabel}</span>`;
+                    </div>
+                `;
+            }
 
             const userCell = showUserColumn 
                 ? `<td class="p-4">${userDisplaySafe}</td>`
@@ -1119,6 +1207,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 
                 // Tryb podglądu - zwykły tekst
+                const projectViewUrlDisplay = item.projectviewurl 
+                    ? `<button onclick="showProductImage('${item.projectviewurl}', '${item.Product?.name || ''}', '${item.Product?.identifier || ''}', '${item.locationName || ''}')" class="inline-flex items-center justify-center w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105" title="Pokaż podgląd produktu"><i class="fas fa-image text-sm"></i></button>`
+                    : '-';
+                
                 return `
                 <tr class="border-b border-indigo-100 hover:bg-indigo-100 transition-colors">
                     <td class="p-2 text-xs font-medium text-gray-800">${productLabelSafe}${belowStockBadge}</td>
@@ -1128,6 +1220,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplaySafe || '-'}</td>
                     <td class="p-2 text-xs text-gray-600 italic">${notesDisplaySafe || '-'}</td>
+                    <td class="p-2 text-xs text-center">${projectViewUrlDisplay}</td>
                 </tr>
                 `;
             }).join('');
@@ -1188,10 +1281,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <th class="p-2 text-right font-semibold text-gray-800 text-xs" style="width:12%">Wartość</th>
                                         <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:12%">Lokalizacja</th>
                                         <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:20%">Uwagi</th>
+                                        <th class="p-2 text-center font-semibold text-gray-800 text-xs" style="width:10%">Widok projektów</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${itemsHtml || '<tr><td colspan="7" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}
+                                    ${itemsHtml || '<tr><td colspan="8" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
@@ -1402,13 +1496,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Obsługa zmiany statusu inline (select w tabeli - pozostawiona dla kompatybilności)
+    // Obsługa zmiany statusu inline (select w tabeli)
     async function handleInlineStatusSelectChange(e) {
         const select = e.target;
         const orderId = select.dataset.orderId;
         const originalStatus = select.dataset.originalStatus;
         const newStatus = select.value;
 
+        // Natychmiast aktualizuj kolor przycisku
+        select.dataset.status = newStatus;
+        
         select.disabled = true;
         await changeOrderStatus(orderId, originalStatus, newStatus);
         select.disabled = false;
@@ -1588,10 +1685,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                         ${includePrices ? '<th style="text-align: right; font-size: 9px;">Cena j.</th><th style="text-align: right; font-size: 9px;">Wartość</th>' : ''}
                                         <th style="font-size: 9px;">Lokalizacja</th>
                                         ${isProductionOrder ? '<th style="font-size: 9px;">Uwagi produkcyjne</th>' : '<th style="font-size: 9px;">Uwagi</th>'}
+                                        <th style="font-size: 9px;">Widok projektów</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${itemsHtml || `<tr><td colspan="${includePrices ? 7 : 5}" style="text-align: center; color: #999;">Brak pozycji</td></tr>`}
+                                    ${itemsHtml || `<tr><td colspan="${includePrices ? 8 : 6}" style="text-align: center; color: #999;">Brak pozycji</td></tr>`}
                                 </tbody>
                             </table>
                         </div>
@@ -1770,6 +1868,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? `<div class="text-xs text-red-700 mt-1">Poniżej stanu${stockAtOrder !== null ? ` (stan: ${stockAtOrder})` : ''}</div>`
                     : '';
                 
+                const projectViewUrlDisplay = item.projectviewurl 
+                    ? `<button onclick="showProductImage('${item.projectviewurl}', '${item.Product?.name || ''}', '${item.Product?.identifier || ''}', '${item.locationName || ''}')" class="inline-flex items-center justify-center w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105" title="Pokaż podgląd produktu"><i class="fas fa-image text-sm"></i></button>`
+                    : '-';
+                
                 return `
                 <tr class="border-b">
                     <td class="p-3">${productLabel}${belowStockInfo}</td>
@@ -1778,6 +1880,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-3 text-right">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-3 text-right font-semibold">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
                     <td class="p-3">${item.locationName || '-'}</td>
+                    <td class="p-3 text-center">${projectViewUrlDisplay}</td>
                 </tr>
             `}).join('');
 
@@ -1825,10 +1928,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <th class="p-3 text-right">Cena j.</th>
                                         <th class="p-3 text-right">Wartość</th>
                                         <th class="p-3 text-left">Lokalizacja</th>
+                                        <th class="p-3 text-center">Widok projektów</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${itemsHtml || '<tr><td colspan="6" class="p-4 text-center text-gray-500">Brak pozycji</td></tr>'}
+                                    ${itemsHtml || '<tr><td colspan="7" class="p-4 text-center text-gray-500">Brak pozycji</td></tr>'}
                                 </tbody>
                             </table>
                         </div>
@@ -1893,7 +1997,7 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             SALES_DEPT: {
                 'PENDING': ['APPROVED', 'CANCELLED'],
-                'APPROVED': ['IN_PRODUCTION', 'CANCELLED'],
+                'APPROVED': ['CANCELLED'], // Usunięte IN_PRODUCTION - to rola produkcji
                 'IN_PRODUCTION': ['CANCELLED'],
                 'READY': ['CANCELLED'],
                 'SHIPPED': ['DELIVERED']
@@ -2086,11 +2190,94 @@ document.addEventListener('DOMContentLoaded', () => {
         orderDetailsModal.classList.add('hidden');
     }
 
+    // Pokaż obrazek produktu w modalu
+    function showProductImage(imageUrl, productName = '', productIdentifier = '', locationName = '') {
+        console.log('[showProductImage] URL received:', imageUrl);
+        
+        if (!imageUrl) {
+            console.log('[showProductImage] No URL provided');
+            return;
+        }
+        
+        // Set product info in header
+        const title = productName || 'Podgląd produktu';
+        const details = [];
+        if (productIdentifier) details.push(`ID: ${productIdentifier}`);
+        if (locationName) details.push(`Lokalizacja: ${locationName}`);
+        
+        productImageTitle.textContent = title;
+        productImageDetails.textContent = details.join(' | ') || '';
+        
+        console.log('[showProductImage] Setting image src to:', imageUrl);
+        
+        // Clear previous handlers and set new ones with addEventListener
+        const newImage = new Image();
+        
+        newImage.addEventListener('load', function() {
+            console.log('[showProductImage] Image loaded successfully');
+            productImageContent.src = imageUrl;
+            productImageModal.classList.remove('hidden');
+        }, { once: true });
+        
+        newImage.addEventListener('error', function() {
+            console.error('[showProductImage] Failed to load image:', imageUrl);
+            showToast('Błąd ładowania obrazka produktu', 'error');
+        }, { once: true });
+        
+        // Start loading the image
+        newImage.src = imageUrl;
+        
+        // Reset zoom state
+        productImageContent.style.transform = 'scale(1)';
+        productImageContent.classList.remove('cursor-zoom-out');
+        productImageContent.classList.add('cursor-zoom-in');
+        productImageZoom.innerHTML = '<i class="fas fa-search-plus"></i>';
+    }
+
+    // Zoom functionality
+    let isZoomed = false;
+    function toggleImageZoom() {
+        if (isZoomed) {
+            productImageContent.style.transform = 'scale(1)';
+            productImageContent.classList.remove('cursor-zoom-out');
+            productImageContent.classList.add('cursor-zoom-in');
+            productImageZoom.innerHTML = '<i class="fas fa-search-plus"></i>';
+        } else {
+            productImageContent.style.transform = 'scale(1.5)';
+            productImageContent.classList.remove('cursor-zoom-in');
+            productImageContent.classList.add('cursor-zoom-out');
+            productImageZoom.innerHTML = '<i class="fas fa-search-minus"></i>';
+        }
+        isZoomed = !isZoomed;
+    }
+
+    // Download functionality
+    function downloadImage() {
+        const imageUrl = productImageContent.src;
+        const link = document.createElement('a');
+        link.href = imageUrl;
+        link.download = `produkt-${Date.now()}.jpg`;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // Zamknij modal obrazka produktu
+    function closeProductImage() {
+        productImageModal.classList.add('hidden');
+        productImageContent.src = '';
+    }
+
     // Eksport funkcji na window dla onclick w HTML
     window.printOrder = printOrder;
     window.togglePrintMenu = togglePrintMenu;
     window.saveOrderNotes = saveOrderNotes;
     window.editOrderStatus = editOrderStatus;
+    window.showProductImage = showProductImage;
+
+    // Inicjalizacja przełącznika widoku statusów
+    initOrdersStatusViewToggle();
 
     // Uruchomienie aplikacji
     init();

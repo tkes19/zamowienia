@@ -233,6 +233,17 @@ ON CONFLICT ("userId", role) DO NOTHING;
 - Aktualizacja statusu zamówienia przy zakończeniu produkcji
 - Sprawdzanie dostępności materiałów przed rozpoczęciem produkcji
 
+#### 2.3.1 Stan wdrożenia (2025-12-06)
+
+- Tabele `ProductionRoom`, `WorkCenter`, `WorkStation`, `ProductionPath`, `ProductionOrder`, `ProductionOperation` są utworzone w Supabase (migracje 20251205 i 20251206).
+- Backend posiada helpery `createProductionOrdersForOrder` i `cancelProductionOrdersForOrder` operujące na tych tabelach.
+- Endpoint `PATCH /api/orders/:id/status`:
+  - przy przejściu na `APPROVED` automatycznie tworzy zlecenia produkcyjne dla zamówienia,
+  - przy przejściu na `CANCELLED` automatycznie anuluje powiązane zlecenia produkcyjne.
+- W widoku zamówień backend oblicza pole `productionProgress` na podstawie `ProductionOrder` i `ProductionOperation`, które może być używane do wizualizacji postępu (paski postępu) w panelu.
+
+Docelowo (zgodnie z powyższą specyfikacją) przejście na `IN_PRODUCTION` może stać się głównym wyzwalaczem tworzenia zleceń, ale aktualna implementacja wykorzystuje status `APPROVED`.
+
 ---
 
 ## 3. API Backend (Express)
@@ -508,11 +519,61 @@ app.post('/api/production/operations/:operationId/start', async (req, res) => {
 
 ### 4.1 Panel Operatora (production.html)
 
+Panel operatora to główny interfejs dla osób wykonujących operacje produkcyjne. Został zbudowany w technologii Vanilla JS z real-time aktualizacjami przez WebSocket.
+
+#### 4.1.1 Funkcje UI/UX
+
+**Statystyki produkcyjne (górny pasek)**
+- Liczba zleceń w kolejce (nieprzypisanych)
+- Liczba aktywnych zleceń (w realizacji)
+- Liczba zleceń zakończonych dzisiaj
+
+**Toolbar (pod statystykami)**
+- **Przycisk odświeżania** - ręczne odświeżenie listy zleceń
+- **Przełącznik widoku** - kafelki → kompaktowy → lista
+- **Sortowanie**:
+  - ⚡ Priorytet (domyślne)
+  - 📌 Przypięte (przypięte zawsze na górze)
+  - 📦 Ilość ↑/↓
+  - 📅 Data
+- **Filtry szybkie** z etykietą "Filtry:":
+  - 🔥 **PILNE** - tylko zlecenia priorytet 1-2
+  - ⚡ **MAŁE** - tylko zlecenia ≤20 szt (szybkie do wykonania)
+  - 📌 **MOJE** - tylko przypięte zlecenia
+
+**Przypinanie zleceń**
+- Każde zlecenie ma przycisk pinezki (📍/📌) przy numerze
+- Kliknięcie przypina/zdejmuje zlecenie
+- Przypięte zlecenia mają żółtą ramkę i poświatę
+- Stan przypięć zapisywany w localStorage
+- Przypięte zawsze na górze listy (chyba że sortowanie po przypiętych)
+
+**Tryby widoku**
+- **Kafelki** (domyślny) - duże karty z pełnymi informacjami
+- **Kompaktowy** - mniejsze karty, więcej na ekranie
+- **Lista** - bardzo kompaktowy, tylko najważniejsze info w jednej linii
+
+**Szacowany czas operacji**
+- Obok ilości wyświetlany szacowany czas: ⏱️ ~25 min
+- Obliczany na podstawie `plannedTime` z operacji
+- Algorytm: `czas = TPZ + ilość × czas_jednostkowy`
+
+#### 4.1.2 Implementacja techniczna
+
 ```javascript
 class ProductionOperatorPanel {
   constructor() {
     this.currentOrders = [];
+    this.filteredOrders = [];
     this.userRole = null;
+    this.viewMode = localStorage.getItem('prodViewMode') || 'grid';
+    this.sortMode = localStorage.getItem('prodSortMode') || 'priority';
+    this.activeFilters = {
+      urgent: false,
+      small: false,
+      pinned: false
+    };
+    this.pinnedOrders = JSON.parse(localStorage.getItem('pinnedOrders') || '[]');
     this.init();
   }
 
@@ -526,6 +587,11 @@ class ProductionOperatorPanel {
 
   render() {
     const container = document.getElementById('production-dashboard');
+    const activeCount = this.orders.filter(o => o.status === 'in_progress').length;
+    const queueCount = this.orders.filter(o => o.status === 'approved' || o.status === 'planned').length;
+    const completedCount = this.orders.filter(o => o.status === 'completed' && 
+      new Date(o.updatedAt).toDateString() === new Date().toDateString()).length;
+    
     container.innerHTML = `
       <header class="production-header">
         <div class="user-info">
@@ -533,26 +599,60 @@ class ProductionOperatorPanel {
           <span>Rola: ${this.userRole}</span>
         </div>
         <div class="header-actions">
-          <button id="break-btn" class="btn-secondary">Przerwa techniczna</button>
           <button id="logout-btn" class="btn-danger">Wyloguj</button>
         </div>
       </header>
       
-      <main class="production-main">
-        <div class="orders-grid">
-          ${this.currentOrders.map(order => this.renderOrderTile(order)).join('')}
+      <!-- Statystyki -->
+      <div class="prod-stats">
+        <div class="prod-stat queue">
+          <div class="prod-stat-value">${queueCount}</div>
+          <div class="prod-stat-label">W kolejce</div>
         </div>
-        
-        <div class="quick-actions">
-          <button class="action-btn problem-btn" data-problem="material">
-            ⚠️ Brak materiału
+        <div class="prod-stat active">
+          <div class="prod-stat-value">${activeCount}</div>
+          <div class="prod-stat-label">Aktywne</div>
+        </div>
+        <div class="prod-stat completed">
+          <div class="prod-stat-value">${completedCount}</div>
+          <div class="prod-stat-label">Dziś</div>
+        </div>
+      </div>
+      
+      <!-- Toolbar -->
+      <div class="prod-toolbar">
+        <div class="prod-toolbar-left">
+          <button class="prod-tool-btn" onclick="refreshOrders()" title="Odśwież">
+            <i class="fas fa-sync-alt"></i>
           </button>
-          <button class="action-btn problem-btn" data-problem="machine">
-            🔧 Awaria maszyny
+          <button class="prod-tool-btn" onclick="toggleViewMode()" id="viewModeBtn" title="Zmień widok">
+            <i class="fas fa-th-large"></i>
           </button>
-          <button class="action-btn problem-btn" data-problem="other">
-            ❓ Inny problem
+          <select class="prod-tool-select" id="sortSelect" onchange="sortOrders()">
+            <option value="priority">⚡ Priorytet</option>
+            <option value="pinned">📌 Przypięte</option>
+            <option value="quantity-asc">📦 Ilość ↑</option>
+            <option value="quantity-desc">📦 Ilość ↓</option>
+            <option value="date">📅 Data</option>
+          </select>
+        </div>
+        <div class="prod-toolbar-right">
+          <span class="prod-toolbar-label"><i class="fas fa-filter"></i> Filtry:</span>
+          <button class="prod-filter-chip urgent" onclick="toggleFilter('urgent')" id="filterUrgent">
+            <i class="fas fa-fire"></i> PILNE
           </button>
+          <button class="prod-filter-chip small" onclick="toggleFilter('small')" id="filterSmall">
+            <i class="fas fa-feather"></i> MAŁE
+          </button>
+          <button class="prod-filter-chip pinned" onclick="toggleFilter('pinned')" id="filterPinned">
+            <i class="fas fa-thumbtack"></i> MOJE
+          </button>
+        </div>
+      </div>
+      
+      <main class="production-main" id="ordersList">
+        <div class="orders-grid ${this.viewMode}">
+          ${this.filteredOrders.map(order => this.renderOrderTile(order)).join('')}
         </div>
       </main>
     `;
@@ -1730,6 +1830,22 @@ class TimeImportExport {
 }
 ```
 
+### 6.5 Powiązanie z edytorem ścieżki/operacji i panelem operatora
+
+- **Źródło prawdy dla czasów operacji**:
+  - Czas jednostkowy, TPZ i bufor są definiowane przez **Kierownika/Administratora produkcji** w edytorze ścieżki produkcyjnej / szablonów czasów (`TimeEstimationTemplate`, widok `TimeEstimationManager`).
+  - Dla każdej operacji ścieżki system oblicza i zapisuje planowany czas w polu `ProductionOperation.plannedTime` oraz sumaryczny czas ścieżki w `ProductionPath.estimatedTime` / `ProductionOrder.estimatedTime`.
+
+- **Panel operatora**:
+  - nie pozwala zmieniać planowanych czasów – operator nie „ustawia” czasu, tylko **realizuje** operację,
+  - na kafelku zlecenia wyświetla szacowany czas (np. `~25 min` lub `~1h 10min`) obliczony na podstawie `plannedTime` i ilości sztuk,
+  - przy zakończeniu operacji zapisuje rzeczywisty czas (`actualTime`) oraz wpis w `OperationTimeHistory`, co w przyszłości pozwala na kalibrację szablonów.
+
+- **Edytor ścieżki/operacji**:
+  - podczas dodawania/edycji operacji użytkownik widzi podgląd całkowitego czasu operacji i całej ścieżki,
+  - może korzystać z gotowych szablonów czasów (np. „Laser CO2 – bambus”, „Druk UV – kubek ceramiczny”) albo nadpisać wartości ręcznie,
+  - zapisane wartości są używane automatycznie przy generowaniu nowych zleceń produkcyjnych.
+
 ---
 
 ## 7. Implementacja Notes
@@ -1744,7 +1860,7 @@ class TimeImportExport {
 2. **Faza 2: Panel operatora**
    - Kafelkowy interfejs
    - WebSocket
-   - Podstawowe operacje
+   - Podstawowe operacje (start/pauza/zakończenie)
 
 3. **Faza 3: Admin produkcji**
    - Rozszerzenie panelu admina
@@ -1755,6 +1871,14 @@ class TimeImportExport {
    - Drag & drop
    - Automatyczne planowanie
    - Raporty
+
+5. **Faza 5: Konfigurowalny czas operacji (Time Estimation)**
+   - Edytor ścieżki/operacji pozwalający zdefiniować dla każdej operacji:
+     - czas jednostkowy (Tj – min/szt.),
+     - czas przygotowawczo‑zakończeniowy (TPZ),
+     - opcjonalny bufor.
+   - Zasilanie pól `ProductionPath.estimatedTime` oraz `ProductionOperation.plannedTime` na etapie generowania zleceń.
+   - Panel operatora tylko **odczytuje** te wartości i pokazuje szacowany czas na kafelkach – operator nie edytuje czasów z poziomu swojego panelu.
 
 ### 6.2 Wytyczne UI/UX
 
@@ -2220,13 +2344,14 @@ Przepływ:
 // Ustawia waiting_approval + przypina ścieżkę do plików
 ```
 
-Uprawnienia (przykład):
+Uprawnienia:
 
-- `GRAPHIC_DESIGNER` – widzi i edytuje swoje zadania (`assignedTo = userId`),
-  może zmieniać status do `ready_for_production`.
-- `PRODUCTION_MANAGER` – widzi wszystkie zadania, może korygować statusy
-  i przypisania.
-- `SALES_DEPT` – podgląd + dodawanie komentarzy (bez zmiany pól produkcyjnych).
+- `GRAPHIC_DESIGNER` – widzi wszystkie zadania w puli, samodzielnie wybiera zadania do pracy,
+  może zmieniać status do `ready_for_production`, decyduje o potrzebie akceptacji handlowej.
+- `SALES_DEPT` – widzi zadania ze swoich zamówień, może akceptować/odrzucać projekty
+  (`waiting_approval` → `approved/rejected`), dodawać komentarze.
+- `PRODUCTION_MANAGER` – podgląd wszystkich zadań (nadzór), przeglądanie statystyk,
+  bez ingerencji w pracę grafików.
 
 #### 9.6.2 Endpointy akceptacji projektów (widok handlowca)
 

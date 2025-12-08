@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Panel Produkcji | REZON</title>
+    <link rel="stylesheet" href="assets/styles.css">
+    <link rel="stylesheet" href="assets/vendor/fontawesome/css/all.min.css">
+    <style>
+        /* ============================================
+           PANEL PRODUKCJI - KOMPAKTOWY WIDOK OPERATORA
+           Zaprojektowany dla osób nieprzyzwyczajonych do komputerów
+           ============================================ */
+        
+        :root {
+            --prod-bg: #1a1a2e;
+            --prod-card: #16213e;
+            --prod-card-active: #1a3a5c;
+            --prod-accent: #0f3460;
+            --prod-text: #eaeaea;
+            --prod-text-muted: #a0a0a0;
+            
+            /* Statusy - duży kontrast */
+            --status-planned: #64748b;
+            --status-approved: #3b82f6;
+            --status-in-progress: #f59e0b;
+            --status-paused: #8b5cf6;
+            --status-completed: #22c55e;
+            --status-problem: #ef4444;
+            
+            /* Priorytety */
+            --priority-urgent: #ef4444;
+            --priority-high: #f97316;
+            --priority-normal: #3b82f6;
+            --priority-low: #6b7280;
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--prod-bg);
+            color: var(--prod-text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        /* ============================================
+           NAGŁÓWEK - KOMPAKTOWY
+           ============================================ */
+        .prod-header {
+            background: var(--prod-card);
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid var(--prod-accent);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .prod-header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .prod-logo {
+            font-size: 20px;
+            font-weight: 700;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .prod-logo i {
+            color: var(--status-in-progress);
+        }
+        
+        .prod-room-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--status-approved);
+            color: #fff;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .prod-room-badge i {
+            font-size: 12px;
+        }
+        
+        .prod-header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .prod-user {
+            font-size: 14px;
+            color: var(--prod-text-muted);
+        }
+        
+        .prod-btn-logout {
+            background: transparent;
+            border: 1px solid var(--prod-text-muted);
+            color: var(--prod-text-muted);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        
+        .prod-btn-logout:hover {
+            background: var(--status-problem);
+            border-color: var(--status-problem);
+            color: #fff;
+        }
+        
+        /* ============================================
+           STATYSTYKI - DUŻE KAFELKI NA GÓRZE
+           ============================================ */
+        .prod-stats {
+            display: flex;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--prod-accent);
+            flex-wrap: wrap;
+        }
+        
+        .prod-stat {
+            flex: 1;
+            min-width: 100px;
+            background: var(--prod-card);
+            border-radius: 8px;
+            padding: 12px 16px;
+            text-align: center;
+            border-left: 4px solid var(--status-approved);
+        }
+        
+        .prod-stat.active {
+            border-left-color: var(--status-in-progress);
+            background: var(--prod-card-active);
+        }
+        
+        .prod-stat.queue {
+            border-left-color: var(--status-approved);
+        }
+        
+        .prod-stat.completed {
+            border-left-color: var(--status-completed);
+        }
+        
+        .prod-stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            line-height: 1;
+        }
+        
+        .prod-stat.active .prod-stat-value {
+            color: var(--status-in-progress);
+        }
+        
+        .prod-stat.queue .prod-stat-value {
+            color: var(--status-approved);
+        }
+        
+        .prod-stat.completed .prod-stat-value {
+            color: var(--status-completed);
+        }
+        
+        .prod-stat-label {
+            font-size: 12px;
+            color: var(--prod-text-muted);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* ============================================
+           GŁÓWNA ZAWARTOŚĆ - LISTA ZLECEŃ
+           ============================================ */
+        .prod-main {
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .prod-section-title {
+            font-size: 14px;
+            color: var(--prod-text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 8px 4px 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .prod-section-title i {
+            font-size: 12px;
+        }
+        
+        /* ============================================
+           PASEK NARZĘDZI
+           ============================================ */
+        .prod-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: var(--prod-card);
+            border-bottom: 1px solid var(--prod-accent);
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .prod-toolbar-left, .prod-toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .prod-tool-btn {
+            width: 36px;
+            height: 36px;
+            border: none;
+            border-radius: 6px;
+            background: var(--prod-accent);
+            color: var(--prod-text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        
+        .prod-tool-btn:hover {
+            background: rgba(255,255,255,0.15);
+        }
+        
+        .prod-tool-btn.active {
+            background: var(--status-in-progress);
+            color: #000;
+        }
+        
+        .prod-tool-select {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            background: var(--prod-accent);
+            color: var(--prod-text);
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .prod-toolbar-label {
+            color: var(--prod-text-muted);
+            font-size: 12px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .prod-filter-chip {
+            padding: 6px 12px;
+            border: 2px solid transparent;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.08);
+            color: var(--prod-text-muted);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .prod-filter-chip i {
+            font-size: 11px;
+        }
+        
+        .prod-filter-chip:hover {
+            background: rgba(255,255,255,0.15);
+            color: var(--prod-text);
+        }
+        
+        .prod-filter-chip.urgent {
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+        
+        .prod-filter-chip.urgent:hover,
+        .prod-filter-chip.urgent.active {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+        
+        .prod-filter-chip.small {
+            border-color: rgba(34, 197, 94, 0.3);
+        }
+        
+        .prod-filter-chip.small:hover,
+        .prod-filter-chip.small.active {
+            background: rgba(34, 197, 94, 0.2);
+            border-color: #22c55e;
+            color: #22c55e;
+        }
+        
+        .prod-filter-chip.pinned {
+            border-color: rgba(251, 191, 36, 0.3);
+        }
+        
+        .prod-filter-chip.pinned:hover,
+        .prod-filter-chip.pinned.active {
+            background: rgba(251, 191, 36, 0.2);
+            border-color: #fbbf24;
+            color: #fbbf24;
+        }
+        
+        .prod-filter-info {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 8px;
+            background: rgba(251, 191, 36, 0.1);
+            border-radius: 6px;
+            color: #fbbf24;
+            font-size: 13px;
+        }
+        
+        /* ============================================
+           KAFELEK ZLECENIA - KOMPAKTOWY ALE CZYTELNY
+           ============================================ */
+        .prod-order-card {
+            background: var(--prod-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .prod-order-card:hover {
+            border-color: var(--prod-accent);
+        }
+        
+        .prod-order-card.status-in_progress {
+            border-color: var(--status-in-progress);
+            background: var(--prod-card-active);
+        }
+        
+        .prod-order-card.status-paused {
+            border-color: var(--status-paused);
+        }
+        
+        .prod-order-card.has-problem {
+            border-color: var(--status-problem);
+        }
+        
+        /* Karta przypięta */
+        .prod-order-card.pinned {
+            border-color: #fbbf24;
+            box-shadow: 0 0 12px rgba(251, 191, 36, 0.3);
+        }
+        
+        /* Nagłówek kafelka */
+        .prod-order-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            background: rgba(0,0,0,0.2);
+        }
+        
+        .prod-order-number-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .prod-pin-btn {
+            background: rgba(255,255,255,0.1);
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            color: rgba(255,255,255,0.4);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .prod-pin-btn:hover {
+            background: rgba(251, 191, 36, 0.2);
+            color: #fbbf24;
+        }
+        
+        .prod-pin-btn.active {
+            background: rgba(251, 191, 36, 0.3);
+            color: #fbbf24;
+            transform: rotate(-45deg);
+        }
+        
+        .prod-order-number {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        .prod-order-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .prod-status-badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .prod-status-badge.planned { background: var(--status-planned); }
+        .prod-status-badge.approved { background: var(--status-approved); }
+        .prod-status-badge.in_progress { background: var(--status-in-progress); color: #000; }
+        .prod-status-badge.paused { background: var(--status-paused); }
+        .prod-status-badge.completed { background: var(--status-completed); color: #000; }
+        
+        .prod-priority-badge {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        
+        .prod-priority-badge.p1 { background: var(--priority-urgent); }
+        .prod-priority-badge.p2 { background: var(--priority-high); }
+        .prod-priority-badge.p3 { background: var(--priority-normal); }
+        .prod-priority-badge.p4 { background: var(--priority-low); }
+        
+        /* Treść kafelka */
+        .prod-order-body {
+            padding: 12px;
+        }
+        
+        /* Informacje o operacji i stanowisku */
+        .prod-operation-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--prod-accent);
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .prod-operation-info i {
+            font-size: 18px;
+            color: var(--status-in-progress);
+        }
+        
+        .prod-operation-name {
+            font-weight: 600;
+            color: #fff;
+        }
+        
+        .prod-station-name {
+            color: var(--prod-text-muted);
+            font-size: 13px;
+        }
+        
+        .prod-order-product {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .prod-order-customer {
+            font-size: 13px;
+            color: var(--prod-text-muted);
+            margin-bottom: 8px;
+        }
+        
+        /* Ilość - DUŻA I WIDOCZNA */
+        .prod-order-quantity {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            margin: 12px 0;
+        }
+        
+        .prod-quantity-value {
+            font-size: 42px;
+            font-weight: 800;
+            color: #fff;
+            line-height: 1;
+        }
+        
+        .prod-quantity-unit {
+            font-size: 16px;
+            color: var(--prod-text-muted);
+        }
+        
+        .prod-quantity-done {
+            font-size: 14px;
+            color: var(--status-completed);
+        }
+        
+        .prod-estimated-time {
+            font-size: 13px;
+            color: var(--prod-text-muted);
+            background: rgba(255,255,255,0.08);
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-left: auto;
+        }
+        
+        /* Sekcja ilości z projektami */
+        .prod-order-quantity-section {
+            margin: 12px 0;
+        }
+        
+        .prod-projects-info {
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 10px;
+            margin-top: 8px;
+            border-left: 3px solid var(--status-approved);
+        }
+        
+        .prod-projects-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .proj-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 6px 12px;
+            min-width: 50px;
+        }
+        
+        .proj-num {
+            font-size: 11px;
+            color: var(--prod-text-muted);
+            margin-bottom: 2px;
+        }
+        
+        .proj-num::before {
+            content: 'P';
+        }
+        
+        .proj-qty {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--status-in-progress);
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        .prod-source-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            margin-top: 6px;
+        }
+        
+        .prod-source-badge.source-projects {
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+        }
+        
+        .prod-source-badge.source-total {
+            background: rgba(156, 163, 175, 0.2);
+            color: #9ca3af;
+        }
+        
+        /* Termin realizacji */
+        .prod-due-date {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--prod-text-muted);
+            margin: 8px 0;
+            padding: 6px 10px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 4px;
+        }
+        
+        .prod-due-date.overdue {
+            background: rgba(239, 68, 68, 0.15);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        
+        .overdue-badge {
+            background: #ef4444;
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: auto;
+        }
+        
+        /* Notatki produkcyjne */
+        .prod-notes {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 13px;
+            color: #fbbf24;
+            background: rgba(251, 191, 36, 0.1);
+            padding: 8px 10px;
+            border-radius: 4px;
+            margin: 8px 0;
+            border-left: 3px solid #fbbf24;
+        }
+        
+        .prod-notes i {
+            margin-top: 2px;
+        }
+        
+        .prod-notes span {
+            flex: 1;
+            line-height: 1.4;
+        }
+        
+        /* Pasek postępu */
+        .prod-progress-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+        
+        .prod-progress-fill {
+            height: 100%;
+            background: var(--status-completed);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        
+        .prod-progress-text {
+            font-size: 12px;
+            color: var(--prod-text-muted);
+            text-align: right;
+        }
+        
+        /* Timer dla aktywnych */
+        .prod-timer {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            color: var(--status-in-progress);
+            margin-top: 8px;
+        }
+        
+        .prod-timer i {
+            font-size: 12px;
+        }
+        
+        /* ============================================
+           PRZYCISKI AKCJI - DUŻE I DOTYKOWE
+           ============================================ */
+        .prod-order-actions {
+            display: flex;
+            gap: 8px;
+            padding: 12px;
+            background: rgba(0,0,0,0.15);
+        }
+        
+        .prod-btn {
+            flex: 1;
+            padding: 14px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+            min-height: 48px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .prod-btn:active {
+            transform: scale(0.98);
+        }
+        
+        .prod-btn-start {
+            background: var(--status-completed);
+            color: #000;
+        }
+        
+        .prod-btn-start:hover {
+            background: #16a34a;
+        }
+        
+        .prod-btn-pause {
+            background: #f59e0b;
+            color: #000;
+        }
+        
+        .prod-btn-pause:hover {
+            background: #d97706;
+        }
+        
+        .prod-btn-complete {
+            background: var(--status-completed);
+            color: #000;
+            flex: 2;
+        }
+        
+        .prod-btn-complete:hover {
+            background: #16a34a;
+        }
+        
+        .prod-btn-problem {
+            background: var(--status-problem);
+            color: #fff;
+            flex: 0 0 auto;
+        }
+        
+        .prod-btn-problem:hover {
+            background: #dc2626;
+        }
+        
+        .prod-btn-secondary {
+            background: var(--prod-accent);
+            color: var(--prod-text);
+        }
+        
+        .prod-btn-secondary:hover {
+            background: #1e4976;
+        }
+        
+        .prod-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Dolny pasek usunięty - style zachowane dla kompatybilności */
+        .prod-main {
+            padding-bottom: 20px;
+        }
+        
+        /* ============================================
+           MODAL - ZAKOŃCZENIE / PROBLEM
+           ============================================ */
+        .prod-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 16px;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+        
+        .prod-modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .prod-modal {
+            background: var(--prod-card);
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        
+        .prod-modal-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--prod-accent);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .prod-modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .prod-modal-close {
+            background: transparent;
+            border: none;
+            color: var(--prod-text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px;
+            line-height: 1;
+        }
+        
+        .prod-modal-close:hover {
+            color: #fff;
+        }
+        
+        .prod-modal-body {
+            padding: 16px;
+        }
+        
+        .prod-form-group {
+            margin-bottom: 16px;
+        }
+        
+        .prod-form-label {
+            display: block;
+            font-size: 13px;
+            color: var(--prod-text-muted);
+            margin-bottom: 6px;
+        }
+        
+        .prod-form-input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--prod-accent);
+            background: var(--prod-bg);
+            color: var(--prod-text);
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        
+        .prod-form-input:focus {
+            outline: none;
+            border-color: var(--status-approved);
+        }
+        
+        .prod-form-input::placeholder {
+            color: var(--prod-text-muted);
+        }
+        
+        /* Duże przyciski numeryczne */
+        .prod-number-input {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .prod-number-btn {
+            width: 48px;
+            height: 48px;
+            border: 1px solid var(--prod-accent);
+            background: var(--prod-bg);
+            color: var(--prod-text);
+            border-radius: 6px;
+            font-size: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .prod-number-btn:hover {
+            background: var(--prod-accent);
+        }
+        
+        .prod-number-value {
+            flex: 1;
+            text-align: center;
+            font-size: 32px;
+            font-weight: 700;
+            padding: 8px;
+            background: var(--prod-bg);
+            border: 1px solid var(--prod-accent);
+            border-radius: 6px;
+            color: var(--prod-text);
+        }
+        
+        .prod-modal-actions {
+            padding: 16px;
+            border-top: 1px solid var(--prod-accent);
+            display: flex;
+            gap: 8px;
+        }
+        
+        /* Problem types */
+        .prod-problem-types {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .prod-problem-type {
+            padding: 12px;
+            border: 1px solid var(--prod-accent);
+            background: var(--prod-bg);
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.2s;
+        }
+        
+        .prod-problem-type:hover,
+        .prod-problem-type.selected {
+            border-color: var(--status-problem);
+            background: rgba(239, 68, 68, 0.1);
+        }
+        
+        .prod-problem-type i {
+            font-size: 18px;
+            color: var(--status-problem);
+        }
+        
+        /* ============================================
+           PUSTA LISTA
+           ============================================ */
+        .prod-empty {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--prod-text-muted);
+        }
+        
+        .prod-empty i {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        
+        .prod-empty-text {
+            font-size: 16px;
+        }
+        
+        /* ============================================
+           LOADING
+           ============================================ */
+        .prod-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 48px;
+        }
+        
+        .prod-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--prod-accent);
+            border-top-color: var(--status-in-progress);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* ============================================
+           RESPONSYWNOŚĆ
+           ============================================ */
+        @media (min-width: 768px) {
+            .prod-main {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 16px;
+                padding: 16px;
+            }
+            
+            .prod-section-title {
+                grid-column: 1 / -1;
+            }
+        }
+        
+        @media (min-width: 1200px) {
+            .prod-main {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        
+        /* Tryb kompaktowy - dla pracy obok okna maszyny */
+        body.compact-mode .prod-order-card {
+            font-size: 13px;
+        }
+        
+        body.compact-mode .prod-quantity-value {
+            font-size: 28px;
+        }
+        
+        body.compact-mode .prod-order-body {
+            padding: 8px 10px;
+        }
+        
+        body.compact-mode .prod-order-actions {
+            padding: 6px;
+        }
+        
+        body.compact-mode .prod-btn {
+            padding: 8px 10px;
+            min-height: 36px;
+            font-size: 11px;
+        }
+        
+        body.compact-mode .prod-projects-info {
+            padding: 6px;
+        }
+        
+        body.compact-mode .proj-item {
+            padding: 4px 8px;
+        }
+        
+        body.compact-mode .proj-qty {
+            font-size: 14px;
+        }
+        
+        body.compact-mode .prod-notes {
+            padding: 6px 8px;
+            font-size: 11px;
+        }
+        
+        /* Widok listy - bardzo kompaktowy */
+        body.list-mode .prod-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 8px;
+        }
+        
+        body.list-mode .prod-order-card {
+            display: flex;
+            align-items: center;
+            border-radius: 6px;
+        }
+        
+        body.list-mode .prod-order-header {
+            flex: 0 0 auto;
+            padding: 8px 12px;
+            min-width: 180px;
+            background: transparent;
+        }
+        
+        body.list-mode .prod-order-body {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 8px 12px;
+        }
+        
+        body.list-mode .prod-order-product {
+            flex: 0 0 200px;
+            margin: 0;
+        }
+        
+        body.list-mode .prod-order-customer {
+            flex: 0 0 150px;
+            margin: 0;
+        }
+        
+        body.list-mode .prod-order-quantity-section {
+            flex: 0 0 auto;
+            margin: 0;
+        }
+        
+        body.list-mode .prod-order-quantity {
+            margin: 0;
+        }
+        
+        body.list-mode .prod-quantity-value {
+            font-size: 24px;
+        }
+        
+        body.list-mode .prod-projects-info,
+        body.list-mode .prod-notes,
+        body.list-mode .prod-due-date,
+        body.list-mode .prod-progress-bar,
+        body.list-mode .prod-progress-text,
+        body.list-mode .prod-timer,
+        body.list-mode .prod-operation-info {
+            display: none;
+        }
+        
+        body.list-mode .prod-order-actions {
+            flex: 0 0 auto;
+            padding: 8px;
+            background: transparent;
+        }
+        
+        body.list-mode .prod-btn {
+            padding: 8px 12px;
+            min-height: auto;
+        }
+        
+        body.list-mode .prod-section-title {
+            padding: 8px 4px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Nagłówek -->
+    <header class="prod-header">
+        <div class="prod-header-left">
+            <div class="prod-logo">
+                <i class="fas fa-industry"></i>
+                PRODUKCJA
+            </div>
+            <div class="prod-room-badge" id="roomBadge" style="display: none;">
+                <i class="fas fa-door-open"></i>
+                <span id="roomName">---</span>
+            </div>
+        </div>
+        <div class="prod-header-right">
+            <span class="prod-user" id="userName">---</span>
+            <button class="prod-btn-logout" onclick="logout()">
+                <i class="fas fa-sign-out-alt"></i> Wyloguj
+            </button>
+        </div>
+    </header>
+    
+    <!-- Statystyki - dla mojego pokoju -->
+    <div class="prod-stats">
+        <div class="prod-stat active">
+            <div class="prod-stat-value" id="statActive">0</div>
+            <div class="prod-stat-label">W trakcie</div>
+        </div>
+        <div class="prod-stat queue">
+            <div class="prod-stat-value" id="statQueue">0</div>
+            <div class="prod-stat-label">Kolejka</div>
+        </div>
+        <div class="prod-stat completed">
+            <div class="prod-stat-value" id="statCompleted">0</div>
+            <div class="prod-stat-label">Dziś</div>
+        </div>
+    </div>
+    
+    <!-- Pasek narzędzi -->
+    <div class="prod-toolbar">
+        <div class="prod-toolbar-left">
+            <button class="prod-tool-btn" onclick="refreshOrders()" title="Odśwież">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+            <button class="prod-tool-btn" onclick="toggleViewMode()" id="viewModeBtn" title="Zmień widok">
+                <i class="fas fa-th-large"></i>
+            </button>
+            <select class="prod-tool-select" id="sortSelect" onchange="sortOrders()">
+                <option value="priority">⚡ Priorytet</option>
+                <option value="pinned">📌 Przypięte</option>
+                <option value="quantity-asc">📦 Ilość ↑</option>
+                <option value="quantity-desc">📦 Ilość ↓</option>
+                <option value="date">📅 Data</option>
+            </select>
+        </div>
+        <div class="prod-toolbar-right">
+            <span class="prod-toolbar-label"><i class="fas fa-filter"></i> Filtry:</span>
+            <button class="prod-filter-chip urgent" onclick="toggleFilter('urgent')" id="filterUrgent">
+                <i class="fas fa-fire"></i> PILNE
+            </button>
+            <button class="prod-filter-chip small" onclick="toggleFilter('small')" id="filterSmall">
+                <i class="fas fa-feather"></i> MAŁE
+            </button>
+            <button class="prod-filter-chip pinned" onclick="toggleFilter('pinned')" id="filterPinned">
+                <i class="fas fa-thumbtack"></i> MOJE
+            </button>
+        </div>
+    </div>
+    
+    <!-- Główna zawartość -->
+    <main class="prod-main" id="ordersList">
+        <div class="prod-loading">
+            <div class="prod-spinner"></div>
+        </div>
+    </main>
+    
+    <!-- Dolny pasek usunięty - funkcje przeniesione do toolbara -->
+    
+    <!-- Modal zakończenia operacji -->
+    <div class="prod-modal-overlay" id="completeModal">
+        <div class="prod-modal">
+            <div class="prod-modal-header">
+                <div class="prod-modal-title">
+                    <i class="fas fa-check-circle" style="color: var(--status-completed)"></i>
+                    Zakończ operację
+                </div>
+                <button class="prod-modal-close" onclick="closeModal('completeModal')">&times;</button>
+            </div>
+            <div class="prod-modal-body">
+                <div class="prod-form-group">
+                    <label class="prod-form-label">Wykonano sztuk:</label>
+                    <div class="prod-number-input">
+                        <button class="prod-number-btn" onclick="adjustQuantity('outputQuantity', -10)">-10</button>
+                        <input type="number" class="prod-number-value" id="outputQuantity" value="0" min="0">
+                        <button class="prod-number-btn" onclick="adjustQuantity('outputQuantity', 10)">+10</button>
+                    </div>
+                </div>
+                <div class="prod-form-group">
+                    <label class="prod-form-label">Braki / odpady:</label>
+                    <div class="prod-number-input">
+                        <button class="prod-number-btn" onclick="adjustQuantity('wasteQuantity', -1)">-1</button>
+                        <input type="number" class="prod-number-value" id="wasteQuantity" value="0" min="0">
+                        <button class="prod-number-btn" onclick="adjustQuantity('wasteQuantity', 1)">+1</button>
+                    </div>
+                </div>
+                <div class="prod-form-group">
+                    <label class="prod-form-label">Uwagi (opcjonalnie):</label>
+                    <input type="text" class="prod-form-input" id="qualityNotes" placeholder="Np. 2 szt. z rysami">
+                </div>
+            </div>
+            <div class="prod-modal-actions">
+                <button class="prod-btn prod-btn-secondary" onclick="closeModal('completeModal')">Anuluj</button>
+                <button class="prod-btn prod-btn-complete" onclick="confirmComplete()">
+                    <i class="fas fa-check"></i> Potwierdź
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal zgłoszenia problemu -->
+    <div class="prod-modal-overlay" id="problemModal">
+        <div class="prod-modal">
+            <div class="prod-modal-header">
+                <div class="prod-modal-title">
+                    <i class="fas fa-exclamation-triangle" style="color: var(--status-problem)"></i>
+                    Zgłoś problem
+                </div>
+                <button class="prod-modal-close" onclick="closeModal('problemModal')">&times;</button>
+            </div>
+            <div class="prod-modal-body">
+                <div class="prod-form-group">
+                    <label class="prod-form-label">Typ problemu:</label>
+                    <div class="prod-problem-types" id="problemTypes">
+                        <div class="prod-problem-type" data-type="material" onclick="selectProblemType(this)">
+                            <i class="fas fa-box"></i>
+                            <span>Brak materiału</span>
+                        </div>
+                        <div class="prod-problem-type" data-type="machine" onclick="selectProblemType(this)">
+                            <i class="fas fa-cog"></i>
+                            <span>Awaria maszyny</span>
+                        </div>
+                        <div class="prod-problem-type" data-type="design" onclick="selectProblemType(this)">
+                            <i class="fas fa-file-alt"></i>
+                            <span>Błąd w projekcie</span>
+                        </div>
+                        <div class="prod-problem-type" data-type="quality" onclick="selectProblemType(this)">
+                            <i class="fas fa-search"></i>
+                            <span>Problem jakościowy</span>
+                        </div>
+                        <div class="prod-problem-type" data-type="other" onclick="selectProblemType(this)">
+                            <i class="fas fa-question-circle"></i>
+                            <span>Inny problem</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="prod-form-group">
+                    <label class="prod-form-label">Opis (opcjonalnie):</label>
+                    <input type="text" class="prod-form-input" id="problemDescription" placeholder="Krótki opis problemu">
+                </div>
+                <div class="prod-form-group">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="stopOperation" checked>
+                        <span>Wstrzymaj operację do rozwiązania</span>
+                    </label>
+                </div>
+            </div>
+            <div class="prod-modal-actions">
+                <button class="prod-btn prod-btn-secondary" onclick="closeModal('problemModal')">Anuluj</button>
+                <button class="prod-btn prod-btn-problem" onclick="confirmProblem()">
+                    <i class="fas fa-exclamation-triangle"></i> Zgłoś
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Product Image Modal -->
+    <div id="product-image-modal" class="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 hidden">
+        <div class="relative max-w-6xl w-full mx-4">
+            <!-- Header with product info -->
+            <div class="bg-gray-900 text-white p-4 rounded-t-lg flex justify-between items-center">
+                <div class="flex items-center gap-4">
+                    <div>
+                        <h3 id="product-image-title" class="text-lg font-semibold">Podgląd produktu</h3>
+                        <p id="product-image-details" class="text-sm text-gray-300"></p>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button id="product-image-download" class="bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg text-sm transition-colors" title="Pobierz obrazek">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button id="product-image-zoom" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm transition-colors" title="Powiększenie">
+                        <i class="fas fa-search-plus"></i>
+                    </button>
+                    <button id="product-image-close" class="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm transition-colors" title="Zamknij">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- Image container with zoom capability -->
+            <div class="bg-gray-800 p-8 rounded-b-lg overflow-auto max-h-[80vh]">
+                <div class="flex justify-center items-center">
+                    <img id="product-image-content" src="" alt="Podgląd produktu" class="max-w-full max-h-full object-contain cursor-zoom-in transition-transform duration-300 shadow-2xl rounded">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="scripts/production.js"></script>
+</body>
+</html>

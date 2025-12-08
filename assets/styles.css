@@ -2329,3 +2329,143 @@ header.header {
 body.hide-guest .guest-hidden {
   display: none !important;
 }
+
+/* ============================================
+   Admin Panel - Przełącznik widoku statusów
+   ============================================ */
+.status-view-btn {
+  color: #6b7280;
+  background: transparent;
+}
+.status-view-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+.status-view-btn.active {
+  background: #3b82f6;
+  color: white;
+}
+
+/* Pigułki statusów (widok pills) */
+.status-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.status-pill {
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 2px solid transparent;
+  opacity: 0.5;
+}
+.status-pill:hover {
+  opacity: 0.8;
+  transform: scale(1.05);
+}
+.status-pill.current {
+  opacity: 1;
+  border-color: currentColor;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+.status-pill.allowed {
+  opacity: 1;
+  cursor: pointer;
+}
+.status-pill.allowed:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+/* Uniwersalny wygląd selecta statusu w tabelach (admin + zamówienia) */
+/* Styl jak przycisk "Wróć do formularza" - wypełnione tło, biały tekst, pigułka */
+select.order-status-select,
+.order-status-select,
+.status-pill-static {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  cursor: pointer !important;
+  display: inline-block !important;
+  width: 110px !important;
+  min-width: 110px !important;
+  max-width: 110px !important;
+  height: 22px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 9999px !important; /* Pełna pigułka */
+  font-size: 11px !important;
+  font-family: inherit !important;
+  font-weight: 600 !important;
+  line-height: 20px !important; /* Lekkie przesunięcie w górę dla lepszego centrowania */
+  text-align: center !important;
+  text-align-last: center !important;
+  border: none !important;
+  box-sizing: border-box !important;
+  vertical-align: middle !important;
+  color: white !important;
+  text-shadow: none !important;
+  transition: filter 0.2s ease !important;
+}
+
+/* Styl dla nieaktywnych statusów (span) */
+.status-pill-static {
+  cursor: default !important;
+}
+
+select.order-status-select:hover,
+.order-status-select:hover {
+  filter: brightness(1.1) !important;
+}
+
+select.order-status-select:focus,
+.order-status-select:focus {
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3) !important;
+}
+
+/* Ukrycie strzałki w selectach (dla IE/Edge) */
+select.order-status-select::-ms-expand {
+  display: none;
+}
+
+select.order-status-select option,
+.order-status-select option {
+  background: white !important;
+  color: #374151 !important;
+  font-weight: 500 !important;
+  padding: 8px 12px !important;
+  text-align: left !important;
+}
+
+/* Kolory tła dla każdego statusu - spójne dla select i span */
+.order-status-select[data-status="PENDING"],
+.status-pill-static[data-status="PENDING"],
+.order-status-select.status-pending { background-color: #f59e0b !important; }
+
+.order-status-select[data-status="APPROVED"],
+.status-pill-static[data-status="APPROVED"],
+.order-status-select.status-approved { background-color: #3b82f6 !important; }
+
+.order-status-select[data-status="IN_PRODUCTION"],
+.status-pill-static[data-status="IN_PRODUCTION"],
+.order-status-select.status-in-production { background-color: #f97316 !important; }
+
+.order-status-select[data-status="READY"],
+.status-pill-static[data-status="READY"],
+.order-status-select.status-ready { background-color: #22c55e !important; }
+
+.order-status-select[data-status="SHIPPED"],
+.status-pill-static[data-status="SHIPPED"],
+.order-status-select.status-shipped { background-color: #8b5cf6 !important; }
+
+.order-status-select[data-status="DELIVERED"],
+.status-pill-static[data-status="DELIVERED"],
+.order-status-select.status-delivered { background-color: #6b7280 !important; }
+
+.order-status-select[data-status="CANCELLED"],
+.status-pill-static[data-status="CANCELLED"],
+.order-status-select.status-cancelled { background-color: #ef4444 !important; }

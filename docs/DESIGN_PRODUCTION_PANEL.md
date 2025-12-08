@@ -583,5 +583,86 @@ PROBLEM     → #EF4444 (red-500)      czerwony
 
 ---
 
+## 11. Zlecenia produkcyjne i numeracja
+
+### 11.1. Definicja zlecenia produkcyjnego
+
+- **Zamówienie handlowe (`Order`)** ma numer w formacie `YYYY/NN/XXX` (np. `2025/40/ATU`).
+- **Zlecenie produkcyjne (`ProductionOrder`)** jest jednostką pracy wynikającą z zamówienia –
+  obejmuje konkretną pozycję zamówienia i *gałąź* ścieżki produkcyjnej.
+- Jedno zamówienie może mieć **0..N zleceń produkcyjnych**, zależnie od liczby pozycji oraz
+  złożoności ścieżek (`productionPathExpression`).
+
+Z punktu widzenia UI i projektowania:
+- zlecenie produkcyjne jest tym, co widzi operator na kafelku oraz kartą,
+  która przechodzi przez kolejne etapy produkcji;
+- szczegółowe kroki techniczne (działy, pokoje, maszyny) są reprezentowane przez
+  rekordy `ProductionOperation`, powiązane z danym `ProductionOrder`.
+
+### 11.2. System numeracji zleceń
+
+Numer `ProductionOrder` jest powiązany z numerem zamówienia i ma postać:
+
+```text
+{Order.orderNumber}/{NN}
+```
+
+Przykłady:
+
+- Zamówienie: `2025/40/ATU` → pierwsze zlecenie: `2025/40/ATU/01`.
+- To samo zamówienie, drugie zlecenie (np. inna gałąź ścieżki lub inna pozycja):
+  `2025/40/ATU/02`.
+
+Właściwości numeracji:
+
+- sufiks `{NN}` jest **kolejnym numerem porządkowym w ramach danego zamówienia** (`sourceOrderId`),
+  z wiodącym zerem (`01`, `02`, ..., `99`);
+- `{NN}` **nie koduje** działu ani numeru ścieżki – te informacje znajdują się w:
+  - `ProductionOrder.productionPathExpression` (np. `5%3$2.1`),
+  - `ProductionPath` (definicje ścieżek),
+  - `ProductionOperation` (konkretne operacje na pokojach/gniazdach/maszynach);
+- numer jest **stabilny w czasie** – zmiana definicji ścieżki w bazie nie wymaga
+  zmiany numerów istniejących zleceń.
+
+### 11.3. Gałęzie ścieżek a zlecenia
+
+Pole `productionPathExpression` opisuje przebieg produkcji dla pozycji zamówienia, np.:
+
+- `5%3` – sekwencja dwóch ścieżek (5, następnie 3);
+- `5%3$2.1` – dwie gałęzie równoległe: gałąź A (`5%3`), gałąź B (`2.1`).
+
+Parser dzieli wyrażenie na **gałęzie** (`$`) i **kody ścieżek** (`%`).
+
+- Dla każdej pozycji zamówienia bez gałęzi równoległych zwykle powstaje jedno
+  `ProductionOrder` z pełnym wyrażeniem (`5%3`).
+- Dla bardziej złożonych przypadków możliwe jest tworzenie osobnych zleceń dla
+  poszczególnych gałęzi; kolejne zlecenia dostają następne numery sufiksów (`/01`, `/02`, ...).
+
+Szczegóły mapowania gałęzi na zlecenia mogą być rozwijane w kolejnych iteracjach, ale
+**numeracja zawsze pozostaje prosta i sekwencyjna** w ramach konkretnego zamówienia.
+
+### 11.4. Automatyczne tworzenie i anulowanie zleceń
+
+Zachowanie systemu przy zmianie statusu zamówienia (`Order.status`):
+
+- Przy przejściu na `APPROVED`:
+  - system automatycznie tworzy zlecenia produkcyjne (`ProductionOrder`) dla pozycji
+    zamówienia, które mają poprawnie zdefiniowaną ścieżkę (`Product.productionPath`),
+  - dla każdego nowego zlecenia generowany jest numer w formacie `OrderNumber/NN`,
+  - jednorazowa kontrola: jeśli zlecenia dla danego `Order` już istnieją, drugie
+    utworzenie jest pomijane (ochrona przed duplikatami).
+
+- Przy przejściu na `CANCELLED`:
+  - wszystkie zlecenia produkcyjne powiązane z zamówieniem, które są w stanach
+    planowania/realizacji (np. `planned`, `approved`, `in_progress`), otrzymują
+    status `cancelled`;
+  - powiązane operacje (`ProductionOperation`) również są oznaczane jako `cancelled`
+    (dla statusów `pending`/`active`).
+
+UI powinien jasno komunikować te automatyczne akcje (logi, toasty, wskaźniki postępu)
+zarówno w panelu admina, jak i w panelu produkcyjnym.
+
+---
+
 *Dokument utworzony: 2025-12-05*
 *Autor: Cascade (architekt UX/UI)*

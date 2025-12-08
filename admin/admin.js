@@ -965,6 +965,7 @@ document.addEventListener('DOMContentLoaded', () => {
             userForm.querySelector('[name="email"]').disabled = true; // Email nie edytowalny
             userForm.querySelector('[name="role"]').value = user.role || '';
             userForm.querySelector('[name="departmentId"]').value = user.departmentId || '';
+            userForm.querySelector('[name="productionRoomId"]').value = user.productionroomid || '';
             userForm.querySelector('[name="isActive"]').checked = user.isActive !== false;
 
             // Ukryj pole hasła przy edycji
@@ -997,7 +998,58 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         populateDepartmentFilters();
+        populateProductionRoomSelect();
+        handleRoleChange(); // Ustaw widoczność pola pokoju
         userModal.classList.remove('hidden');
+    }
+
+    function handleRoleChange() {
+        const roleSelect = userForm.querySelector('[name="role"]');
+        const roomField = document.getElementById('production-room-field');
+        const role = roleSelect.value;
+        
+        if (['PRODUCTION', 'OPERATOR'].includes(role)) {
+            roomField.classList.remove('hidden');
+        } else {
+            roomField.classList.add('hidden');
+            userForm.querySelector('[name="productionRoomId"]').value = '';
+        }
+    }
+
+    async function populateProductionRoomSelect() {
+        const select = userForm.querySelector('[name="productionRoomId"]');
+        // Zachowaj obecną wartość jeśli jest
+        const currentVal = select.value;
+        
+        select.innerHTML = '<option value="">Brak przypisanego pokoju</option>';
+        
+        try {
+            // Jeśli pokoje nie są załadowane w zmiennej globalnej, pobierz je
+            if (!productionRooms || productionRooms.length === 0) {
+                const response = await fetch('/api/production/rooms', { credentials: 'include' });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    productionRooms = result.data || [];
+                }
+            }
+            
+            productionRooms.forEach(room => {
+                const opt = document.createElement('option');
+                opt.value = room.id;
+                opt.textContent = room.name;
+                select.appendChild(opt);
+            });
+            
+            if (currentVal) select.value = currentVal;
+        } catch (e) {
+            console.error('Błąd ładowania pokojów do formularza:', e);
+        }
+    }
+
+    // Event listener dla zmiany roli
+    if (userForm) {
+        const roleSelect = userForm.querySelector('[name="role"]');
+        if (roleSelect) roleSelect.addEventListener('change', handleRoleChange);
     }
 
     // Zamykanie formularza użytkownika
@@ -1021,6 +1073,7 @@ document.addEventListener('DOMContentLoaded', () => {
             email: formData.get('email'),
             role: formData.get('role'),
             departmentId: formData.get('departmentId') || null,
+            productionRoomId: formData.get('productionRoomId') || null,
             isActive: formData.get('isActive') === 'on',
         };
 
@@ -1126,6 +1179,35 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadingOrders = new Set();
     let currentSort = { column: 'createdAt', direction: 'desc' };
     let deleteOrderId = null;
+    
+    // Przełącznik widoku statusów: 'pills' (pigułki) lub 'dropdown' (lista)
+    let statusViewMode = localStorage.getItem('statusViewMode') || 'dropdown';
+    const statusViewPillsBtn = document.getElementById('status-view-pills');
+    const statusViewDropdownBtn = document.getElementById('status-view-dropdown');
+    
+    // Inicjalizacja przełącznika widoku statusów
+    function initStatusViewToggle() {
+        updateStatusViewButtons();
+        
+        statusViewPillsBtn?.addEventListener('click', () => {
+            statusViewMode = 'pills';
+            localStorage.setItem('statusViewMode', 'pills');
+            updateStatusViewButtons();
+            renderOrdersTable();
+        });
+        
+        statusViewDropdownBtn?.addEventListener('click', () => {
+            statusViewMode = 'dropdown';
+            localStorage.setItem('statusViewMode', 'dropdown');
+            updateStatusViewButtons();
+            renderOrdersTable();
+        });
+    }
+    
+    function updateStatusViewButtons() {
+        statusViewPillsBtn?.classList.toggle('active', statusViewMode === 'pills');
+        statusViewDropdownBtn?.classList.toggle('active', statusViewMode === 'dropdown');
+    }
 
     const STATUS_LABELS = {
         PENDING: 'Oczekujące', APPROVED: 'Zatwierdzone', IN_PRODUCTION: 'W produkcji',
@@ -1404,16 +1486,40 @@ document.addEventListener('DOMContentLoaded', () => {
             const customerNameSafe = escapeHtml(order.Customer?.name || '-');
             const userShortSafe = escapeHtml(order.User?.shortCode || '-');
 
-            const statusContent = canSelectStatus
-                ? `<select class="order-status-select px-3 py-1 rounded-full text-xs font-semibold border border-transparent focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all ${statusClass}" data-order-id="${order.id}" data-original-status="${order.status}" onclick="event.stopPropagation()">
+            // Generuj HTML statusu w zależności od trybu widoku
+            let statusContent;
+            if (!canSelectStatus) {
+                // Brak możliwości zmiany - tylko badge
+                statusContent = `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabelSafe}</span>`;
+            } else if (statusViewMode === 'pills') {
+                // Tryb pigułek - wszystkie statusy jako klikalne elementy
+                const allStatuses = Object.keys(STATUS_LABELS);
+                statusContent = `<div class="status-pills" data-order-id="${order.id}" onclick="event.stopPropagation()">
+                    ${allStatuses.map(s => {
+                        const sClass = STATUS_CLASSES[s] || 'bg-gray-100 text-gray-800';
+                        const sLabel = escapeHtml(STATUS_LABELS[s] || s);
+                        const isCurrent = s === order.status;
+                        const isAllowed = allowedTransitions.includes(s);
+                        const pillClass = isCurrent ? 'current' : (isAllowed ? 'allowed' : '');
+                        const clickable = isAllowed && !isCurrent;
+                        return `<span class="status-pill ${sClass} ${pillClass}" 
+                            data-status="${s}" 
+                            ${clickable ? `data-order-id="${order.id}" data-clickable="true"` : ''}
+                            title="${isCurrent ? 'Aktualny status' : (isAllowed ? 'Kliknij aby zmienić' : 'Niedostępne')}"
+                        >${sLabel}</span>`;
+                    }).join('')}
+                </div>`;
+            } else {
+                // Tryb listy rozwijanej (domyślny) - styl jak przycisk z wypełnionym tłem
+                statusContent = `<select class="order-status-select" data-status="${order.status}" data-order-id="${order.id}" data-original-status="${order.status}" onclick="event.stopPropagation()">
                         ${[order.status, ...allowedTransitions]
                             .filter((s, i, arr) => arr.indexOf(s) === i)
                             .map(s => {
                                 const optionLabel = escapeHtml(STATUS_LABELS[s] || s);
                                 return `<option value="${s}" ${s === order.status ? 'selected' : ''}>${optionLabel}</option>`;
                             }).join('')}
-                   </select>`
-                : `<span class="px-3 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabelSafe}</span>`;
+                   </select>`;
+            }
 
             const canDelete = currentUserRole === 'ADMIN';
             const deleteBtn = canDelete
@@ -1463,10 +1569,63 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (ordersTableInfo) ordersTableInfo.textContent = `Pokazuje ${filteredOrders.length} z ${allAdminOrders.length} zamówień`;
 
-        // Attach status change listeners
+        // Attach status change listeners - dla listy rozwijanej
         ordersTableBody.querySelectorAll('.order-status-select').forEach(select => {
             select.addEventListener('change', handleInlineStatusChange);
         });
+        
+        // Attach status change listeners - dla pigułek
+        ordersTableBody.querySelectorAll('.status-pill[data-clickable="true"]').forEach(pill => {
+            pill.addEventListener('click', handlePillStatusChange);
+        });
+    }
+    
+    // Obsługa kliknięcia w pigułkę statusu
+    async function handlePillStatusChange(e) {
+        e.stopPropagation();
+        const pill = e.target.closest('.status-pill');
+        if (!pill) return;
+        
+        const orderId = pill.dataset.orderId;
+        const newStatus = pill.dataset.status;
+        if (!orderId || !newStatus) return;
+        
+        // Znajdź zamówienie
+        const order = allAdminOrders.find(o => o.id === orderId);
+        if (!order || order.status === newStatus) return;
+        
+        // Wizualne oznaczenie ładowania
+        const pillsContainer = pill.closest('.status-pills');
+        if (pillsContainer) {
+            pillsContainer.style.opacity = '0.5';
+            pillsContainer.style.pointerEvents = 'none';
+        }
+        
+        try {
+            const response = await fetch(`/api/orders/${orderId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ status: newStatus })
+            });
+            
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.message || 'Błąd zmiany statusu');
+            }
+            
+            // Aktualizuj lokalnie
+            order.status = newStatus;
+            showAdminToast(`Status zmieniony na: ${STATUS_LABELS[newStatus]}`, 'success');
+            renderOrdersTable();
+        } catch (error) {
+            console.error('Błąd zmiany statusu:', error);
+            showAdminToast(error.message || 'Nie udało się zmienić statusu', 'error');
+            if (pillsContainer) {
+                pillsContainer.style.opacity = '1';
+                pillsContainer.style.pointerEvents = 'auto';
+            }
+        }
     }
 
     // Handle order row click for inline details
@@ -1474,8 +1633,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const row = e.target.closest('.order-row');
         if (!row) return;
 
-        // Ignore clicks on buttons, selects
-        if (e.target.closest('button') || e.target.closest('select')) return;
+        // Ignore clicks on buttons, selects, status pills
+        if (e.target.closest('button') || e.target.closest('select') || e.target.closest('.status-pills')) return;
 
         const orderId = row.dataset.orderId;
         const existingDetails = document.getElementById(`details-${orderId}`);
@@ -1490,11 +1649,23 @@ document.addEventListener('DOMContentLoaded', () => {
         loadingOrders.add(orderId);
 
         try {
-            const response = await fetch(`/api/orders/${orderId}`, { credentials: 'include' });
-            if (!response.ok) throw new Error('Nie udało się pobrać szczegółów');
+            // Pobierz szczegóły zamówienia i zlecenia produkcyjne równolegle
+            const [orderResponse, prodOrdersResponse] = await Promise.all([
+                fetch(`/api/orders/${orderId}`, { credentials: 'include' }),
+                fetch(`/api/production/orders?sourceOrderId=${orderId}`, { credentials: 'include' })
+            ]);
+            
+            if (!orderResponse.ok) throw new Error('Nie udało się pobrać szczegółów');
 
-            const result = await response.json();
+            const result = await orderResponse.json();
             const fullOrder = result.data;
+            
+            // Pobierz zlecenia produkcyjne (może być puste)
+            let productionOrders = [];
+            if (prodOrdersResponse.ok) {
+                const prodResult = await prodOrdersResponse.json();
+                productionOrders = prodResult.data || [];
+            }
 
             const detailsRow = document.createElement('tr');
             detailsRow.id = `details-${orderId}`;
@@ -1559,8 +1730,68 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="flex items-center gap-1"><i class="fas fa-tag text-gray-500"></i><span>Status: <strong class="text-gray-700">${statusLabelFullSafe}</strong></span></div>
                 </div>`;
 
+            // Sekcja zleceń produkcyjnych
+            let productionOrdersHtml = '';
+            if (productionOrders.length > 0) {
+                const prodOrdersRows = productionOrders.map(po => {
+                    const poNumber = po.ordernumber || '-';
+                    const poProduct = po.product?.identifier || po.product?.name || '-';
+                    const poPath = po.pathNames || po.productionpathexpression || '-';
+                    const poProgress = po.progress || { label: '0/0', percent: 0 };
+                    const poCurrentStep = po.currentStep?.label || (po.currentStep?.phase === 'DONE' ? 'Zakończone' : '-');
+                    const poStatus = po.status || 'planned';
+                    
+                    const statusLabels = { planned: 'Zaplanowane', approved: 'Zatwierdzone', in_progress: 'W realizacji', completed: 'Zakończone', cancelled: 'Anulowane' };
+                    const statusClasses = { planned: 'bg-blue-100 text-blue-800', approved: 'bg-indigo-100 text-indigo-800', in_progress: 'bg-amber-100 text-amber-800', completed: 'bg-green-100 text-green-800', cancelled: 'bg-red-100 text-red-800' };
+                    const poStatusLabel = statusLabels[poStatus] || poStatus;
+                    const poStatusClass = statusClasses[poStatus] || 'bg-gray-100 text-gray-800';
+                    
+                    const progressBarColor = poStatus === 'completed' ? 'bg-green-500' : poStatus === 'cancelled' ? 'bg-red-300' : poProgress.percent > 0 ? 'bg-amber-500' : 'bg-blue-500';
+                    
+                    return `
+                        <tr class="border-b border-amber-100 hover:bg-amber-50 transition-colors">
+                            <td class="p-2 text-xs font-medium text-gray-800">${escapeHtml(poNumber)}</td>
+                            <td class="p-2 text-xs text-gray-700">${escapeHtml(poProduct)}</td>
+                            <td class="p-2 text-xs text-purple-700">${escapeHtml(poPath)}</td>
+                            <td class="p-2 text-xs text-gray-700">${escapeHtml(poCurrentStep)}</td>
+                            <td class="p-2 text-xs">
+                                <div class="flex items-center gap-1">
+                                    <div class="flex-1 bg-gray-200 rounded-full h-1.5 min-w-[40px]">
+                                        <div class="${progressBarColor} h-1.5 rounded-full" style="width: ${poProgress.percent}%"></div>
+                                    </div>
+                                    <span class="text-gray-600">${poProgress.label}</span>
+                                </div>
+                            </td>
+                            <td class="p-2 text-xs text-center">
+                                <span class="px-2 py-0.5 rounded text-xs font-medium ${poStatusClass}">${poStatusLabel}</span>
+                            </td>
+                        </tr>`;
+                }).join('');
+                
+                productionOrdersHtml = `
+                    <div class="border border-amber-200 rounded-lg overflow-hidden bg-white mt-3">
+                        <div class="bg-amber-50 border-b border-amber-200 px-3 py-2 flex items-center gap-2">
+                            <i class="fas fa-industry text-amber-600"></i>
+                            <span class="font-semibold text-amber-800 text-xs">Zlecenia produkcyjne (${productionOrders.length})</span>
+                        </div>
+                        <table class="w-full text-xs">
+                            <thead class="bg-amber-100 border-b border-amber-200">
+                                <tr>
+                                    <th class="p-2 text-left font-semibold text-gray-800 text-xs">Nr zlecenia</th>
+                                    <th class="p-2 text-left font-semibold text-gray-800 text-xs">Produkt</th>
+                                    <th class="p-2 text-left font-semibold text-gray-800 text-xs">Ścieżka</th>
+                                    <th class="p-2 text-left font-semibold text-gray-800 text-xs">Aktualny etap</th>
+                                    <th class="p-2 text-left font-semibold text-gray-800 text-xs">Postęp</th>
+                                    <th class="p-2 text-center font-semibold text-gray-800 text-xs">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>${prodOrdersRows}</tbody>
+                        </table>
+                    </div>`;
+            }
+
             detailsRow.innerHTML = `
-                <td colspan="8" class="p-0">
+                <td colspan="9" class="p-0">
                     <div class="p-4 space-y-3">
                         ${timelineHtml}
                         <div class="border border-indigo-200 rounded-lg overflow-hidden bg-white">
@@ -1579,6 +1810,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <tbody>${itemsHtml || '<tr><td colspan="7" class="p-3 text-center text-gray-500">Brak pozycji</td></tr>'}</tbody>
                             </table>
                         </div>
+                        ${productionOrdersHtml}
                         <div class="flex gap-3 items-end">
                             <div class="flex-1">
                                 ${canEditNotes ? `<textarea id="order-notes-${orderId}" class="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" rows="2" placeholder="Notatki...">${notesSafe}</textarea>` : `<div class="p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 max-h-16 overflow-y-auto">${notesDisplaySafe}</div>`}
@@ -1623,6 +1855,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const newStatus = select.value;
 
         if (newStatus === originalStatus) return;
+        
+        // Natychmiast aktualizuj kolor przycisku
+        select.dataset.status = newStatus;
         select.disabled = true;
 
         try {
@@ -1638,9 +1873,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const order = allAdminOrders.find(o => o.id === orderId);
                 if (order) order.status = newStatus;
                 select.dataset.originalStatus = newStatus;
-                // Update select styling
-                Object.values(STATUS_CLASSES).forEach(cls => cls.split(' ').forEach(c => select.classList.remove(c)));
-                (STATUS_CLASSES[newStatus] || 'bg-gray-100 text-gray-800').split(' ').forEach(c => select.classList.add(c));
                 showAdminToast('Status zamówienia został zaktualizowany', 'success');
             } else {
                 showAdminToast(result.message || 'Nie udało się zmienić statusu', 'error');
@@ -1946,26 +2178,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function confirmDeleteOrder() {
+    async function confirmDeleteOrder(force = false) {
         if (!deleteOrderId) return;
 
         try {
-            const response = await fetch(`/api/orders/${deleteOrderId}`, {
+            const url = force 
+                ? `/api/orders/${deleteOrderId}?force=true` 
+                : `/api/orders/${deleteOrderId}`;
+            
+            const response = await fetch(url, {
                 method: 'DELETE',
                 credentials: 'include'
             });
 
             const result = await response.json();
+            
             if (result.status === 'success') {
-                showAdminToast('Zamówienie zostało usunięte', 'success');
+                let msg = 'Zamówienie zostało usunięte';
+                if (result.deletedProductionOrders > 0) {
+                    msg += ` (+ ${result.deletedProductionOrders} zleceń produkcyjnych)`;
+                }
+                showAdminToast(msg, 'success');
                 loadOrders();
+                if (deleteOrderModal) deleteOrderModal.classList.add('hidden');
+                deleteOrderId = null;
+            } else if (result.requiresForce) {
+                // Zlecenia produkcyjne w trakcie - pytaj o force
+                const poList = result.productionOrders.map(po => `• ${po.orderNumber} (${po.status})`).join('\n');
+                const confirmForce = confirm(
+                    `${result.message}\n\nPowiązane zlecenia produkcyjne:\n${poList}\n\nCzy na pewno chcesz usunąć zamówienie i wszystkie zlecenia produkcyjne?`
+                );
+                if (confirmForce) {
+                    confirmDeleteOrder(true);
+                }
             } else {
                 showAdminToast(result.message || 'Nie udało się usunąć zamówienia', 'error');
+                if (deleteOrderModal) deleteOrderModal.classList.add('hidden');
+                deleteOrderId = null;
             }
         } catch (error) {
             console.error('Błąd usuwania zamówienia:', error);
             showAdminToast('Błąd połączenia z serwerem', 'error');
-        } finally {
             if (deleteOrderModal) deleteOrderModal.classList.add('hidden');
             deleteOrderId = null;
         }
@@ -2003,6 +2256,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (exportOrdersCsvBtn) exportOrdersCsvBtn.addEventListener('click', exportOrdersCSV);
     if (ordersTableBody) ordersTableBody.addEventListener('click', handleOrdersTableClick);
     if (ordersTableHead) ordersTableHead.addEventListener('click', handleSortClick);
+    
+    // Inicjalizacja przełącznika widoku statusów
+    initStatusViewToggle();
 
     // Print preview
     if (adminPrintPreviewClose) adminPrintPreviewClose.addEventListener('click', () => adminPrintPreviewModal?.classList.add('hidden'));
@@ -5433,19 +5689,32 @@ function addOperationRow(operation = null, step = null) {
     ).join('');
     
     const row = document.createElement('div');
-    row.className = 'operation-row flex items-center gap-2 p-3 bg-gray-50 rounded-lg';
+    row.className = 'operation-row p-4 bg-gray-50 rounded-lg border border-gray-200 mb-3';
     row.innerHTML = `
-        <span class="w-8 h-8 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full font-bold text-sm">${stepNum}</span>
-        <select name="op_phase" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500">
-            ${phaseOptions}
-        </select>
-        <select name="op_type" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500">
-            ${typeOptions}
-        </select>
-        <input type="number" name="op_time" placeholder="min" value="${operation?.estimatedTimeMin || ''}" class="w-16 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-500" min="0">
-        <button type="button" class="remove-operation-btn text-red-500 hover:text-red-700 p-1" title="Usuń operację">
-            <i class="fas fa-times"></i>
-        </button>
+        <div class="flex items-start gap-4">
+            <span class="w-10 h-10 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full font-bold text-lg flex-shrink-0">${stepNum}</span>
+            <div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Faza</label>
+                    <select name="op_phase" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white">
+                        ${phaseOptions}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Typ operacji <span class="text-red-500">*</span></label>
+                    <select name="op_type" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white font-medium">
+                        ${typeOptions}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Czas (min)</label>
+                    <input type="number" name="op_time" placeholder="np. 15" value="${operation?.estimatedTimeMin || ''}" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" min="0">
+                </div>
+            </div>
+            <button type="button" class="remove-operation-btn text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0" title="Usuń operację">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
     `;
     
     row.querySelector('.remove-operation-btn').addEventListener('click', () => {
@@ -5731,7 +6000,7 @@ function renderProductionOrders() {
     if (filteredProductionOrders.length === 0) {
         productionOrdersTbody.innerHTML = `
             <tr>
-                <td colspan="8" class="px-6 py-12 text-center text-gray-400">
+                <td colspan="10" class="px-6 py-12 text-center text-gray-400">
                     <i class="fas fa-clipboard-list text-4xl mb-4"></i>
                     <p class="text-lg">Brak zleceń produkcyjnych</p>
                     <p class="text-sm mt-1">Zlecenia pojawią się automatycznie po zatwierdzeniu zamówień</p>
@@ -5746,15 +6015,28 @@ function renderProductionOrders() {
         const sourceOrderNumber = order.sourceOrder?.orderNumber || order.sourceOrder?.ordernumber || '-';
         const productName = order.product?.identifier || order.product?.name || order.product?.code || '-';
         const quantity = order.quantity || 0;
-        const priority = order.priority || 3;
         const status = order.status || 'planned';
         const progress = order.progress || { completed: 0, total: 0, percent: 0, label: '0/0' };
         const createdAt = order.createdat ? new Date(order.createdat).toLocaleDateString('pl-PL') : '-';
         
+        // Ścieżka (czytelna nazwa)
+        const pathNames = order.pathNames || order.productionpathexpression || '-';
+        
+        // Aktualny etap
+        const currentStep = order.currentStep;
+        let currentStepHtml = '<span class="text-gray-400 text-xs">-</span>';
+        if (currentStep) {
+            if (currentStep.phase === 'DONE') {
+                currentStepHtml = '<span class="text-green-600 text-xs font-medium"><i class="fas fa-check mr-1"></i>Zakończone</span>';
+            } else {
+                const stepLabel = escapeHtml(currentStep.label || currentStep.operationType || currentStep.phase || '-');
+                const stepStatusClass = currentStep.status === 'active' ? 'text-amber-600' : 'text-blue-600';
+                currentStepHtml = `<span class="${stepStatusClass} text-xs font-medium">${stepLabel}</span>`;
+            }
+        }
+        
         const statusLabel = PROD_ORDER_STATUS_LABELS[status] || status;
         const statusClass = PROD_ORDER_STATUS_CLASSES[status] || 'bg-gray-100 text-gray-800';
-        const priorityLabel = PRIORITY_LABELS[priority] || priority;
-        const priorityClass = PRIORITY_CLASSES[priority] || 'bg-gray-100 text-gray-800';
         
         // Pasek postępu
         const progressBarColor = status === 'completed' ? 'bg-green-500' : 
@@ -5781,15 +6063,18 @@ function renderProductionOrders() {
                     ${order.sourceOrder?.customer?.name ? `<div class="text-xs text-gray-500">${escapeHtml(order.sourceOrder.customer.name)}</div>` : ''}
                 </td>
                 <td class="px-4 py-3">
-                    <div class="text-sm text-gray-900 max-w-[200px] truncate" title="${escapeHtml(productName)}">${escapeHtml(productName)}</div>
+                    <div class="text-sm text-gray-900 max-w-[180px] truncate" title="${escapeHtml(productName)}">${escapeHtml(productName)}</div>
+                </td>
+                <td class="px-4 py-3">
+                    <div class="text-sm text-purple-700 max-w-[160px] truncate" title="${escapeHtml(pathNames)}">${escapeHtml(pathNames)}</div>
                 </td>
                 <td class="px-4 py-3 text-center">
                     <span class="font-medium text-gray-900">${quantity}</span>
                 </td>
-                <td class="px-4 py-3 text-center">
-                    <span class="px-2 py-1 rounded text-xs font-medium ${priorityClass}">${priorityLabel}</span>
+                <td class="px-4 py-3">
+                    ${currentStepHtml}
                 </td>
-                <td class="px-4 py-3 min-w-[140px]">
+                <td class="px-4 py-3 min-w-[120px]">
                     ${progressHtml}
                 </td>
                 <td class="px-4 py-3 text-center">
@@ -5798,7 +6083,95 @@ function renderProductionOrders() {
                 <td class="px-4 py-3 text-right text-sm text-gray-500">
                     ${createdAt}
                 </td>
+                <td class="px-4 py-3 text-center">
+                    <div class="flex items-center justify-center gap-1">
+                        <button onclick="changeProductionOrderStatus('${order.id}', '${status}')" 
+                                class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Zmień status">
+                            <i class="fas fa-exchange-alt text-xs"></i>
+                        </button>
+                        <button onclick="deleteProductionOrder('${order.id}', '${escapeHtml(orderNumber)}', '${status}')" 
+                                class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="Usuń zlecenie">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                </td>
             </tr>
         `;
     }).join('');
+}
+
+// Zmiana statusu zlecenia produkcyjnego
+async function changeProductionOrderStatus(orderId, currentStatus) {
+    const statusOptions = [
+        { value: 'planned', label: 'Zaplanowane' },
+        { value: 'approved', label: 'Zatwierdzone' },
+        { value: 'in_progress', label: 'W realizacji' },
+        { value: 'paused', label: 'Wstrzymane' },
+        { value: 'completed', label: 'Zakończone' },
+        { value: 'cancelled', label: 'Anulowane' }
+    ];
+    
+    const optionsHtml = statusOptions.map(opt => 
+        `${opt.value === currentStatus ? '→ ' : ''}${opt.label} (${opt.value})`
+    ).join('\n');
+    
+    const newStatus = prompt(`Zmień status zlecenia.\nObecny: ${currentStatus}\n\nDostępne statusy:\n${optionsHtml}\n\nWpisz nowy status:`);
+    
+    if (!newStatus || newStatus === currentStatus) return;
+    
+    if (!statusOptions.find(s => s.value === newStatus)) {
+        showAdminToast('Nieprawidłowy status', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/production/orders/${orderId}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ status: newStatus })
+        });
+        
+        const result = await response.json();
+        if (result.status === 'success') {
+            showAdminToast('Status zlecenia zmieniony', 'success');
+            loadProductionOrders();
+        } else {
+            showAdminToast(result.message || 'Nie udało się zmienić statusu', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd zmiany statusu:', error);
+        showAdminToast('Błąd połączenia z serwerem', 'error');
+    }
+}
+
+// Usuwanie zlecenia produkcyjnego
+async function deleteProductionOrder(orderId, orderNumber, status) {
+    if (status === 'in_progress') {
+        if (!confirm(`Zlecenie ${orderNumber} jest W REALIZACJI!\n\nCzy na pewno chcesz je usunąć?`)) {
+            return;
+        }
+    } else {
+        if (!confirm(`Czy na pewno chcesz usunąć zlecenie ${orderNumber}?`)) {
+            return;
+        }
+    }
+    
+    try {
+        const response = await fetch(`/api/production/orders/${orderId}`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+        
+        const result = await response.json();
+        if (result.status === 'success') {
+            showAdminToast('Zlecenie produkcyjne usunięte', 'success');
+            loadProductionOrders();
+        } else {
+            showAdminToast(result.message || 'Nie udało się usunąć zlecenia', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd usuwania zlecenia:', error);
+        showAdminToast('Błąd połączenia z serwerem', 'error');
+    }
 }

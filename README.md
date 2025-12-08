@@ -18,6 +18,16 @@ Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
 - **Opis techniczny** – sekcje `5.5` i `6.6` w `docs/SPEC.md`.
 - **Instrukcja dla admina** – sekcja `8.4. Mapowanie produktów (galeria)` w `docs/USER_MANUAL.md`.
 
+### Moduł produkcji (MES)
+
+- **Model danych i API** – `docs/SPEC_PRODUCTION_PANEL.md` (rozdziały 2–3).
+- **Stan wdrożenia** – podrozdział `2.3.1 Stan wdrożenia (2025-12-06)` w `docs/SPEC_PRODUCTION_PANEL.md`.
+- **Najważniejsze rzeczy już działają w kodzie:**
+  - migracje Supabase utworzyły tabele: `ProductionRoom`, `WorkCenter`, `WorkStation`, `ProductionPath`, `ProductionOrder`, `ProductionOperation`;
+  - zmiana statusu zamówienia na `APPROVED` automatycznie tworzy zlecenia produkcyjne (`ProductionOrder` + `ProductionOperation`);
+  - zmiana statusu na `CANCELLED` automatycznie anuluje powiązane zlecenia produkcyjne;
+  - backend oblicza `productionProgress` dla zamówień na podstawie zleceń i operacji (do wykorzystania w UI).
+
 ---
 
 ## 1. Wymagania
