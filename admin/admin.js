@@ -6175,3 +6175,271 @@ async function deleteProductionOrder(orderId, orderNumber, status) {
         showAdminToast('Błąd połączenia z serwerem', 'error');
     }
 }
+
+// ============================================
+// MODUŁ: ZARZĄDZANIE DZIAŁAMI
+// ============================================
+
+// Elementy DOM dla widoku działów
+const navDepartments = document.getElementById('nav-departments');
+const viewDepartments = document.getElementById('view-departments');
+const newDepartmentBtn = document.getElementById('new-department-btn');
+const refreshDepartmentsBtn = document.getElementById('refresh-departments-btn');
+const departmentsTableBody = document.getElementById('departments-table-body');
+
+let allDepartmentsList = [];
+
+// Inicjalizacja widoku działów
+if (navDepartments) {
+    navDepartments.addEventListener('click', (e) => {
+        e.preventDefault();
+        // Ukryj inne widoki
+        document.querySelectorAll('[id^="view-"]').forEach(v => v.classList.add('hidden'));
+        // Pokaż widok działów
+        if (viewDepartments) viewDepartments.classList.remove('hidden');
+        // Aktualizuj aktywny element menu
+        document.querySelectorAll('aside a').forEach(a => a.classList.remove('bg-blue-50', 'text-blue-600'));
+        navDepartments.classList.add('bg-blue-50', 'text-blue-600');
+        // Załaduj dane
+        fetchDepartmentsList();
+    });
+}
+
+if (refreshDepartmentsBtn) refreshDepartmentsBtn.addEventListener('click', fetchDepartmentsList);
+if (newDepartmentBtn) newDepartmentBtn.addEventListener('click', () => openDepartmentModal());
+
+// Pobieranie listy działów
+async function fetchDepartmentsList() {
+    if (!departmentsTableBody) return;
+    
+    departmentsTableBody.innerHTML = `
+        <tr>
+            <td colspan="5" class="p-8 text-center text-gray-500">
+                <div class="flex flex-col items-center gap-2">
+                    <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                    <span>Ładowanie działów...</span>
+                </div>
+            </td>
+        </tr>
+    `;
+
+    try {
+        const res = await fetch('/api/admin/departments', { credentials: 'include' });
+        const json = await res.json();
+
+        if (json.status === 'success') {
+            allDepartmentsList = json.data || [];
+            renderDepartmentsTable();
+            updateDepartmentsStats();
+        } else {
+            departmentsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="p-8 text-center text-red-500">
+                        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                        <p>Błąd ładowania działów: ${escapeHtml(json.message)}</p>
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (err) {
+        console.error('Błąd podczas pobierania działów:', err);
+        departmentsTableBody.innerHTML = `
+            <tr>
+                <td colspan="5" class="p-8 text-center text-red-500">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                    <p>Błąd połączenia z serwerem</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+// Renderowanie tabeli działów
+function renderDepartmentsTable() {
+    if (!departmentsTableBody) return;
+
+    if (allDepartmentsList.length === 0) {
+        departmentsTableBody.innerHTML = `
+            <tr>
+                <td colspan="5" class="p-8 text-center text-gray-500">
+                    <div class="flex flex-col items-center gap-2">
+                        <i class="fas fa-building text-4xl mb-2"></i>
+                        <p>Brak działów w systemie</p>
+                        <button onclick="openDepartmentModal()" class="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                            <i class="fas fa-plus mr-2"></i>Dodaj pierwszy dział
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    departmentsTableBody.innerHTML = allDepartmentsList.map(dept => `
+        <tr class="hover:bg-gray-50">
+            <td class="p-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-building text-blue-600"></i>
+                    </div>
+                    <div>
+                        <div class="font-medium text-gray-900">${escapeHtml(dept.name)}</div>
+                        <div class="text-xs text-gray-500">ID: ${escapeHtml(dept.id)}</div>
+                    </div>
+                </div>
+            </td>
+            <td class="p-4 text-center">
+                ${dept.isActive 
+                    ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Aktywny</span>'
+                    : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">Nieaktywny</span>'
+                }
+            </td>
+            <td class="p-4 text-center">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${dept.userCount > 0 ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'}">
+                    ${dept.userCount || 0}
+                </span>
+            </td>
+            <td class="p-4 text-gray-600">
+                ${new Date(dept.createdAt).toLocaleDateString('pl-PL')}
+            </td>
+            <td class="p-4 text-right">
+                <div class="flex items-center justify-end gap-2">
+                    <button onclick="editDepartment('${dept.id}')" class="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Edytuj">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    ${dept.isActive 
+                        ? `<button onclick="deleteDepartment('${dept.id}', '${escapeHtml(dept.name)}')" class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Usuń">
+                            <i class="fas fa-trash"></i>
+                          </button>`
+                        : `<button onclick="restoreDepartment('${dept.id}', '${escapeHtml(dept.name)}')" class="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors" title="Przywróć">
+                            <i class="fas fa-undo"></i>
+                          </button>`
+                    }
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// Aktualizacja statystyk działów
+function updateDepartmentsStats() {
+    const total = allDepartmentsList.length;
+    const active = allDepartmentsList.filter(d => d.isActive).length;
+    const totalUsers = allDepartmentsList.reduce((sum, dept) => sum + (dept.userCount || 0), 0);
+    
+    const statTotal = document.getElementById('dept-stats-total');
+    const statActive = document.getElementById('dept-stats-active');
+    const statUsers = document.getElementById('dept-stats-users');
+    
+    if (statTotal) statTotal.textContent = total;
+    if (statActive) statActive.textContent = active;
+    if (statUsers) statUsers.textContent = totalUsers;
+}
+
+// Otwieranie modala działu (dodawanie/edycja)
+function openDepartmentModal(dept = null) {
+    const name = prompt('Nazwa działu:', dept?.name || '');
+    if (!name || !name.trim()) return;
+
+    const deptData = { name: name.trim() };
+
+    if (dept) {
+        deptData.isActive = dept.isActive;
+        saveDepartment(dept.id, deptData);
+    } else {
+        saveDepartment(null, deptData);
+    }
+}
+
+// Edycja działu
+function editDepartment(id) {
+    const dept = allDepartmentsList.find(d => d.id === id);
+    if (dept) {
+        openDepartmentModal(dept);
+    }
+}
+
+// Zapis działu (tworzenie lub aktualizacja)
+async function saveDepartment(id, data) {
+    try {
+        const method = id ? 'PATCH' : 'POST';
+        const url = id ? `/api/admin/departments/${id}` : '/api/admin/departments';
+        
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            fetchDepartmentsList();
+            showAdminToast(id ? 'Dział zaktualizowany' : 'Dział utworzony', 'success');
+        } else {
+            showAdminToast(result.message || 'Błąd podczas zapisu działu', 'error');
+        }
+    } catch (err) {
+        console.error('Błąd podczas zapisu działu:', err);
+        showAdminToast('Błąd połączenia z serwerem', 'error');
+    }
+}
+
+// Usuwanie działu
+async function deleteDepartment(id, name) {
+    const dept = allDepartmentsList.find(d => d.id === id);
+    const userCount = dept?.userCount || 0;
+    
+    if (userCount > 0) {
+        showAdminToast(`Nie można usunąć działu "${name}". Przypisanych jest ${userCount} użytkowników.`, 'error');
+        return;
+    }
+
+    if (!confirm(`Czy na pewno chcesz usunąć dział "${name}"?`)) return;
+
+    try {
+        const response = await fetch(`/api/admin/departments/${id}`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            fetchDepartmentsList();
+            showAdminToast('Dział usunięty', 'success');
+        } else {
+            showAdminToast(result.message || 'Błąd podczas usuwania działu', 'error');
+        }
+    } catch (err) {
+        console.error('Błąd podczas usuwania działu:', err);
+        showAdminToast('Błąd połączenia z serwerem', 'error');
+    }
+}
+
+// Przywracanie działu
+async function restoreDepartment(id, name) {
+    if (!confirm(`Czy na pewno chcesz przywrócić dział "${name}"?`)) return;
+
+    try {
+        const response = await fetch(`/api/admin/departments/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ name, isActive: true })
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            fetchDepartmentsList();
+            showAdminToast('Dział przywrócony', 'success');
+        } else {
+            showAdminToast(result.message || 'Błąd podczas przywracania działu', 'error');
+        }
+    } catch (err) {
+        console.error('Błąd podczas przywracania działu:', err);
+        showAdminToast('Błąd połączenia z serwerem', 'error');
+    }
+}

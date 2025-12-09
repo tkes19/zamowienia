@@ -8,6 +8,8 @@
 // ============================================
 let orders = [];
 let filteredOrders = [];
+let workOrders = []; // Zbiorcze ZP (ProductionWorkOrder)
+let summary = {}; // Podsumowanie kolejki
 let currentOperationId = null;
 let currentOrderId = null;
 let selectedProblemType = null;
@@ -17,6 +19,7 @@ let orderTimers = {};
 // Ustawienia widoku
 let viewMode = localStorage.getItem('prodViewMode') || 'grid'; // grid, list
 let sortMode = localStorage.getItem('prodSortMode') || 'priority';
+let displayMode = localStorage.getItem('prodDisplayMode') || 'orders'; // orders, workorders (Zbiorcze ZP)
 let activeFilters = {
     urgent: false,
     small: false,
@@ -57,6 +60,108 @@ function isOverdue(dateStr) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return dueDate < today;
+}
+
+// Formatuj czas trwania (sekundy -> MM:SS lub HH:MM:SS)
+function formatDuration(seconds) {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hrs > 0) {
+        return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Aktualizuj wszystkie timery na stronie
+function updateTimers() {
+    const timers = document.querySelectorAll('.wo-timer[data-start]');
+    const now = Date.now();
+    
+    timers.forEach(timer => {
+        const startTime = new Date(timer.dataset.start).getTime();
+        const elapsed = Math.floor((now - startTime) / 1000);
+        const timerValue = timer.querySelector('.timer-value');
+        if (timerValue && elapsed >= 0) {
+            timerValue.textContent = formatDuration(elapsed);
+            
+            // Zmień kolor po 30 minutach
+            if (elapsed > 1800) {
+                timer.classList.add('timer-warning');
+            }
+            // Zmień kolor po godzinie
+            if (elapsed > 3600) {
+                timer.classList.remove('timer-warning');
+                timer.classList.add('timer-danger');
+            }
+        }
+    });
+}
+
+// Skróty klawiszowe
+function handleKeyboardShortcuts(e) {
+    // Ignoruj jeśli focus jest w input/textarea
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+        return;
+    }
+    
+    switch(e.key.toLowerCase()) {
+        case 'r':
+            // R = Odśwież
+            if (!e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                refreshOrders();
+                showToast('Odświeżono listę zleceń', 'success');
+            }
+            break;
+        case 'z':
+            // Z = Przełącz widok ZP
+            if (!e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                toggleDisplayMode();
+            }
+            break;
+        case 'f':
+            // F = Tryb pełnoekranowy
+            if (!e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                toggleFullscreen();
+            }
+            break;
+        case 'escape':
+            // ESC = Zamknij modalne
+            closeAllModals();
+            break;
+    }
+}
+
+// Tryb pełnoekranowy
+function toggleFullscreen() {
+    const header = document.querySelector('.prod-header');
+    const stats = document.querySelector('.prod-stats');
+    const toolbar = document.querySelector('.prod-toolbar');
+    
+    document.body.classList.toggle('fullscreen-mode');
+    
+    if (document.body.classList.contains('fullscreen-mode')) {
+        if (header) header.style.display = 'none';
+        if (stats) stats.style.display = 'none';
+        showToast('Tryb pełnoekranowy (F aby wyjść)', 'info');
+    } else {
+        if (header) header.style.display = '';
+        if (stats) stats.style.display = '';
+    }
+}
+
+// Zamknij wszystkie modale
+function closeAllModals() {
+    const modals = document.querySelectorAll('.modal, .prod-modal');
+    modals.forEach(modal => {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    });
+    closeProductImage();
 }
 
 // Parsuje projectQuantities - może być JSON array lub string "4,3,3"
@@ -102,9 +207,11 @@ function formatProjectsDisplay(selectedProjects, projectQuantities) {
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
     console.log('[PRODUCTION] DOM loaded');
+    checkAuth();
     initViewSettings();
     setupProductImageModal();
     loadOrders();
+    loadStats();
     initViewSettings();
     
     // Auto-odświeżanie co 30 sekund
@@ -112,6 +219,12 @@ document.addEventListener('DOMContentLoaded', () => {
         loadOrders(true); // silent refresh
         loadStats();
     }, 30000);
+    
+    // Aktualizacja timerów co sekundę
+    setInterval(updateTimers, 1000);
+    
+    // Skróty klawiszowe
+    document.addEventListener('keydown', handleKeyboardShortcuts);
 });
 
 function initViewSettings() {
@@ -121,6 +234,9 @@ function initViewSettings() {
     // Przywróć sortowanie
     const sortSelect = document.getElementById('sortSelect');
     if (sortSelect) sortSelect.value = sortMode;
+    
+    // Przywróć tryb wyświetlania (pozycje / zbiorcze ZP)
+    updateDisplayModeButton();
 }
 
 // Setup product image modal event listeners
@@ -321,6 +437,12 @@ function checkAuth() {
                 userNameEl.textContent = userName;
             }
 
+            // Pokaż link do Grafiki dla kierownika produkcji i admina
+            const prodNavGraphics = document.getElementById('prod-nav-graphics');
+            if (prodNavGraphics && ['PRODUCTION_MANAGER', 'ADMIN'].includes(data.role)) {
+                prodNavGraphics.style.display = 'flex';
+            }
+
             // Wyświetl nazwę pokoju produkcyjnego
             const roomName = data.productionRoomName;
             const roomBadge = document.getElementById('roomBadge');
@@ -382,8 +504,11 @@ async function loadOrders(silent = false) {
         
         if (data.status === 'success') {
             orders = data.data || [];
+            workOrders = data.workOrders || [];
+            summary = data.summary || {};
             applyFiltersAndSort();
             renderOrders();
+            updateSummaryDisplay();
         } else {
             throw new Error(data.message || 'Błąd pobierania zleceń');
         }
@@ -403,6 +528,15 @@ async function loadOrders(silent = false) {
     }
 }
 
+// Aktualizuj wyświetlanie podsumowania kolejki
+function updateSummaryDisplay() {
+    const summaryEl = document.getElementById('queueSummary');
+    if (summaryEl && summary.queueQuantity !== undefined) {
+        summaryEl.textContent = `Łącznie: ${summary.queueQuantity} szt.`;
+        summaryEl.style.display = 'inline';
+    }
+}
+
 function refreshOrders() {
     loadOrders();
     loadStats();
@@ -414,6 +548,13 @@ function refreshOrders() {
 function renderOrders() {
     const container = document.getElementById('ordersList');
     
+    // Tryb Zbiorcze ZP
+    if (displayMode === 'workorders') {
+        renderWorkOrders(container);
+        return;
+    }
+    
+    // Tryb pojedynczych pozycji (domyślny)
     // Użyj przefiltrowanych zleceń
     const displayOrders = filteredOrders.length > 0 || (activeFilters.urgent || activeFilters.small) 
         ? filteredOrders 
@@ -452,7 +593,8 @@ function renderOrders() {
     }
     
     if (queueOrders.length > 0) {
-        html += `<div class="prod-section-title"><i class="fas fa-list"></i> KOLEJKA (${queueOrders.length})</div>`;
+        const queueQty = queueOrders.reduce((sum, o) => sum + (o.quantity || 0), 0);
+        html += `<div class="prod-section-title"><i class="fas fa-list"></i> KOLEJKA (${queueOrders.length}) <span class="prod-queue-summary">• ${queueQty} szt.</span></div>`;
         queueOrders.forEach(order => {
             html += renderOrderCard(order);
         });
@@ -466,6 +608,375 @@ function renderOrders() {
             startTimer(order.id, order.currentOperation.starttime);
         }
     });
+}
+
+// Renderowanie widoku Zbiorczych ZP (ProductionWorkOrder)
+function renderWorkOrders(container) {
+    if (workOrders.length === 0) {
+        container.innerHTML = `
+            <div class="prod-empty">
+                <i class="fas fa-clipboard-check"></i>
+                <div class="prod-empty-text">Brak zbiorczych zleceń produkcyjnych</div>
+                <div style="color: var(--prod-text-muted); margin-top: 8px; font-size: 14px;">
+                    Nowe zamówienia pojawią się tutaj po zatwierdzeniu
+                </div>
+            </div>
+        `;
+        return;
+    }
+    
+    let html = '';
+    
+    // Nagłówek z podsumowaniem
+    const totalQty = workOrders.reduce((sum, wo) => sum + wo.totalQuantity, 0);
+    html += `<div class="prod-section-title"><i class="fas fa-layer-group"></i> ZBIORCZE ZP (${workOrders.length}) <span class="prod-queue-summary">• ${totalQty} szt.</span></div>`;
+    
+    workOrders.forEach(wo => {
+        html += renderWorkOrderCard(wo);
+    });
+    
+    container.innerHTML = html;
+}
+
+// Renderowanie karty Zbiorczego ZP
+function renderWorkOrderCard(wo) {
+    const statusLabels = {
+        'planned': 'Zaplanowane',
+        'approved': 'Do realizacji',
+        'in_progress': 'W trakcie',
+        'completed': 'Zakończone'
+    };
+    
+    const statusClass = wo.status.replace('_', '-');
+    const priorityClass = `p${wo.priority || 3}`;
+    const priorityHighClass = (wo.priority === 1) ? 'priority-high' : '';
+    
+    // Oblicz postęp
+    const completedOrders = wo.orders.filter(o => o.status === 'completed').length;
+    const inProgressOrders = wo.orders.filter(o => o.status === 'in_progress').length;
+    const progressPercent = wo.orders.length > 0 ? Math.round((completedOrders / wo.orders.length) * 100) : 0;
+    
+    // Lista produktów (skrócona) z dodatkowymi informacjami
+    const productsList = wo.orders.slice(0, 5).map(o => {
+        const product = o.product || {};
+        const orderItem = o.sourceOrderItem || {};
+        const source = orderItem.source || '';
+        const location = orderItem.locationName || orderItem.projectName || '';
+        const projects = formatProjectsDisplay(orderItem.selectedProjects, orderItem.projectQuantities);
+        
+        // URL podglądu produktu - priorytet: orderItem.projectViewUrl > product.imageUrl
+        const previewUrl = orderItem.projectViewUrl || orderItem.projectviewurl || product.imageUrl || '';
+        const productName = product.name || product.code || 'Produkt';
+        const productIdentifier = product.identifier || product.code || '';
+        
+        return `<div class="wo-product-item">
+            <div class="wo-product-main">
+                <span class="wo-product-name">${escapeHtml(productName)}</span>
+                ${previewUrl ? `<button class="wo-preview-btn" onclick="event.stopPropagation(); showProductImage('${previewUrl}', '${encodeURIComponent(productName)}', '${encodeURIComponent(productIdentifier)}', '${encodeURIComponent(location)}')" title="Podgląd produktu"><i class="fas fa-eye"></i></button>` : ''}
+                <span class="wo-product-qty">${o.quantity || 0} szt.</span>
+            </div>
+            ${(source || location) ? `
+            <div class="wo-product-meta">
+                ${source ? `<span class="wo-source-badge ${source.toLowerCase()}">${source}</span>` : ''}
+                ${location ? `<span class="wo-location"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(location)}</span>` : ''}
+            </div>` : ''}
+            ${projects ? `<div class="wo-product-projects">${projects}</div>` : ''}
+        </div>`;
+    }).join('');
+    
+    const moreProducts = wo.orders.length > 5 ? `<div class="wo-more-products">+ ${wo.orders.length - 5} więcej...</div>` : '';
+    
+    // Numer zamówienia źródłowego
+    const sourceOrder = wo.orders[0]?.sourceOrder;
+    const orderNumber = sourceOrder?.orderNumber || '---';
+    const customer = sourceOrder?.customer?.name || 'Klient';
+    
+    return `
+        <div class="prod-workorder-card status-${statusClass} ${priorityHighClass}" data-workorder-id="${wo.id}">
+            <div class="wo-header">
+                <div class="wo-number-row">
+                    <span class="wo-number">${wo.workOrderNumber}</span>
+                    <span class="wo-room-badge"><i class="fas fa-door-open"></i> ${escapeHtml(wo.roomName)}</span>
+                </div>
+                <div class="wo-status-row">
+                    <span class="prod-status-badge ${wo.status}">${statusLabels[wo.status] || wo.status}</span>
+                    <span class="prod-priority-badge ${priorityClass}">${wo.priority || 3}</span>
+                </div>
+            </div>
+            
+            <div class="wo-body">
+                <div class="wo-order-info">
+                    <a href="/orders.html?search=${encodeURIComponent(orderNumber)}" class="wo-order-link" title="Otwórz zamówienie">
+                        <i class="fas fa-receipt"></i> ${orderNumber}
+                    </a>
+                    <span class="wo-customer"><i class="fas fa-user"></i> ${escapeHtml(customer)}</span>
+                </div>
+                
+                <div class="wo-summary">
+                    <div class="wo-summary-item">
+                        <span class="wo-summary-value">${wo.productsCount}</span>
+                        <span class="wo-summary-label">produktów</span>
+                    </div>
+                    <div class="wo-summary-item">
+                        <span class="wo-summary-value">${wo.totalQuantity}</span>
+                        <span class="wo-summary-label">szt. łącznie</span>
+                    </div>
+                    ${inProgressOrders > 0 ? `
+                    <div class="wo-summary-item active">
+                        <span class="wo-summary-value">${inProgressOrders}</span>
+                        <span class="wo-summary-label">w trakcie</span>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                <div class="wo-products-list">
+                    ${productsList}
+                    ${moreProducts}
+                </div>
+                
+                ${wo.orders.length > 0 ? `
+                <div class="wo-progress">
+                    <div class="wo-progress-bar">
+                        <div class="wo-progress-fill" style="width: ${progressPercent}%"></div>
+                    </div>
+                    <div class="wo-progress-text">${completedOrders}/${wo.orders.length} pozycji (${progressPercent}%)</div>
+                </div>
+                ` : ''}
+            </div>
+            
+            <div class="wo-actions">
+                <button class="prod-btn prod-btn-secondary" onclick="toggleWorkOrderDetails(${wo.id})" title="Pokaż/ukryj pozycje">
+                    <i class="fas fa-chevron-down"></i> Pozycje
+                </button>
+                <button class="prod-btn prod-btn-print" onclick="printWorkOrder(${wo.id})" title="Drukuj zlecenie produkcyjne">
+                    <i class="fas fa-print"></i> Drukuj ZP
+                </button>
+            </div>
+            
+            <div class="wo-details" id="wo-details-${wo.id}" style="display: none;">
+                ${wo.orders.map(order => renderOrderCardCompact(order)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+// Kompaktowa karta pozycji wewnątrz ZP
+function renderOrderCardCompact(order) {
+    const product = order.product || {};
+    const orderItem = order.sourceOrderItem || {};
+    const statusLabels = {
+        'planned': 'Zaplanowane',
+        'approved': 'Do realizacji',
+        'in_progress': 'W trakcie',
+        'completed': 'Zakończone'
+    };
+    
+    const currentOp = order.currentOperation;
+    const nextOp = order.nextOperation;
+    const canStart = !currentOp && nextOp && (order.status === 'approved' || order.status === 'planned');
+    const canComplete = currentOp && (currentOp.status === 'active' || currentOp.status === 'paused');
+    const operationId = currentOp?.id || nextOp?.id;
+    
+    // Dane z pozycji zamówienia
+    const source = orderItem.source || '';
+    const location = orderItem.locationName || orderItem.projectName || '';
+    const projects = formatProjectsDisplay(orderItem.selectedProjects, orderItem.projectQuantities);
+    const notes = order.productionnotes || orderItem.productionNotes || '';
+    
+    // URL podglądu produktu
+    const previewUrl = product.imageUrl || orderItem.projectViewUrl || orderItem.projectviewurl || '';
+    const productName = product.name || product.code || 'Produkt';
+    const productIdentifier = product.identifier || product.code || '';
+    
+    // Timer dla operacji w trakcie
+    const startTime = currentOp?.startedat || currentOp?.startedAt;
+    const timerHtml = (order.status === 'in_progress' && startTime) ? 
+        `<span class="wo-timer" data-start="${startTime}"><i class="fas fa-clock"></i> <span class="timer-value">00:00</span></span>` : '';
+    
+    return `
+        <div class="wo-order-item status-${order.status.replace('_', '-')}" data-order-id="${order.id}">
+            <div class="wo-order-item-header">
+                <span class="wo-order-item-product">${escapeHtml(product.name || product.code || 'Produkt')}</span>
+                <span class="wo-order-item-qty">${order.quantity || 0} szt.</span>
+                ${timerHtml}
+                <span class="wo-order-item-status ${order.status}">${statusLabels[order.status]}</span>
+            </div>
+            
+            <div class="wo-order-item-details">
+                ${(source || location) ? `
+                <div class="wo-order-item-meta">
+                    ${source ? `<span class="wo-source-badge ${source.toLowerCase()}">${source}</span>` : ''}
+                    ${location ? `<span class="wo-location"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(location)}</span>` : ''}
+                </div>` : ''}
+                
+                ${projects ? `
+                <div class="wo-order-item-projects">
+                    <span class="wo-projects-label"><i class="fas fa-list-ol"></i> Projekty:</span>
+                    ${projects}
+                </div>` : ''}
+                
+                ${notes ? `
+                <div class="wo-order-item-notes">
+                    <i class="fas fa-sticky-note"></i> ${escapeHtml(notes)}
+                </div>` : ''}
+            </div>
+            
+            <div class="wo-order-item-actions">
+                ${previewUrl ? `
+                    <button class="prod-btn-sm prod-btn-view" onclick="showProductImage('${previewUrl}', '${encodeURIComponent(productName)}', '${encodeURIComponent(productIdentifier)}', '${encodeURIComponent(location)}')" title="Podgląd produktu">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                ` : ''}
+                ${canStart ? `
+                    <button class="prod-btn-sm prod-btn-start" onclick="startOperation(${operationId}, ${order.id})">
+                        <i class="fas fa-play"></i>
+                    </button>
+                ` : ''}
+                ${canComplete ? `
+                    <button class="prod-btn-sm prod-btn-complete" onclick="showCompleteModal(${currentOp.id}, ${order.quantity})">
+                        <i class="fas fa-check"></i>
+                    </button>
+                ` : ''}
+                <button class="prod-btn-sm prod-btn-problem" onclick="showProblemModal(${operationId})">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+// Przełącz widoczność szczegółów ZP
+function toggleWorkOrderDetails(woId) {
+    const detailsEl = document.getElementById(`wo-details-${woId}`);
+    if (detailsEl) {
+        const isVisible = detailsEl.style.display !== 'none';
+        detailsEl.style.display = isVisible ? 'none' : 'block';
+        
+        // Zmień ikonę przycisku
+        const btn = detailsEl.parentElement.querySelector('.wo-actions button:first-child i');
+        if (btn) {
+            btn.className = isVisible ? 'fas fa-chevron-down' : 'fas fa-chevron-up';
+        }
+    }
+}
+
+// Przełącz tryb wyświetlania (pozycje / zbiorcze ZP)
+function toggleDisplayMode() {
+    displayMode = displayMode === 'orders' ? 'workorders' : 'orders';
+    localStorage.setItem('prodDisplayMode', displayMode);
+    updateDisplayModeButton();
+    renderOrders();
+}
+
+// Utwórz zamówienie testowe z wieloma produktami
+async function createTestMultiProductOrder() {
+    try {
+        const response = await fetch('/api/test/create-multi-product-order', {
+            method: 'POST',
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            alert(`Utworzono zamówienie testowe: ${data.data.orderNumber}\n\nProdukty:\n${data.data.products.map(p => `- ${p.name}: ${p.quantity} szt.`).join('\n')}\n\nPrzejdź do widoku ZP aby zobaczyć zgrupowane pozycje.`);
+            // Odśwież listę zleceń
+            loadOrders();
+        } else {
+            alert('Błąd tworzenia zamówienia testowego: ' + data.message);
+        }
+    } catch (error) {
+        console.error('Błąd tworzenia zamówienia testowego:', error);
+        alert('Błąd tworzenia zamówienia testowego');
+    }
+}
+
+// Uruchom diagnostykę systemu
+async function runDiagnostics() {
+    try {
+        const response = await fetch('/api/test/diagnostics', {
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            const diag = data.data;
+            
+            let report = `=== DIAGNOSTYKA SYSTEMU ===\n`;
+            report += `Timestamp: ${diag.timestamp}\n\n`;
+            
+            // Tablice
+            report += `=== TABELE ===\n`;
+            for (const [table, info] of Object.entries(diag.tables)) {
+                const status = info.exists ? '✅' : '❌';
+                report += `${status} ${table}: ${info.count} rekordów\n`;
+                if (info.error) report += `   Błąd: ${info.error}\n`;
+            }
+            
+            // Dane
+            report += `\n=== DANE ===\n`;
+            report += `Zlecenia pogrupowane w ZP: ${diag.data.groupedByWorkOrder?.length || 0}\n`;
+            if (diag.data.groupedByWorkOrder?.length > 0) {
+                diag.data.groupedByWorkOrder.forEach(wo => {
+                    report += `  ZP ${wo.workOrderId}: ${wo.itemCount} pozycji, ${wo.totalQuantity} szt.\n`;
+                });
+            }
+            
+            report += `Produkty testowe: ${diag.data.testProducts?.length || 0}/3\n`;
+            if (diag.data.testProducts) {
+                diag.data.testProducts.forEach(p => {
+                    report += `  ${p.code}: ${p.name}\n`;
+                });
+            }
+            
+            // Problemy
+            if (diag.issues.length > 0) {
+                report += `\n=== PROBLEMY ===\n`;
+                diag.issues.forEach(issue => {
+                    report += `❌ ${issue}\n`;
+                });
+            }
+            
+            // Podsumowanie
+            report += `\n=== PODSUMOWANIE ===\n`;
+            report += `Problemów: ${diag.summary.totalIssues}\n`;
+            report += `Zgrupowane zlecenia: ${diag.summary.hasGroupedOrders ? '✅' : '❌'}\n`;
+            report += `Produkty testowe: ${diag.summary.hasTestProducts ? '✅' : '❌'}\n`;
+            report += `Tabele gotowe: ${diag.summary.tablesReady ? '✅' : '❌'}\n`;
+            
+            // Wyświetl raport
+            console.log(report);
+            
+            // Pokaż alert z podsumowaniem
+            const summary = diag.issues.length > 0 
+                ? `Znaleziono ${diag.issues.length} problemów. Sprawdź konsolę (F12) po szczegóły.`
+                : `System OK. Wszystkie tabele i dane są poprawne.`;
+            
+            alert(summary + '\n\nSzczegółowy raport w konsoli (F12).');
+            
+        } else {
+            alert('Błąd diagnostyki: ' + data.message);
+        }
+    } catch (error) {
+        console.error('Błąd diagnostyki:', error);
+        alert('Błąd diagnostyki');
+    }
+}
+
+function updateDisplayModeButton() {
+    const btn = document.getElementById('displayModeBtn');
+    if (btn) {
+        if (displayMode === 'workorders') {
+            btn.innerHTML = '<i class="fas fa-layer-group"></i> ZP';
+            btn.title = 'Widok: Zbiorcze ZP (grupuje produkty z jednego zamówienia)';
+            btn.classList.add('active');
+        } else {
+            btn.innerHTML = '<i class="fas fa-list-ul"></i> ZP';
+            btn.title = 'Widok: Pojedyncze pozycje';
+            btn.classList.remove('active');
+        }
+    }
 }
 
 // Ikony dla typów operacji
@@ -562,15 +1073,19 @@ function renderOrderCard(order) {
                 
                 <div class="prod-order-product">
                     <span>${product.name || product.code || 'Produkt'}</span>
-                    ${orderItem.projectviewurl && orderItem.projectviewurl !== 'http://localhost:3001/' ? `
-                        <button onclick="showProductImage('${orderItem.projectviewurl}', '${product.name || ''}', '${product.identifier || ''}', '${orderItem.source === 'MIEJSCOWOSCI' ? 'Miejscowości' : 'Klienci indywidualni'}')" class="inline-flex items-center justify-center w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 ml-2" title="Pokaż podgląd produktu">
+                    ${(() => {
+                        const previewUrl = orderItem.projectViewUrl || orderItem.projectviewurl || product.imageUrl || '';
+                        const locationDisplay = orderItem.locationName || (orderItem.source === 'MIEJSCOWOSCI' ? 'Miejscowości' : 'Klienci indywidualni');
+                        return previewUrl && previewUrl !== 'http://localhost:3001/' ? `
+                        <button onclick="showProductImage('${previewUrl}', '${encodeURIComponent(product.name || '')}', '${encodeURIComponent(product.identifier || '')}', '${encodeURIComponent(locationDisplay)}')" class="inline-flex items-center justify-center w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 ml-2" title="Pokaż podgląd produktu">
                             <i class="fas fa-image text-xs"></i>
                         </button>
-                    ` : ''}
+                    ` : '';
+                    })()}
                 </div>
                 <div class="prod-order-customer">
                     <i class="fas fa-user"></i> ${customer.name || 'Klient'}
-                    ${sourceOrder.orderNumber ? ` • ${sourceOrder.orderNumber}` : ''}
+                    ${sourceOrder.orderNumber ? ` • <a href="/orders.html?search=${encodeURIComponent(sourceOrder.orderNumber)}" class="prod-order-link" title="Otwórz zamówienie">${sourceOrder.orderNumber}</a>` : ''}
                 </div>
                 
                 <div class="prod-order-quantity-section">
@@ -653,6 +1168,12 @@ function renderOrderCard(order) {
                 ${(canPause || canResume) ? `
                     <button class="prod-btn prod-btn-problem" onclick="showProblemModal(${currentOp.id})">
                         <i class="fas fa-exclamation-triangle"></i> Problem
+                    </button>
+                ` : ''}
+                
+                ${(order.workOrderId || order['workOrderId']) ? `
+                    <button class="prod-btn prod-btn-print" onclick="printWorkOrder(${order.workOrderId || order['workOrderId']})" title="Drukuj zlecenie produkcyjne">
+                        <i class="fas fa-print"></i>
                     </button>
                 ` : ''}
             </div>
@@ -978,16 +1499,23 @@ function showProductImage(imageUrl, productName = '', productIdentifier = '', lo
         return;
     }
     
-    // Set product info in header
-    const title = productName || 'Podgląd produktu';
+    // Set product info in header - decode URL encoded parameters
+    const title = decodeURIComponent(productName) || 'Podgląd produktu';
     const details = [];
-    if (productIdentifier) details.push(`ID: ${productIdentifier}`);
-    if (locationName) details.push(`Lokalizacja: ${locationName}`);
+    if (productIdentifier) details.push(`ID: ${decodeURIComponent(productIdentifier)}`);
+    if (locationName) details.push(`Lokalizacja: ${decodeURIComponent(locationName)}`);
     
     productImageTitle.textContent = title;
     productImageDetails.textContent = details.join(' | ') || '';
     
     console.log('[showProductImage] Setting image src to:', imageUrl);
+    
+    // Reset zoom state BEFORE loading image
+    isZoomed = false;
+    productImageContent.style.transform = 'scale(1)';
+    productImageContent.classList.remove('cursor-zoom-out');
+    productImageContent.classList.add('cursor-zoom-in');
+    if (productImageZoom) productImageZoom.innerHTML = '<i class="fas fa-search-plus"></i>';
     
     // Clear previous handlers and set new ones with addEventListener
     const newImage = new Image();
@@ -1005,12 +1533,6 @@ function showProductImage(imageUrl, productName = '', productIdentifier = '', lo
     
     // Start loading the image
     newImage.src = imageUrl;
-    
-    // Reset zoom state
-    productImageContent.style.transform = 'scale(1)';
-    productImageContent.classList.remove('cursor-zoom-out');
-    productImageContent.classList.add('cursor-zoom-in');
-    productImageZoom.innerHTML = '<i class="fas fa-search-plus"></i>';
 }
 
 // Zoom functionality
@@ -1050,6 +1572,25 @@ function closeProductImage() {
 
 // Export modal functions
 window.showProductImage = showProductImage;
+
+// ============================================
+// DRUK ZLECENIA PRODUKCYJNEGO
+// ============================================
+function printWorkOrder(workOrderId) {
+    if (!workOrderId) {
+        showToast('Brak ID zlecenia produkcyjnego', 'error');
+        return;
+    }
+    
+    showToast('Generowanie zlecenia produkcyjnego...', 'info');
+    
+    // Otwórz PDF w nowym oknie
+    const printUrl = `/api/production/work-orders/${workOrderId}/print`;
+    window.open(printUrl, '_blank');
+}
+
+// Export print function
+window.printWorkOrder = printWorkOrder;
 
 // ============================================
 // CLEANUP

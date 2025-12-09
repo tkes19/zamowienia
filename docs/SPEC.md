@@ -59,6 +59,34 @@ ZAMÓWIENIA/
 | `CLIENT` | Klient zewnętrzny | Brak | Tylko swoje | Brak |
 | `NEW_USER` | Nowe konto | Brak | Brak | Brak |
 
+### 4.1. Nawigacja globalna i dostęp do widoków
+
+System używa wspólnej belki nawigacyjnej widocznej na wszystkich głównych stronach. Linki są filtrowane na podstawie roli użytkownika.
+
+#### Tabela dostępu do widoków
+
+| Widok | ADMIN | SALES_DEPT | SALES_REP | PRODUCTION/OPERATOR | PRODUCTION_MANAGER | GRAPHICS | WAREHOUSE |
+|-------|-------|------------|-----------|---------------------|-------------------|----------|-----------|
+| Formularz (`/`) | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Zamówienia (`/orders`) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Klienci (`/clients`) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Produkcja (`/production`) | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ✅ |
+| Grafika (`/graphics.html`) | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Admin (`/admin`) | ✅ | ✅ (częściowo) | ❌ | ❌ | ❌ | ✅ (miejscowości) | ❌ |
+
+#### Redirect po zalogowaniu
+
+- **ADMIN** → `/admin`
+- **OPERATOR, PRODUCTION, PRODUCTION_MANAGER** → `/production`
+- **GRAPHICS** → `/graphics.html`
+- **Pozostali** → `/` (formularz zamówień)
+
+#### Uwagi
+
+- Role produkcyjne nie mają dostępu do formularza zamówień ani listy klientów
+- SALES_DEPT ma bezpośredni dostęp do panelu produkcji i grafiki (1 klik)
+- Graficy mają dostęp do formularza w trybie tylko do odczytu
+
 ---
 
 ## 5. Model danych (główne tabele)
@@ -100,6 +128,7 @@ OrderItem (
   totalQuantity integer,                -- suma ilości po projektach (dla spójności)
   source text,                          -- 'MIEJSCOWOSCI', 'KATALOG_INDYWIDUALNY', itp.
   locationName text,                    -- miejscowość PM lub obiekt KI
+  projectViewUrl text,                  -- pełny URL do podglądu projektu (przechowywany tak jak w chwili dodania do koszyka)
   customization jsonb,
   productionNotes text
 )
@@ -145,6 +174,71 @@ GraphicTask (
 )
 ```
 
+#### 5.4.1. Struktura organizacyjno‑produkcyjna: Działy, Pokoje, Role
+
+System rozróżnia trzy poziomy opisu organizacji i produkcji:
+
+- **Działy (Department)** – struktura organizacyjna / HR.
+- **Pokoje produkcyjne (ProductionRoom)** – struktura techniczna produkcji (hale / linie).
+- **Role (`User.role`)** – uprawnienia w aplikacji (co użytkownik może robić).
+
+To rozdzielenie pozwala jednocześnie modelować:
+
+- *gdzie* użytkownik jest w strukturze firmy (Dział),
+- *w jakim miejscu / na jakiej linii* pracuje fizycznie (Pokój),
+- *co* może robić w systemie (Rola).
+
+##### Działy (Department)
+
+Reprezentują klasyczne działy firmy: **Sprzedaż**, **Magazyn**, **Produkcja**, **Grafika**, **IT** itp.
+
+- Tabela: `Department (id, name, createdAt, isActive)`.
+- Powiązanie z użytkownikami: `User.departmentId`.
+- Endpointy admina (panel "Działy") zwracają dodatkowo `userCount` – liczbę aktywnych
+  użytkowników w danym dziale.
+- Wykorzystanie:
+  - filtrowanie użytkowników w panelu admina,
+  - proste raporty organizacyjne (ile osób w którym dziale),
+  - przyszłe reguły dostępu do danych zależne od działu.
+
+##### Pokoje produkcyjne (ProductionRoom)
+
+Reprezentują fizyczną strukturę produkcji: hale, linie i pokoje technologiczne
+np. **Druk UV**, **Laser CO2**, **Laser Fiber**, **Pakowanie**.
+
+- Główna tabela opisana szczegółowo w `SPEC_PRODUCTION_PANEL.md`.
+- Powiązanie z użytkownikami: `User.productionroomid` – wskazuje macierzysty pokój
+  produkcyjny operatora.
+- Wykorzystanie:
+  - panel admina "Pokoje" (lista pokoi, gniazd i maszyn),
+  - mapowanie zleceń produkcyjnych i operacji na konkretne pokoje / gniazda,
+  - raportowanie obciążenia linii produkcyjnych.
+
+##### Role użytkowników (`User.role`)
+
+Role definiują **uprawnienia w panelach**, niezależnie od działu i pokoju.
+Przykłady: `ADMIN`, `SALES_DEPT`, `GRAPHICS`, `WAREHOUSE`, `PRODUCTION`, `OPERATOR`.
+
+- Przechowywane w polu `User.role`.
+- Wymuszane po stronie backendu przez middleware `requireRole([...])`.
+- Po stronie frontendu (np. `admin/admin.js`) funkcja
+  `checkUserPermissionsAndAdaptUI()` ukrywa/pokazuje elementy nawigacji i widoki
+  w zależności od roli.
+
+##### Relacja między Działem, Pokojem i Rolą
+
+Na poziomie bazy **Dział i Pokój nie są sztywno związane** – łączy je użytkownik:
+
+- użytkownik ma przypisany `departmentId` (struktura organizacyjna),
+- użytkownik ma przypisany `productionroomid` (miejsce pracy w produkcji),
+- użytkownik ma `role` (uprawnienia w systemie).
+
+Taki model jest elastyczny:
+
+- jeden dział może mieć użytkowników pracujących w wielu pokojach,
+- jeden pokój może być obsługiwany przez ludzi z różnych działów,
+- zmiana roli (uprawnień) nie wymaga zmiany działu ani pokoju.
+
 Rozszerzenia tabeli `Order` i (opcjonalnie) `OrderItem` pod moduł grafiki
 opisane są w `docs/SPEC_PRODUCTION_PANEL.md` (sekcja 9.2) i będą wdrażane w
 ramach wersji v2.x systemu.
@@ -169,7 +263,6 @@ GalleryProject (
   createdAt timestamptz NOT NULL,
   createdBy uuid REFERENCES "User"(id)
 )
-
 GalleryProjectProduct (
   id uuid PRIMARY KEY,
   projectId uuid NOT NULL REFERENCES GalleryProject(id) ON DELETE CASCADE,
@@ -199,6 +292,31 @@ GalleryProjectProduct (
 | `/api/auth/logout` | POST | Wylogowanie |
 | `/api/auth/me` | GET | Dane zalogowanego użytkownika |
 | `/api/auth/sync-role` | POST | Synchronizacja roli z cookies |
+
+#### 6.1.1. Konwencja użycia cookies w backendzie
+
+Wszystkie endpointy backendu, które potrzebują informacji o zalogowanym użytkowniku,
+powinny korzystać wyłącznie z helpera `parseCookies(req)` z pliku `backend/server.js`,
+zamiast bezpośredniego odwołania do `req.cookies`.
+
+Standardowy wzorzec:
+
+```js
+const cookies = parseCookies(req);
+const userId = cookies.auth_id;
+const role = cookies.auth_role;
+
+if (!userId) {
+  return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+}
+```
+
+Powód:
+
+- helper `parseCookies` działa spójnie we wszystkich środowiskach (bez dodatkowych
+  middleware typu `cookie-parser`),
+- minimalizuje ryzyko rozbieżności w sposobie pobierania `auth_id` / `auth_role`
+  między endpointami.
 
 ### 6.2. Zamówienia
 

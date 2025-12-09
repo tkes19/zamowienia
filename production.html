@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Panel Produkcji | REZON</title>
     <link rel="stylesheet" href="assets/styles.css">
-    <link rel="stylesheet" href="assets/vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+          integrity="sha512-MVk7Y0lE5RX7V6czS4QhIwTZPIYOvTo95OfzmiEJeZVrDCTnhgypKekJy5o+1OtSWT8gJtIhXCTITVEWil/QQg=="
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer">
     <style>
         /* ============================================
            PANEL PRODUKCJI - KOMPAKTOWY WIDOK OPERATORA
@@ -125,6 +129,30 @@
             background: var(--status-problem);
             border-color: var(--status-problem);
             color: #fff;
+        }
+        
+        /* Linki nawigacyjne w headerze */
+        .prod-nav-link {
+            color: var(--prod-text-muted);
+            text-decoration: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+        
+        .prod-nav-link:hover {
+            color: var(--prod-text);
+            background: var(--prod-accent);
+            border-color: var(--prod-text-muted);
+        }
+        
+        .prod-nav-link i {
+            font-size: 12px;
         }
         
         /* ============================================
@@ -769,6 +797,18 @@
             background: #dc2626;
         }
         
+        .prod-btn-print {
+            background: #7c3aed;
+            color: #fff;
+            flex: 0 0 auto;
+            min-width: auto;
+            padding: 8px 12px;
+        }
+        
+        .prod-btn-print:hover {
+            background: #6d28d9;
+        }
+        
         .prod-btn-secondary {
             background: var(--prod-accent);
             color: var(--prod-text);
@@ -1140,6 +1180,710 @@
         body.list-mode .prod-section-title {
             padding: 8px 4px;
         }
+        
+        /* ============================================
+           WIDOK ZBIORCZYCH ZP (ProductionWorkOrder)
+           ============================================ */
+        .prod-workorder-card {
+            background: var(--prod-card);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid var(--prod-accent);
+            margin-bottom: 16px;
+        }
+        
+        .prod-workorder-card.status-in-progress {
+            border-color: var(--status-in-progress);
+            box-shadow: 0 0 20px rgba(245, 158, 11, 0.2);
+        }
+        
+        .wo-header {
+            background: linear-gradient(135deg, var(--prod-accent) 0%, var(--prod-card) 100%);
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        
+        .wo-number-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .wo-number {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+        }
+        
+        .wo-room-badge {
+            background: var(--status-approved);
+            color: #fff;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .wo-status-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .wo-body {
+            padding: 16px;
+        }
+        
+        .wo-order-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--prod-accent);
+        }
+        
+        .wo-order-link {
+            color: var(--status-approved);
+            text-decoration: none;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .wo-order-link:hover {
+            text-decoration: underline;
+        }
+        
+        .wo-customer {
+            color: var(--prod-text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .wo-summary {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 16px;
+        }
+        
+        .wo-summary-item {
+            text-align: center;
+        }
+        
+        .wo-summary-item.active .wo-summary-value {
+            color: var(--status-in-progress);
+        }
+        
+        .wo-summary-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #fff;
+            display: block;
+        }
+        
+        .wo-summary-label {
+            font-size: 12px;
+            color: var(--prod-text-muted);
+            text-transform: uppercase;
+        }
+        
+        .wo-products-list {
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .wo-product-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .wo-product-item:last-child {
+            border-bottom: none;
+        }
+        
+        .wo-product-name {
+            color: var(--prod-text);
+        }
+        
+        .wo-product-qty {
+            color: var(--prod-text-muted);
+            font-weight: 600;
+        }
+        
+        .wo-more-products {
+            color: var(--prod-text-muted);
+            font-size: 12px;
+            text-align: center;
+            padding-top: 8px;
+        }
+        
+        .wo-progress {
+            margin-top: 12px;
+        }
+        
+        .wo-progress-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .wo-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--status-approved), var(--status-completed));
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        
+        .wo-progress-text {
+            font-size: 12px;
+            color: var(--prod-text-muted);
+            margin-top: 4px;
+            text-align: right;
+        }
+        
+        .wo-actions {
+            display: flex;
+            gap: 8px;
+            padding: 12px 16px;
+            background: rgba(0,0,0,0.2);
+            border-top: 1px solid var(--prod-accent);
+        }
+        
+        .wo-details {
+            padding: 0 16px 16px;
+        }
+        
+        .wo-order-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 3px solid var(--status-planned);
+        }
+        
+        .wo-order-item.status-in-progress {
+            border-left-color: var(--status-in-progress);
+            background: rgba(245, 158, 11, 0.1);
+        }
+        
+        .wo-order-item.status-completed {
+            border-left-color: var(--status-completed);
+            opacity: 0.7;
+        }
+        
+        .wo-order-item-main {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex: 1;
+        }
+        
+        .wo-order-item-product {
+            font-weight: 500;
+            color: var(--prod-text);
+        }
+        
+        .wo-order-item-qty {
+            color: var(--prod-text-muted);
+            font-weight: 600;
+        }
+        
+        .wo-order-item-status {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: var(--status-planned);
+            color: #fff;
+        }
+        
+        .wo-order-item-status.in_progress {
+            background: var(--status-in-progress);
+        }
+        
+        .wo-order-item-status.completed {
+            background: var(--status-completed);
+        }
+        
+        .wo-order-item-actions {
+            display: flex;
+            gap: 6px;
+        }
+        
+        .prod-btn-sm {
+            padding: 6px 10px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        
+        .prod-btn-sm.prod-btn-start {
+            background: var(--status-completed);
+            color: #fff;
+        }
+        
+        .prod-btn-sm.prod-btn-complete {
+            background: var(--status-approved);
+            color: #fff;
+        }
+        
+        .prod-btn-sm.prod-btn-problem {
+            background: var(--status-problem);
+            color: #fff;
+        }
+        
+        .prod-btn-sm:hover {
+            transform: scale(1.05);
+        }
+        
+        .prod-btn-sm.prod-btn-view {
+            background: var(--status-approved);
+            color: #fff;
+        }
+        
+        /* Rozszerzone style dla pozycji ZP */
+        .wo-order-item-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .wo-order-item-details {
+            margin-top: 8px;
+            padding-left: 8px;
+            border-left: 2px solid rgba(255,255,255,0.1);
+        }
+        
+        .wo-order-item-meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+        
+        .wo-source-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+        
+        .wo-source-badge.miejscowosci,
+        .wo-source-badge.pm {
+            background: #3b82f6;
+            color: #fff;
+        }
+        
+        .wo-source-badge.katalog_indywidualny,
+        .wo-source-badge.ki {
+            background: #8b5cf6;
+            color: #fff;
+        }
+        
+        .wo-location {
+            color: var(--prod-text-muted);
+            font-size: 12px;
+        }
+        
+        .wo-location i {
+            margin-right: 4px;
+            color: #ef4444;
+        }
+        
+        .wo-order-item-projects {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 6px;
+        }
+        
+        .wo-projects-label {
+            color: var(--prod-text-muted);
+            font-size: 11px;
+        }
+        
+        .wo-projects-label i {
+            margin-right: 4px;
+        }
+        
+        .wo-order-item-projects .proj-item {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(59, 130, 246, 0.2);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 11px;
+        }
+        
+        .wo-order-item-projects .proj-num {
+            color: #60a5fa;
+            font-weight: 600;
+            margin-right: 4px;
+        }
+        
+        .wo-order-item-projects .proj-qty {
+            color: #fbbf24;
+            font-weight: 700;
+        }
+        
+        .wo-order-item-notes {
+            color: #fbbf24;
+            font-size: 11px;
+            font-style: italic;
+            padding: 4px 8px;
+            background: rgba(251, 191, 36, 0.1);
+            border-radius: 4px;
+            margin-top: 4px;
+        }
+        
+        .wo-order-item-notes i {
+            margin-right: 6px;
+        }
+        
+        /* Style dla listy produktów w karcie ZP */
+        .wo-product-item {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .wo-product-item:last-child {
+            border-bottom: none;
+        }
+        
+        .wo-product-main {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .wo-preview-btn {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        
+        .wo-preview-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+        }
+        
+        .wo-product-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+        }
+        
+        .wo-product-projects {
+            margin-top: 4px;
+        }
+        
+        .wo-product-projects .proj-item {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(59, 130, 246, 0.15);
+            border-radius: 3px;
+            padding: 1px 5px;
+            font-size: 10px;
+            margin-right: 4px;
+        }
+        
+        .wo-product-projects .proj-num {
+            color: #60a5fa;
+            font-weight: 600;
+            margin-right: 3px;
+        }
+        
+        .wo-product-projects .proj-qty {
+            color: #fbbf24;
+            font-weight: 700;
+        }
+        
+        /* Przycisk trybu wyświetlania */
+        .prod-tool-btn.active {
+            background: var(--status-approved);
+            color: #fff;
+        }
+        
+        /* Podsumowanie kolejki */
+        .prod-queue-summary {
+            font-weight: 400;
+            color: var(--prod-text-muted);
+            font-size: 14px;
+        }
+        
+        /* Link do zamówienia */
+        .prod-order-link {
+            color: var(--status-approved);
+            text-decoration: none;
+        }
+        
+        .prod-order-link:hover {
+            text-decoration: underline;
+        }
+        
+        /* ============================================
+           USPRAWNIENIA UX/UI
+           ============================================ */
+        
+        /* Animacja ładowania */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .loading-pulse {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        /* Wskaźnik aktywnej pozycji */
+        .wo-order-item.status-in-progress {
+            border-left: 4px solid var(--status-in-progress);
+            background: rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Hover na kartach ZP */
+        .prod-workorder-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        }
+        
+        .prod-workorder-card {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        /* Lepsze wyróżnienie statusów */
+        .wo-order-item-status.in_progress {
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        /* Licznik pozycji w nagłówku ZP */
+        .wo-items-count {
+            background: rgba(255,255,255,0.1);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        /* Pasek postępu z gradientem */
+        .wo-progress-fill {
+            background: linear-gradient(90deg, var(--status-completed), #34d399);
+            transition: width 0.5s ease;
+        }
+        
+        /* Tooltip dla przycisków */
+        .prod-btn-sm[title]:hover::after {
+            content: attr(title);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e293b;
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            z-index: 100;
+            margin-bottom: 4px;
+        }
+        
+        .prod-btn-sm {
+            position: relative;
+        }
+        
+        /* Wyróżnienie wysokiego priorytetu */
+        .prod-workorder-card.priority-high {
+            border-top: 3px solid #ef4444;
+        }
+        
+        .prod-priority-badge.p1 {
+            background: #ef4444;
+            animation: pulse 1s ease-in-out infinite;
+        }
+        
+        /* Szybki podgląd ilości */
+        .wo-qty-highlight {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fbbf24;
+        }
+        
+        /* Responsywność dla mniejszych ekranów */
+        @media (max-width: 768px) {
+            .wo-summary {
+                flex-wrap: wrap;
+            }
+            
+            .wo-order-item-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .wo-order-item-actions {
+                width: 100%;
+                justify-content: flex-end;
+                margin-top: 8px;
+            }
+        }
+        
+        /* Animacja przy dodawaniu nowej pozycji */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .wo-order-item {
+            animation: slideIn 0.3s ease;
+        }
+        
+        /* Wyraźniejsze rozdzielenie sekcji */
+        .wo-details {
+            border-top: 1px solid rgba(255,255,255,0.1);
+            margin-top: 12px;
+            padding-top: 12px;
+        }
+        
+        /* Ikona kopiowania numeru zamówienia */
+        .wo-order-link::after {
+            content: " 📋";
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        .wo-order-link:hover::after {
+            opacity: 0.5;
+        }
+        
+        /* Status badge z ikoną */
+        .prod-status-badge::before {
+            margin-right: 4px;
+        }
+        
+        .prod-status-badge.planned::before {
+            content: "📋";
+        }
+        
+        .prod-status-badge.in_progress::before {
+            content: "⚡";
+        }
+        
+        .prod-status-badge.completed::before {
+            content: "✅";
+        }
+        
+        /* Timer na pozycji */
+        .wo-timer {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .wo-timer i {
+            font-size: 10px;
+        }
+        
+        .wo-timer.timer-warning {
+            background: rgba(251, 191, 36, 0.2);
+            color: #fbbf24;
+        }
+        
+        .wo-timer.timer-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            animation: pulse 1s ease-in-out infinite;
+        }
+        
+        /* Tryb pełnoekranowy */
+        body.fullscreen-mode {
+            padding-top: 0 !important;
+        }
+        
+        body.fullscreen-mode .prod-orders-grid {
+            padding-top: 60px;
+        }
+        
+        body.fullscreen-mode .prod-toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: var(--prod-bg);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        /* Podpowiedź skrótów klawiszowych */
+        .keyboard-hint {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(30, 41, 59, 0.95);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 11px;
+            color: var(--prod-text-muted);
+            z-index: 50;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .keyboard-hint kbd {
+            background: rgba(255,255,255,0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+            margin-right: 4px;
+        }
+        
+        /* Toast info */
+        .toast-info {
+            background: var(--status-approved) !important;
+        }
     </style>
 </head>
 <body>
@@ -1156,6 +1900,12 @@
             </div>
         </div>
         <div class="prod-header-right">
+            <a href="/orders" class="prod-nav-link" id="prod-nav-orders" title="Podgląd zamówień">
+                <i class="fas fa-receipt"></i> Zamówienia
+            </a>
+            <a href="/graphics.html" class="prod-nav-link" id="prod-nav-graphics" style="display: none;" title="Panel grafika">
+                <i class="fas fa-palette"></i> Grafika
+            </a>
             <span class="prod-user" id="userName">---</span>
             <button class="prod-btn-logout" onclick="logout()">
                 <i class="fas fa-sign-out-alt"></i> Wyloguj
@@ -1185,7 +1935,10 @@
             <button class="prod-tool-btn" onclick="refreshOrders()" title="Odśwież">
                 <i class="fas fa-sync-alt"></i>
             </button>
-            <button class="prod-tool-btn" onclick="toggleViewMode()" id="viewModeBtn" title="Zmień widok">
+            <button class="prod-tool-btn" onclick="toggleDisplayMode()" id="displayModeBtn" title="Przełącz widok: Pozycje / Zbiorcze ZP (grupuje produkty z jednego zamówienia)">
+                <i class="fas fa-list-ul"></i> ZP
+            </button>
+            <button class="prod-tool-btn" onclick="toggleViewMode()" id="viewModeBtn" title="Zmień układ (siatka/lista)">
                 <i class="fas fa-th-large"></i>
             </button>
             <select class="prod-tool-select" id="sortSelect" onchange="sortOrders()">
@@ -1206,6 +1959,12 @@
             </button>
             <button class="prod-filter-chip pinned" onclick="toggleFilter('pinned')" id="filterPinned">
                 <i class="fas fa-thumbtack"></i> MOJE
+            </button>
+            <button class="prod-filter-chip test" onclick="createTestMultiProductOrder()" title="Utwórz zamówienie testowe z 3 produktami">
+                <i class="fas fa-plus"></i> TEST ZP
+            </button>
+            <button class="prod-filter-chip test" onclick="runDiagnostics()" title="Sprawdź stan systemu (dane, tabele, powiązania)">
+                <i class="fas fa-stethoscope"></i> DIAG
             </button>
         </div>
     </div>
@@ -1340,12 +2099,22 @@
                 </div>
             </div>
             <!-- Image container with zoom capability -->
-            <div class="bg-gray-800 p-8 rounded-b-lg overflow-auto max-h-[80vh]">
-                <div class="flex justify-center items-center">
-                    <img id="product-image-content" src="" alt="Podgląd produktu" class="max-w-full max-h-full object-contain cursor-zoom-in transition-transform duration-300 shadow-2xl rounded">
+            <div class="bg-gray-800 p-4 rounded-b-lg overflow-auto" style="max-height: 75vh;">
+                <div class="flex justify-center items-center" style="min-height: 300px;">
+                    <img id="product-image-content" src="" alt="Podgląd produktu" 
+                         style="max-width: 100%; max-height: 70vh; object-fit: contain; transform: scale(1);" 
+                         class="cursor-zoom-in transition-transform duration-300 shadow-2xl rounded">
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Podpowiedź skrótów klawiszowych -->
+    <div class="keyboard-hint" id="keyboardHint">
+        <div><kbd>R</kbd> Odśwież</div>
+        <div><kbd>Z</kbd> Widok ZP</div>
+        <div><kbd>F</kbd> Pełny ekran</div>
+        <div><kbd>ESC</kbd> Zamknij</div>
     </div>
 
     <script src="scripts/production.js"></script>

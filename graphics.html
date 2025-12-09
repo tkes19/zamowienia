@@ -1213,9 +1213,21 @@
 
             <!-- Bottom Actions -->
             <div style="padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.1);">
-                <a href="index.html" class="nav-item">
-                    <i class="fas fa-arrow-left"></i>
-                    <span>Powrót do systemu</span>
+                <a href="/" class="nav-item" id="nav-form-link">
+                    <i class="fas fa-file-alt"></i>
+                    <span>Formularz zamówień</span>
+                </a>
+                <a href="/orders" class="nav-item" id="nav-orders-link" style="display: none;">
+                    <i class="fas fa-receipt"></i>
+                    <span>Zamówienia</span>
+                </a>
+                <a href="/production" class="nav-item" id="nav-production-link" style="display: none;">
+                    <i class="fas fa-industry"></i>
+                    <span>Produkcja</span>
+                </a>
+                <a href="/admin#city-access" class="nav-item" id="nav-admin-link">
+                    <i class="fas fa-map-marker-alt"></i>
+                    <span>Nowe miejscowości</span>
                 </a>
             </div>
         </aside>
@@ -1390,6 +1402,9 @@
         </div>
         <div class="detail-actions" id="detailActions">
             <button class="btn btn-secondary" onclick="closeDetailPanel()">Anuluj</button>
+            <button class="btn btn-secondary" id="detailPrintBtn" style="background: #7c3aed; color: white;">
+                <i class="fas fa-print"></i> Drukuj zlecenie
+            </button>
             <button class="btn btn-primary" id="detailSaveBtn">Zapisz zmiany</button>
         </div>
     </div>

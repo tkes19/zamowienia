@@ -68,6 +68,22 @@ node server.js
 node server.js lub npm run dev
 ```
 
+### Gdy port 3001 jest zajęty (reset serwera)
+
+Jeśli przy `node server.js` pojawia się błąd `EADDRINUSE: address already in use :::3001`, zatrzymaj wiszący proces Node w PowerShellu:
+
+```powershell
+Get-Process node                  # sprawdź, czy działa node
+Get-Process node | Stop-Process -Force   # zabij wszystkie procesy node
+```
+
+Potem ponownie uruchom backend:
+
+```powershell
+cd backend
+node server.js   # lub: npm run dev
+```
+
 Następnie otwórz w przeglądarce `http://localhost:3001/`. Ten adres serwuje `index.html` i obsługuje wszystkie zapytania produktu (`/api/v1/products`) oraz galerii (`/api/gallery/...`). Nie korzystaj z Live Servera – uruchomienie strony spod innego originu skończy się błędem CORS.
 
 ## 4. Konfiguracja backendu

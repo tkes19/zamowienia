@@ -61,6 +61,18 @@ Ten dokument definiuje jednolite słownictwo używane w Panelu Produkcyjnym syst
 
 ---
 
+## 🧩 Struktura organizacyjna
+
+| Termin Polski | Odpowiednik Angielski | Definicja | Powiązanie w systemie |
+|---------------|------------------------|-----------|------------------------|
+| **Dział** | Department | Jednostka organizacyjna firmy (np. Sprzedaż, Produkcja, Magazyn, Grafika, IT) | `Department` + `User.departmentId` |
+| **Rola użytkownika** | User Role | Typ uprawnień użytkownika w systemie (np. ADMIN, SALES_DEPT, GRAPHICS, WAREHOUSE, PRODUCTION, OPERATOR) | `User.role`, middleware `requireRole([...])` |
+
+> Szczegółowy opis relacji między Działami, Pokojami produkcyjnymi i Rolami
+> znajduje się w `docs/SPEC.md` §5.4.1.
+
+---
+
 ## 🏭 Typy Operacji Technologicznych
 
 | Kategoria | Operacja | Opis | Przykładowe stanowiska |
@@ -99,9 +111,12 @@ ProductionRoom      -- Pokój produkcyjny
 WorkCenter         -- Gniazdo produkcyjne  
 WorkStation        -- Stanowisko robocze
 ProductionPath     -- Ścieżka produkcyjna
-ProductionOrder    -- Zlecenie produkcyjne
+ProductionOrder    -- Pozycja zlecenia produkcyjnego (rekord dla pojedynczej pozycji zamówienia)
+ProductionWorkOrder-- Zlecenie produkcyjne (kartka / nagłówek dla pokoju, grupa wielu ProductionOrder)
 ProductionOperation-- Operacja technologiczna
 ProductionLog      -- Log operacji produkcyjnych
+PrintAudit         -- Audyt druku dokumentów
+GraphicTask        -- Zadanie graficzne
 ```
 
 ### **Endpointy API:**
@@ -136,6 +151,7 @@ ProductionLog      -- Log operacji produkcyjnych
 | **Pokój grawerowania** | "Dział: grawerowanie" | "Pokój produkcyjny: Grawerowanie" |
 | **Krok produkcyjny** | "Step" | "Operacja technologiczna" |
 | **Maszyna** | "Work Center" | "Stanowisko robocze" |
+| **Zlecenie produkcyjne** | "ProductionOrder" | Dla użytkownika: kartka / PDF dla pokoju (ProductionWorkOrder). W kodzie: `ProductionOrder` to **pozycja zlecenia produkcyjnego**, nie używać tej nazwy w UI dla pojedynczej pozycji. |
 
 ---
 

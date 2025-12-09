@@ -38,6 +38,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadingOrders = new Set(); // Blokada podczas ładowania
     const ordersInEditMode = new Set(); // Zamówienia w trybie edycji
 
+    // Pokazywanie linków nawigacji na podstawie roli
+    function setupOrdersNavigation(role) {
+        const formLink = document.getElementById('nav-form-link');
+        const productionLink = document.getElementById('production-link');
+        const graphicsLink = document.getElementById('graphics-link');
+        
+        // Formularz - ukryj dla produkcji (nie mają tam co robić)
+        if (formLink) {
+            if (['OPERATOR', 'PRODUCTION', 'PRODUCTION_MANAGER'].includes(role)) {
+                formLink.style.display = 'none';
+            }
+        }
+        
+        // Klienci - tylko sprzedaż i admin
+        if (clientsLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(role)) {
+            clientsLink.style.display = 'flex';
+        }
+        
+        // Produkcja - dla ról produkcyjnych + SALES_DEPT + ADMIN
+        if (productionLink && ['ADMIN', 'SALES_DEPT', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER', 'WAREHOUSE'].includes(role)) {
+            productionLink.style.display = 'flex';
+        }
+        
+        // Grafika - dla kierownika produkcji, SALES_DEPT, ADMIN
+        if (graphicsLink && ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER'].includes(role)) {
+            graphicsLink.style.display = 'flex';
+        }
+        
+        // Admin
+        if (adminLink && ['ADMIN', 'SALES_DEPT'].includes(role)) {
+            adminLink.style.display = 'flex';
+        }
+    }
+
     function escapeHtml(str) {
         if (str === null || str === undefined) return '';
         return String(str)
@@ -514,13 +548,7 @@ document.addEventListener('DOMContentLoaded', () => {
             currentUserId = userData.id;
 
             // Pokaż linki w zależności od roli
-            if (currentUserRole === 'ADMIN') {
-                adminLink.style.display = 'flex';
-            }
-
-            if (['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(currentUserRole)) {
-                clientsLink.style.display = 'flex';
-            }
+            setupOrdersNavigation(currentUserRole);
 
             // Pokaż filtr handlowca dla ADMIN i SALES_DEPT
             if (['ADMIN', 'SALES_DEPT'].includes(currentUserRole)) {
@@ -1188,11 +1216,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         </td>
                         <td class="p-2 text-xs text-right text-gray-700">${unitPrice.toFixed(2)} zł</td>
                         <td class="p-2 text-xs text-right font-semibold text-gray-900 line-total">${(item.quantity * unitPrice).toFixed(2)} zł</td>
-                        <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplaySafe || '-'}</td>
-                        <td class="p-1">
+                        <td class="p-2 text-xs text-gray-700 text-right pr-4" style="padding-left: 3rem !important;">${sourceBadge}${locationDisplaySafe || '-'}</td>
+                        <td class="p-1" style="padding-left: 3rem !important;">
                             <div class="flex items-center gap-1">
                                 <input type="text" name="notes" value="${notesDisplaySafe}" 
-                                    class="flex-1 px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+                                    class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                                     placeholder="Uwagi produkcyjne">
                                 ${canDeleteItems ? `
                                     <button type="button" onclick="deleteOrderItem('${fullOrder.id}', '${item.id}')" 
@@ -1218,8 +1246,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-2 text-xs text-center text-gray-700 ${qtyClass}">${item.quantity}</td>
                     <td class="p-2 text-xs text-right text-gray-700">${(item.unitPrice || 0).toFixed(2)} zł</td>
                     <td class="p-2 text-xs text-right font-semibold text-gray-900">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td>
-                    <td class="p-2 text-xs text-gray-700 text-right pr-4">${sourceBadge}${locationDisplaySafe || '-'}</td>
-                    <td class="p-2 text-xs text-gray-600 italic">${notesDisplaySafe || '-'}</td>
+                    <td class="p-2 text-xs text-gray-700 text-right pr-4" style="padding-left: 3rem !important;">${sourceBadge}${locationDisplaySafe || '-'}</td>
+                    <td class="p-2 text-xs text-gray-600 italic" style="padding-left: 3rem !important;">${notesDisplaySafe || '-'}</td>
                     <td class="p-2 text-xs text-center">${projectViewUrlDisplay}</td>
                 </tr>
                 `;
@@ -1279,8 +1307,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <th class="p-2 text-center font-semibold text-gray-800 text-xs" style="width:8%">Ilość</th>
                                         <th class="p-2 text-right font-semibold text-gray-800 text-xs" style="width:10%">Cena j.</th>
                                         <th class="p-2 text-right font-semibold text-gray-800 text-xs" style="width:12%">Wartość</th>
-                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:12%">Lokalizacja</th>
-                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:20%">Uwagi</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:12%; padding-left: 3rem !important;">Lokalizacja</th>
+                                        <th class="p-2 text-left font-semibold text-gray-800 text-xs" style="width:20%; padding-left: 3rem !important;">Uwagi</th>
                                         <th class="p-2 text-center font-semibold text-gray-800 text-xs" style="width:10%">Widok projektów</th>
                                     </tr>
                                 </thead>
@@ -1304,18 +1332,23 @@ document.addEventListener('DOMContentLoaded', () => {
                             <!-- Przyciski akcji -->
                             <div class="flex gap-2">
                                 ${isEditMode ? `
-                                    <button onclick="saveOrderItems('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
-                                        <i class="fas fa-save"></i> Zapisz zmiany
-                                    </button>
                                     ${canEditNotes ? `
                                         <button onclick="saveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-emerald-600 text-white text-xs rounded hover:bg-emerald-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
                                             <i class="fas fa-sticky-note"></i> Zapisz notatki
                                         </button>
                                     ` : ''}
+                                    <button onclick="saveOrderItems('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
+                                        <i class="fas fa-save"></i> Zapisz zmiany
+                                    </button>
                                     <button onclick="exitEditMode('${fullOrder.id}')" class="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
                                         <i class="fas fa-times"></i> Anuluj
                                     </button>
                                 ` : `
+                                    ${canEditNotes ? `
+                                        <button onclick="saveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap">
+                                            <i class="fas fa-save"></i> Zapisz
+                                        </button>
+                                    ` : ''}
                                     ${canEdit ? `
                                         <button onclick="enterEditMode('${fullOrder.id}')" class="px-3 py-1 bg-amber-500 text-white text-xs rounded hover:bg-amber-600 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
                                             <i class="fas fa-edit"></i> Edytuj pozycje
@@ -1324,25 +1357,23 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <button onclick="toggleOrderHistory('${fullOrder.id}')" class="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors font-medium whitespace-nowrap flex items-center gap-1">
                                         <i id="history-icon-${fullOrder.id}" class="fas fa-history"></i> Historia
                                     </button>
-                                    
-                                    ${canEditNotes ? `
-                                        <button onclick="saveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap">
-                                            <i class="fas fa-save"></i> Zapisz
-                                        </button>
-                                    ` : ''}
                                 `}
                                 <div class="relative inline-block">
                                     <button onclick="togglePrintMenu('${fullOrder.id}')" class="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 transition-colors font-medium whitespace-nowrap">
                                         <i class="fas fa-print"></i> Drukuj <i class="fas fa-chevron-down text-xs ml-1"></i>
                                     </button>
-                                    <div id="print-menu-${fullOrder.id}" class="hidden absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                                    <div id="print-menu-${fullOrder.id}" class="hidden absolute right-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
                                         <button onclick="printOrder('${fullOrder.id}', 'full')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
                                             <i class="fas fa-file-invoice text-blue-600 mr-2"></i>
                                             Zamówienie (z cenami)
                                         </button>
-                                        <button onclick="printOrder('${fullOrder.id}', 'production')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
+                                        <button onclick="printProductionWorkOrders('${fullOrder.id}')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
                                             <i class="fas fa-industry text-orange-600 mr-2"></i>
-                                            Zlecenie Produkcyjne
+                                            Zlecenia produkcyjne (PDF)
+                                        </button>
+                                        <button onclick="printPackingList('${fullOrder.id}')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
+                                            <i class="fas fa-box-open text-green-600 mr-2"></i>
+                                            Lista kompletacyjna (PDF)
                                         </button>
                                     </div>
                                 </div>
@@ -1545,6 +1576,74 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
     });
+
+    // Drukuj zlecenia produkcyjne dla pokoi produkcyjnych (ProductionWorkOrder) powiązane z zamówieniem
+    async function printProductionWorkOrders(orderId) {
+        try {
+            // Zamknij menu druku
+            document.querySelectorAll('[id^="print-menu-"]').forEach(menu => {
+                menu.classList.add('hidden');
+            });
+
+            showToast('Wyszukiwanie zleceń produkcyjnych...', 'info');
+
+            const response = await fetch(`/api/orders/${orderId}/production-work-orders`, {
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                console.error('Błąd pobierania zleceń produkcyjnych:', response.status, response.statusText);
+                showToast('Nie udało się pobrać zleceń produkcyjnych dla tego zamówienia', 'error');
+                return;
+            }
+
+            const result = await response.json();
+            const workOrders = Array.isArray(result.data) ? result.data : [];
+
+            if (workOrders.length === 0) {
+                showToast('Brak zleceń produkcyjnych dla tego zamówienia', 'warning');
+                return;
+            }
+
+            if (workOrders.length === 1) {
+                const w = workOrders[0];
+                const url = `/api/production/work-orders/${w.id}/print`;
+                window.open(url, '_blank');
+                return;
+            }
+
+            // Więcej niż jedno zlecenie - otwórz wszystkie w osobnych kartach
+            workOrders.forEach(w => {
+                const url = `/api/production/work-orders/${w.id}/print`;
+                window.open(url, '_blank');
+            });
+
+            showToast(`Otworzono ${workOrders.length} zleceń produkcyjnych do druku`, 'success');
+        } catch (error) {
+            console.error('Błąd druku zleceń produkcyjnych:', error);
+            showToast('Błąd druku zleceń produkcyjnych', 'error');
+        }
+    }
+
+    // Drukuj listę kompletacyjną (PDF z backendu)
+    async function printPackingList(orderId) {
+        try {
+            // Zamknij menu druku
+            document.querySelectorAll('[id^="print-menu-"]').forEach(menu => {
+                menu.classList.add('hidden');
+            });
+
+            showToast('Generowanie listy kompletacyjnej...', 'info');
+
+            // Otwórz PDF w nowym oknie
+            const printUrl = `/api/orders/${orderId}/packing-list/print`;
+            window.open(printUrl, '_blank');
+
+        } catch (error) {
+            console.error('Błąd druku listy kompletacyjnej:', error);
+            showToast('Błąd generowania listy kompletacyjnej', 'error');
+        }
+    }
 
     async function printOrder(orderId, mode = 'full') {
         try {
@@ -2271,6 +2370,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Eksport funkcji na window dla onclick w HTML
     window.printOrder = printOrder;
+    window.printProductionWorkOrders = printProductionWorkOrders;
     window.togglePrintMenu = togglePrintMenu;
     window.saveOrderNotes = saveOrderNotes;
     window.editOrderStatus = editOrderStatus;

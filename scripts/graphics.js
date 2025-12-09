@@ -108,12 +108,15 @@ async function checkAuth() {
         // Debug log
         console.log('User role:', state.user.role);
         
-        if (!state.user.role || !['GRAPHICS', 'ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION'].includes(state.user.role)) {
+        if (!state.user.role || !['GRAPHICS', 'ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION', 'SALES_DEPT'].includes(state.user.role)) {
             console.error('Role mismatch:', state.user.role);
             showNotification('Brak uprawnień do panelu grafika', 'error');
             setTimeout(() => window.location.href = '/index.html', 2000);
             return;
         }
+        
+        // Setup navigation based on role
+        setupGraphicsNavigation(state.user.role);
     } catch (error) {
         console.error('Auth check failed:', error);
         window.location.href = '/login.html';
@@ -124,6 +127,22 @@ async function checkAuth() {
 function getInitials(name) {
     if (!name) return '??';
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+}
+
+// Setup navigation based on role
+function setupGraphicsNavigation(role) {
+    const ordersLink = document.getElementById('nav-orders-link');
+    const productionLink = document.getElementById('nav-production-link');
+    
+    // Zamówienia - dla ADMIN, SALES_DEPT, PRODUCTION_MANAGER
+    if (ordersLink && ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER'].includes(role)) {
+        ordersLink.style.display = 'flex';
+    }
+    
+    // Produkcja - dla ADMIN, SALES_DEPT, PRODUCTION_MANAGER
+    if (productionLink && ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER'].includes(role)) {
+        productionLink.style.display = 'flex';
+    }
 }
 
 // ==========================================
@@ -581,6 +600,12 @@ function openTaskDetail(task) {
 
     // Setup save button
     document.getElementById('detailSaveBtn').onclick = saveTaskChanges;
+    
+    // Setup print button
+    const printBtn = document.getElementById('detailPrintBtn');
+    if (printBtn) {
+        printBtn.onclick = () => printGraphicsTask(task.id);
+    }
     
     panel.classList.add('open');
     overlay.classList.add('active');
@@ -1062,12 +1087,27 @@ function setupKeyboardShortcuts() {
     });
 }
 
+// Drukuj zlecenie na projekty (PDF z backendu)
+function printGraphicsTask(taskId) {
+    if (!taskId) {
+        showNotification('Brak ID zadania', 'error');
+        return;
+    }
+    
+    showNotification('Generowanie zlecenia na projekty...', 'info');
+    
+    // Otwórz PDF w nowym oknie
+    const printUrl = `/api/graphics/tasks/${taskId}/print`;
+    window.open(printUrl, '_blank');
+}
+
 // Make functions globally available
 window.switchMode = switchMode;
 window.switchView = switchView;
 window.filterTasks = filterTasks;
 window.openTaskDetail = openTaskDetail;
 window.closeDetailPanel = closeDetailPanel;
+window.printGraphicsTask = printGraphicsTask;
 
 // ==========================================
 // Product Image Modal Functions

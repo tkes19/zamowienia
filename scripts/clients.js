@@ -24,6 +24,40 @@ document.addEventListener('DOMContentLoaded', () => {
     let allSalesReps = [];
     let currentSalesRepFilter = '';
 
+    // Pokazywanie linków nawigacji na podstawie roli
+    function setupClientsNavigation(role) {
+        const productionLink = document.getElementById('production-link');
+        const graphicsLink = document.getElementById('graphics-link');
+        
+        // Zamówienia - dla sprzedaży i admina
+        if (ordersLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(role)) {
+            ordersLink.style.display = 'flex';
+        }
+        
+        // Produkcja - dla SALES_DEPT i ADMIN
+        if (productionLink && ['ADMIN', 'SALES_DEPT'].includes(role)) {
+            productionLink.style.display = 'flex';
+        }
+        
+        // Grafika - dla SALES_DEPT i ADMIN
+        if (graphicsLink && ['ADMIN', 'SALES_DEPT'].includes(role)) {
+            graphicsLink.style.display = 'flex';
+        }
+        
+        // Admin
+        if (adminLink) {
+            if (role === 'ADMIN') {
+                adminLink.style.display = 'flex';
+                adminLink.innerHTML = '<i class="fas fa-cog"></i><span>Panel admina</span>';
+                adminLink.href = '/admin';
+            } else if (role === 'SALES_DEPT') {
+                adminLink.style.display = 'flex';
+                adminLink.innerHTML = '<i class="fas fa-cog"></i><span>Ustawienia</span>';
+                adminLink.href = '/admin';
+            }
+        }
+    }
+
     function escapeHtml(str) {
         if (str === null || str === undefined) return '';
         return String(str)
@@ -49,22 +83,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const userData = await response.json();
             currentUserRole = userData.role;
 
-            // Pokaż link do panelu admina/ustawień w zależności od roli
-            if (adminLink) {
-                if (currentUserRole === 'ADMIN') {
-                    adminLink.style.display = 'flex';
-                    adminLink.innerHTML = '<i class="fas fa-cog"></i><span>Panel admina</span>';
-                    adminLink.href = '/admin';
-                } else if (currentUserRole === 'SALES_DEPT') {
-                    adminLink.style.display = 'flex';
-                    adminLink.innerHTML = '<i class="fas fa-cog"></i><span>Ustawienia</span>';
-                    adminLink.href = '/admin';
-                }
-            }
-
-            if (ordersLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(currentUserRole)) {
-                ordersLink.style.display = 'flex';
-            }
+            // Pokaż linki nawigacji w zależności od roli
+            setupClientsNavigation(currentUserRole);
 
             // Pokaż sidebar dla SALES_DEPT
             const sidebar = document.getElementById('clients-sidebar');

@@ -2455,6 +2455,11 @@ function renderResults(products) {
     // LOGIKA PÓL W SEKCJI "WYBRANE PRODUKTY" - spójna z koszykiem
     // ============================================================
 
+    // Ostatnie pole, które było źródłem prawdy przy przeliczaniu
+    // 'total'  -> łączna ilość (pole "Ilość")
+    // 'perProject' -> indywidualne ilości (pole "Ilości na proj.")
+    let lastQuantitySource = 'total';
+
     // Pomocnicza funkcja do formatowania podglądu
     const formatPerProjectPreview = (result) => {
       return result.perProjectQuantities
@@ -2477,6 +2482,7 @@ function renderResults(products) {
       if (result.success) {
         qtyPerProjectInput.value = result.perProjectQuantities.map(p => p.qty).join(',');
         showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${formatPerProjectPreview(result)}`, 'success');
+        lastQuantitySource = 'total';
       } else {
         qtyPerProjectInput.value = '';
         hideQtyPreview();
@@ -2505,6 +2511,7 @@ function renderResults(products) {
       if (result.success) {
         qtyInput.value = result.totalQuantity;
         showQtyPreview(`✓ Łącznie: ${result.totalQuantity} | ${formatPerProjectPreview(result)}`, 'success');
+        lastQuantitySource = 'perProject';
       } else {
         showQtyPreview(`❌ ${result.error}`, 'error');
       }
@@ -2548,9 +2555,21 @@ function renderResults(products) {
       }
     });
 
-    // 2. POLE "Ilość" - przelicz rozkład przy blur
+    // 2. POLE "Ilość" - przelicz rozkład tylko przy REALNEJ zmianie wartości
+    // Kontrakt UX (na stałe):
+    // - jeśli użytkownik wypełnił pole "Ilości na proj.", to ono jest źródłem prawdy,
+    // - samo wejście/wyjście z pola "Ilość" NIE może nadpisywać wcześniej wpisanego rozkładu,
+    // - przeliczenie z pola "Ilość" uruchamiamy tylko, gdy wartość faktycznie się zmieni.
+
+    let qtyValueOnFocus = qtyInput.value;
+
+    qtyInput.addEventListener('focus', () => {
+      qtyValueOnFocus = qtyInput.value;
+    });
+
     qtyInput.addEventListener('blur', () => {
-      const value = parseInt(qtyInput.value, 10);
+      const rawValue = qtyInput.value;
+      const value = parseInt(rawValue, 10);
       
       if (!Number.isFinite(value) || value <= 0) {
         qtyInput.value = '';
@@ -2559,7 +2578,16 @@ function renderResults(products) {
         return;
       }
 
-      // Jeśli mamy projekty - przelicz rozkład
+      const hasPerProjectInput = !!qtyPerProjectInput.value.trim();
+      const hasChanged = rawValue !== qtyValueOnFocus;
+
+      // Jeśli ilość się nie zmieniła, a mamy już rozkład na projekty,
+      // traktuj "Ilości na proj." jako źródło prawdy i nic nie przeliczaj.
+      if (!hasChanged && hasPerProjectInput) {
+        return;
+      }
+
+      // Jeśli mamy projekty - przelicz rozkład z nowej łącznej ilości
       const projectsValue = sanitizeProjectsValue(projectsInput.value);
       if (projectsValue) {
         recalculateFromTotal();
@@ -2605,8 +2633,13 @@ function renderResults(products) {
         return;
       }
 
-      // Przypadek A: Mamy "Ilości na proj." - to jest źródło prawdy
-      if (qtyPerProjectValue && projectsValue) {
+      // Czy traktujemy indywidualne ilości jako aktualne źródło prawdy?
+      const usingPerProjectAsSource = !!projectsValue
+        && !!qtyPerProjectValue
+        && (lastQuantitySource === 'perProject' || !Number.isFinite(qtyTotalValue) || qtyTotalValue <= 0);
+
+      // Przypadek A: ŹRÓDŁO PRAWDY = "Ilości na proj." (lista lub "po X")
+      if (usingPerProjectAsSource) {
         const result = computePerProjectQuantities(projectsValue, '', qtyPerProjectValue);
         
         if (!result.success) {
@@ -2619,7 +2652,7 @@ function renderResults(products) {
         result.quantitySource = 'perProject';
         addToCartWithQuantityBreakdown(product, result, itemNotesValue);
       }
-      // Przypadek B: Mamy tylko łączną ilość (i ewentualnie projekty)
+      // Przypadek B: ŹRÓDŁO PRAWDY = łączna ilość (pole "Ilość")
       else if (Number.isFinite(qtyTotalValue) && qtyTotalValue > 0) {
         if (projectsValue) {
           const result = computePerProjectQuantities(projectsValue, qtyTotalValue, '');
@@ -2658,27 +2691,43 @@ function renderResults(products) {
 }
 
 // Build gallery URL with current product image for project view context
-function buildGalleryUrl() {
-  // Get current product slug from gallery selection
-  const currentProduct = galleryProductSelect?.value || '';
+// productIdentifier - opcjonalny identyfikator produktu, jeśli nie podany używa aktualnie wybranego w galerii
+function buildGalleryUrl(productIdentifier = null) {
+  // Get product slug - from parameter or from gallery selection
+  const currentProduct = productIdentifier || galleryProductSelect?.value || '';
   
-  console.log('[buildGalleryUrl] Current product:', currentProduct);
+  console.log('[buildGalleryUrl] Product identifier:', currentProduct);
   console.log('[buildGalleryUrl] Gallery files cache length:', galleryFilesCache.length);
   
   if (!currentProduct || !galleryFilesCache.length) {
     console.log('[buildGalleryUrl] No product or empty cache');
     // Fallback to base URL if no product or image found
-    return window.location.origin + window.location.pathname;
+    return null;
   }
   
-  // Find the product data in the cache array
-  const productData = galleryFilesCache.find(file => file.product === currentProduct);
+  // Normalize function for matching - removes spaces, underscores, converts to lowercase
+  const normalize = (str) => (str || '').toLowerCase().replace(/[\s_-]+/g, '').trim();
+  const normalizedSearch = normalize(currentProduct);
+  
+  // Find the product data in the cache array - try exact match first
+  let productData = galleryFilesCache.find(file => file.product === currentProduct);
+  
+  // If not found, try normalized matching
+  if (!productData) {
+    productData = galleryFilesCache.find(file => {
+      const normalizedFile = normalize(file.product);
+      return normalizedFile === normalizedSearch ||
+             normalizedFile.includes(normalizedSearch) ||
+             normalizedSearch.includes(normalizedFile);
+    });
+  }
+  
   console.log('[buildGalleryUrl] Found product data:', productData);
   
   if (!productData || !productData.url) {
     console.log('[buildGalleryUrl] No product data or URL found');
     // Fallback if no image URL found
-    return window.location.origin + window.location.pathname;
+    return null;
   }
   
   // Return the proxied image URL (same as used in gallery preview)
@@ -2765,7 +2814,7 @@ function addToCart(product, quantity, projects = '', itemNotes = '') {
     locationName,
     source,
     itemNotes: currentNotes,
-    projectViewUrl: buildGalleryUrl(),  // Capture gallery URL with filters when adding to cart
+    projectViewUrl: buildGalleryUrl(product.identifier || product.name),  // Capture gallery URL for this specific product
     stockAtOrder: stock,
     belowStock
   });
@@ -2834,7 +2883,7 @@ function addToCartWithQuantityBreakdown(product, computeResult, itemNotes = '') 
     locationName,
     source,
     itemNotes: currentNotes,
-    projectViewUrl: buildGalleryUrl(),  // Capture gallery URL with filters when adding to cart
+    projectViewUrl: buildGalleryUrl(product.identifier || product.name),  // Capture gallery URL for this specific product
     stockAtOrder: stock,
     belowStock
   });
@@ -4098,8 +4147,9 @@ async function checkAuthAndInitialize() {
 function showUserNavigation(role) {
   const ordersLink = document.getElementById('orders-link');
   
+  // Zamówienia - dla sprzedaży, admina, magazynu i produkcji
   if (ordersLink) {
-    if (['SALES_REP', 'SALES_DEPT', 'ADMIN', 'WAREHOUSE', 'PRODUCTION'].includes(role)) {
+    if (['SALES_REP', 'SALES_DEPT', 'ADMIN', 'WAREHOUSE', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER'].includes(role)) {
       ordersLink.href = '/orders';
       ordersLink.style.display = 'flex';
     } else {
@@ -4107,33 +4157,45 @@ function showUserNavigation(role) {
     }
   }
   
-  if (clientsLink && ['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(role)) {
-    clientsLink.style.display = 'flex';
+  // Klienci - tylko sprzedaż i admin (NIE produkcja)
+  if (clientsLink) {
+    if (['SALES_REP', 'SALES_DEPT', 'ADMIN'].includes(role)) {
+      clientsLink.style.display = 'flex';
+    } else {
+      clientsLink.style.display = 'none';
+    }
   }
   
-  if (productionLink && ['ADMIN', 'PRODUCTION', 'OPERATOR'].includes(role)) {
-    productionLink.style.display = 'flex';
+  // Produkcja - dla ról produkcyjnych + SALES_DEPT (podgląd) + ADMIN
+  if (productionLink) {
+    if (['ADMIN', 'SALES_DEPT', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER', 'WAREHOUSE'].includes(role)) {
+      productionLink.style.display = 'flex';
+    } else {
+      productionLink.style.display = 'none';
+    }
   }
   
-  // Panel grafika - dla grafików i adminów
+  // Panel grafika - dla grafików, adminów, kierownika produkcji i SALES_DEPT
   const graphicsLink = document.getElementById('graphics-link');
-  if (graphicsLink && ['GRAPHICS', 'ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION'].includes(role)) {
-    graphicsLink.style.display = 'flex';
+  if (graphicsLink) {
+    if (['GRAPHICS', 'ADMIN', 'PRODUCTION_MANAGER', 'SALES_DEPT'].includes(role)) {
+      graphicsLink.style.display = 'flex';
+    } else {
+      graphicsLink.style.display = 'none';
+    }
   }
   
-  // Panel admina - tylko dla ADMIN
+  // Panel admina
   if (adminLink) {
     if (role === 'ADMIN') {
       adminLink.style.display = 'flex';
       adminLink.href = '/admin';
       adminLink.innerHTML = '<i class="fas fa-cog"></i> Panel admina';
     } else if (role === 'SALES_DEPT') {
-      // Dział sprzedaży - przycisk do ustawień
       adminLink.style.display = 'flex';
       adminLink.href = '/admin';
       adminLink.innerHTML = '<i class="fas fa-cog"></i> Ustawienia';
     } else if (role === 'GRAPHICS') {
-      // Graficy - przycisk do przypisywania miejscowości
       adminLink.style.display = 'flex';
       adminLink.href = '/admin#city-access';
       adminLink.innerHTML = '<i class="fas fa-folder-plus"></i> Nowe miejscowości';

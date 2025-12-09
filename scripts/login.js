@@ -44,10 +44,17 @@ if (form) {
 
       const role = json?.data?.role;
 
-      // ADMIN → panel admina, reszta → główny formularz zamówień
+      // Redirect na podstawie roli
       if (role === 'ADMIN') {
         window.location.href = '/admin';
+      } else if (['OPERATOR', 'PRODUCTION', 'PRODUCTION_MANAGER'].includes(role)) {
+        // Role produkcyjne → panel produkcji (nie formularz zamówień)
+        window.location.href = '/production';
+      } else if (role === 'GRAPHICS') {
+        // Graficy → panel grafika
+        window.location.href = '/graphics.html';
       } else {
+        // Sprzedaż i pozostali → formularz zamówień
         window.location.href = '/';
       }
     } catch (error) {

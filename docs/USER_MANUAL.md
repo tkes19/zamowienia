@@ -56,6 +56,8 @@ System zamówień służy do obsługi sprzedaży pamiątek i gadżetów w firmie
 | `GRAPHICS` | Dział graficzny |
 | `CLIENT` | Klient zewnętrzny |
 
+> Uwaga: Rola `PRODUCTION_MANAGER` jest opcjonalna – system działa poprawnie także wtedy, gdy żadnemu użytkownikowi nie przypiszemy tej roli.
+
 ### 2.2. Uprawnienia do widoków
 
 | Rola | Formularz | Moi klienci | Zamówienia | Panel admina | Panel produkcyjny |
@@ -92,11 +94,25 @@ System zamówień służy do obsługi sprzedaży pamiątek i gadżetów w firmie
 
 ### 3.2. Nawigacja
 
-Po zalogowaniu w nagłówku widać:
-- **Imię i rolę** użytkownika
-- **Moi Klienci** – przejście do listy klientów
-- **Zamówienia** – przejście do listy zamówień (dla uprawnionych ról)
-- **Wyloguj** – wylogowanie z systemu
+Po zalogowaniu w górnej belce widoczne są linki zależne od roli:
+
+- **Handlowiec (SALES_REP)**: Formularz, Zamówienia, Moi Klienci
+- **Dział sprzedaży (SALES_DEPT)**: Formularz, Zamówienia, Moi Klienci, Produkcja, Grafika, Panel admina
+- **Produkcja (OPERATOR/PRODUCTION)**: Produkcja, Zamówienia
+- **Kierownik produkcji (PRODUCTION_MANAGER)**: Produkcja, Zamówienia, Grafika
+- **Grafik (GRAPHICS)**: Formularz (podgląd), Grafika, Nowe miejscowości
+- **Administrator (ADMIN)**: wszystkie linki
+
+**Ważne:** Role produkcyjne po zalogowaniu są automatycznie przekierowywane do panelu produkcji, nie do formularza zamówień.
+
+### 3.3. Gdzie trafiasz po zalogowaniu
+
+| Rola | Strona startowa |
+|------|-----------------|
+| ADMIN | Panel admina (`/admin`) |
+| OPERATOR, PRODUCTION, PRODUCTION_MANAGER | Panel produkcji (`/production`) |
+| GRAPHICS | Panel grafika (`/graphics.html`) |
+| Pozostali | Formularz zamówień (`/`) |
 
 ---
 
@@ -170,6 +186,25 @@ Jeśli masz przypisane miejscowości:
 - Weryfikacja i zatwierdzanie zamówień
 - Koordynacja między handlowcami a produkcją
 - Zarządzanie klientami i przypisaniami
+
+### 8.1. Moduły administracyjne: Działy i Pokoje
+
+Jako administrator masz dostęp do dodatkowych widoków w panelu admina:
+
+- **Działy**
+  - Lista działów organizacyjnych (np. Sprzedaż, Magazyn, Produkcja, Grafika).
+  - Możesz dodawać, edytować, usuwać i przywracać działy.
+  - Widzisz liczbę aktywnych użytkowników w każdym dziale.
+  - Działy są powiązane z użytkownikami przez pole `departmentId`.
+
+- **Pokoje produkcyjne**
+  - Przegląd pokoi produkcyjnych, gniazd i maszyn.
+  - Możesz dodawać i edytować pokoje (np. "Druk UV", "Laser CO2").
+  - Wykorzystywane głównie przez panel produkcyjny do przypisywania zleceń.
+  - Pokoje mogą być powiązane z użytkownikami (operatorami) jako ich macierzyste miejsce pracy.
+
+> Dla pełnego opisu zależności między Działami, Pokojami i Rolami zobacz
+> `docs/SPEC.md` §5.4.1.
 
 ### 5.2. Widok zamówień
 
@@ -416,6 +451,27 @@ Z punktu widzenia działu sprzedaży:
 - w **widoku „Zlecenia produkcyjne”** (zakładka w panelu admina → Produkcja →
   Zlecenia) widać listę wszystkich zleceń z numerami `OrderNumber/NN`,
   produktami, ilościami i szczegółowym postępem.
+
+### 9.4. Wydruk zlecenia produkcyjnego dla pokoju produkcyjnego
+
+Po utworzeniu zleceń produkcyjnych dla zamówienia możesz wydrukować **kartę zlecenia produkcyjnego dla pokoju produkcyjnego** (PDF) z poziomu panelu produkcyjnego.
+
+Na wydruku:
+
+- w nagłówku widzisz numer zlecenia `ZP-YYYY-NNNN`, numer zamówienia (np. `2025/94/ATU`), nazwę klienta, nazwę pokoju produkcyjnego (np. „Laser Co2”) oraz priorytet w formie kolorowej etykiety;
+- w tabeli pozycji znajdują się kolumny: **Produkt**, **Lokalizacja**, **Ilość** oraz **Projekty**;
+- kolumna **„Projekty”** pokazuje skrót `nr:ilość`, np. `1:20, 2:20, 3:40`, co odpowiada ilościom przypisanym do poszczególnych projektów;
+- pod pozycją (jeśli w zamówieniu były ilości na projekt) drukowana jest linia w formie:
+
+  `Podział: Projekt 1: 20 szt, Projekt 2: 40 szt | Źródło: suma projektów`
+
+  albo
+
+  `... | Źródło: ilość całkowita`
+
+  w zależności od tego, czy źródłem prawdy jest suma projektów czy pole „Ilość”.
+
+Na dole strony znajdują się trzy pola na podpisy (**Wydaje (sprzedaż)**, **Przyjmuje (produkcja)**, **Zakończył**) oraz stopka z datą wydruku i numerem zlecenia.
 
 ---
 

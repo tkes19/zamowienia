@@ -27,6 +27,7 @@
 - [x] Historia zmian statusu
 - [x] Widok listy zamówień z filtrami
 - [x] Modal szczegółów zamówienia
+- [x] **Hurtowe usuwanie zamówień wraz ze zleceniami produkcyjnymi** (panel admina + endpoint `/api/orders/bulk-delete`) ✅ 2025-12-09
 
 #### Faza 5: Kontrola dostępu
 - [x] **Foldery KI** – przypisywanie folderów do handlowców
@@ -78,19 +79,59 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
 #### 🏭 Panel Produkcyjny (v2.0.0)
 - [ ] **Faza 1: Fundamenty produkcyjne**
-  - [ ] Migracja bazodanowa: ProductionRoom, WorkCenter, WorkStation, ProductionPath, ProductionOrder, ProductionOperation
+  - [x] Migracja bazodanowa: ProductionRoom, WorkCenter, WorkStation, ProductionPath, ProductionOrder, ProductionOperation
+  - [x] **Nowa tabela ProductionWorkOrder** (grupowanie zleceń po pokojach) ✅ 2025-12-08
+  - [x] **Rozszerzenie ProductionOrder o workOrderId** (powiązanie z ProductionWorkOrder) ✅ 2025-12-08
   - [ ] Backend API: zarządzanie pokojami, gniazdami, stanowiskami, ścieżkami
-  - [ ] Integracja: automatyczne zamówienie → zlecenia produkcyjne (`ProductionOrder`) na podstawie ścieżek produkcji
-  - [ ] System numeracji zleceń `OrderNumber/NN` (np. `2025/40/ATU/01`) + automatyczne tworzenie/anulowanie zleceń przy zmianach statusu zamówienia (APPROVED/CANCELLED)
+  - [x] Integracja: automatyczne zamówienie → zlecenia produkcyjne (`ProductionOrder`) na podstawie ścieżek produkcji (`createProductionOrdersForOrder`) ✅ 2025-12-08
+  - [x] System numeracji zleceń pokojowych `ZP-YYYY-NNNN` (np. `ZP-2025-0001`) dla `ProductionWorkOrder.workOrderNumber` ✅ 2025-12-08
   - [ ] Podstawowy routing w panelu admina
 
-- [ ] **Faza 2: Panel operatora**
+- [ ] **Faza 2: System druku zleceń produkcyjnych**
+  - [x] **Generatory PDF**:
+    - [x] Karta zlecenia produkcyjnego (ProductionWorkOrder) – `createProductionWorkOrderPDF` ✅ 2025-12-08
+    - [x] Karta zlecenia na projekty (GraphicsTask) – `createGraphicsTaskPDF` ✅ 2025-12-08
+    - [ ] Lista kompletacyjna zamówienia (pakowanie) – backend + testy (`createPackingListPDF`, endpoint `/api/orders/:id/packing-list/print`) gotowe, wymaga akceptacji w realnym procesie pakowania
+  - [x] **Endpointy API do druku**:
+    - [x] `GET /api/orders/:id/production-work-orders` – lista ZP dla zamówienia ✅ 2025-12-08
+    - [x] `GET /api/production/work-orders/:id/print` (SALES_DEPT, ADMIN, PRODUCTION, PRODUCTION_MANAGER, OPERATOR, WAREHOUSE)
+    - [x] `GET /api/graphics/tasks/:id/print` (GRAPHICS, ADMIN, SALES_DEPT, PRODUCTION_MANAGER)
+    - [x] `GET /api/orders/:id/packing-list/print` (SALES_DEPT, ADMIN, WAREHOUSE, PRODUCTION, OPERATOR, PRODUCTION_MANAGER)
+  - [x] **Uprawnienia do druku** (rola-based – zgodnie z tabelą w `docs/SPEC_PRODUCTION_PANEL.md` §10.4) ✅ 2025-12-08
+  - [x] **Audyt druku** (tabela `PrintAudit`, wpisy dla: production_work_order, graphics_task, packing_list) ✅ 2025-12-08
+
+- [ ] **Faza 3: Panel operatora**
   - [ ] Kafelkowy interfejs (wzorzec Prodio)
   - [ ] WebSocket: real-time updates statusów
   - [ ] Proste formularze: start/pause/complete (max 3 kliknięcia)
   - [ ] Kolorowe statusy i duże przyciski
+  - [x] **Widok zleceń pokojowych + podgląd grafik prosto z OrderItem.projectViewUrl** (dekodowanie nazw, poprawione proporcje modala) ✅ 2025-12-09
+  - [ ] **Przyciski druku** dla swoich zleceń (ponowny druk)
 
-- [ ] **Faza 3: Admin produkcji**
+- [ ] **Faza 4: Podział zleceń w sprzedaży**
+  - [ ] **Ekran podziału zamówienia na pokoje**:
+    - [ ] Lista pozycji zamówienia
+    - [ ] Przeciąganie i upuszczanie do pokoi
+    - [ ] Automatyczne tworzenie ProductionWorkOrder
+    - [ ] Podgląd zleceń przed drukiem
+  - [ ] **Walidacja podziału** (wszystkie pozycje przypisane)
+  - [ ] **Historia podziału zamówień**
+  - [ ] **Przyciski druku zleceń** (pierwszy komplet dla produkcji)
+
+- [ ] **Faza 5: Pakowanie i kompletacja**
+  - [ ] **Logika kompletacji zamówienia**:
+    - [ ] Sprawdzanie statusów wszystkich zleceń
+    - [ ] Generowanie listy braków
+    - [ ] Statusy: `READY_FOR_PACKING`, `PACKING_IN_PROGRESS`, `PACKED`
+  - [ ] **Endpointy pakowania**:
+    - [ ] `GET /api/orders/:id/packing-status`
+    - [ ] `POST /api/orders/:id/mark-packed`
+  - [ ] **Panel pakowania**:
+    - [ ] Lista zamówień gotowych do pakowania
+    - [ ] Lista kompletacyjna z checkboxami
+    - [ ] Podpisy elektroniczne/papierowe
+
+- [ ] **Faza 6: Admin produkcji**
   - [ ] Rozszerzenie panelu admina o zakładkę "Produkcja"
   - [ ] Zarządzanie pokojami produkcyjnymi
   - [ ] Zarządzanie gniazdami produkcyjnymi
@@ -100,9 +141,12 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
   - [ ] Szablony czasów operacji i kalibracja
   - [ ] Moduł grafiki / Panel pracy grafika (zadania `GraphicTask`, scenariusze akceptacji projektów; szczegóły w `docs/SPEC_PRODUCTION_PANEL.md` §9)
 
-- [ ] **Faza 4: Harmonogram i optymalizacja**
+- [ ] **Faza 7: Optymalizacje i rozszerzenia**
   - [ ] Drag & drop harmonogram zadań
   - [ ] Automatyczne planowanie i priorytetyzacja
+  - [ ] **Kody QR na dokumentach** (skanowanie statusów)
+  - [ ] **Szablony PDF v2.0** (logo, typografia, wersje językowe)
+  - [ ] **Raporty produkcyjne** (dzienny, wydajność maszyn)
   - [ ] Testy użyteczności z operatorami
   - [ ] Dokumentacja i materiały szkoleniowe
 
@@ -183,5 +227,5 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
 ---
 
-**Wersja dokumentu:** 3.1  
-**Data aktualizacji:** 2025-12-02
+**Wersja dokumentu:** 3.2  
+**Data aktualizacji:** 2025-12-08

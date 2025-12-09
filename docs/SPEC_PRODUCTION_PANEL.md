@@ -4,6 +4,24 @@
 
 Wdrożenie kompletnego systemu zarządzania produkcją (MES) integrowanego z istniejącym systemem zamówień. Moduł umożliwia automatyczne przekształcanie zamówień w zlecenia produkcyjne, zarządzanie pokojami i maszynami produkcyjnymi oraz monitorowanie postępu w czasie rzeczywistym.
 
+### 1.1. Kontekst: Działy, Pokoje i Role
+
+Panel Produkcyjny operuje głównie na **strukturze fizycznej** (Pokoje, Gniazda, Stanowiska).
+Struktura organizacyjna (Działy) i role użytkowników są opisane szczegółowo w
+`docs/SPEC.md` §5.4.1, a tutaj są używane w skrócie:
+
+- **Działy (Department)** – klasyczne działy firmy (Sprzedaż, Produkcja, Magazyn itp.),
+  powiązane z użytkownikami przez `User.departmentId`.
+- **Pokoje produkcyjne (ProductionRoom)** – fizyczne pokoje / hale produkcyjne,
+  na których oparty jest Panel Produkcyjny (tabele `ProductionRoom`, `WorkCenter`,
+  `WorkStation`).
+- **Role (`User.role`)** – kontrolują dostęp do Panelu Produkcyjnego oraz
+  poszczególnych widoków (operator, kierownik, admin itp.).
+
+Relacja między tymi elementami jest taka sama jak w SPEC.md:
+użytkownik ma przypisany dział, pokój produkcyjny i rolę, a panel korzysta z tych
+informacji przy filtrowaniu zadań i uprawnień.
+
 ---
 
 ## 2. Decyzje architektoniczne
@@ -135,6 +153,30 @@ CREATE TABLE public."ProductionLog" (
   "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Zlecenia produkcyjne grupowane po pokojach (ProductionWorkOrder)
+CREATE TABLE public."ProductionWorkOrder" (
+  id serial PRIMARY KEY,
+  "workOrderNumber" varchar(20) UNIQUE NOT NULL,
+  "sourceOrderId" uuid REFERENCES "Order"(id) ON DELETE CASCADE,
+  "roomName" varchar(100) NOT NULL,
+  status varchar(20) NOT NULL DEFAULT 'planned', -- planned, approved, in_progress, completed, cancelled
+  priority integer NOT NULL DEFAULT 3, -- 1-urgent, 2-high, 3-normal, 4-low
+  "plannedDate" timestamp,
+  "actualDate" timestamp,
+  notes text,
+  "printedAt" timestamp,
+  "printedBy" uuid REFERENCES "User"(id) ON DELETE SET NULL,
+  "templateVersion" varchar(10) DEFAULT '1.0',
+  "createdBy" uuid REFERENCES "User"(id) ON DELETE SET NULL,
+  "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Powiązanie pojedynczych zleceń produkcyjnych (ProductionOrder)
+-- z nagłówkowymi zleceniami produkcyjnymi dla pokoi produkcyjnych (ProductionWorkOrder)
+ALTER TABLE public."ProductionOrder" 
+ADD COLUMN "workOrderId" integer REFERENCES "ProductionWorkOrder"(id) ON DELETE SET NULL;
+
 -- Przypisania ról użytkowników (wielorole)
 CREATE TABLE public."UserRoleAssignment" (
   id serial PRIMARY KEY,
@@ -241,6 +283,11 @@ ON CONFLICT ("userId", role) DO NOTHING;
   - przy przejściu na `APPROVED` automatycznie tworzy zlecenia produkcyjne dla zamówienia,
   - przy przejściu na `CANCELLED` automatycznie anuluje powiązane zlecenia produkcyjne.
 - W widoku zamówień backend oblicza pole `productionProgress` na podstawie `ProductionOrder` i `ProductionOperation`, które może być używane do wizualizacji postępu (paski postępu) w panelu.
+- Helper `createProductionOrdersForOrder` grupuje pozycje zamówienia według `Product.productionPath` i dla każdej unikalnej ścieżki tworzy jedno `ProductionWorkOrder` (nagłówek zlecenia produkcyjnego dla pokoju produkcyjnego) zawierające wszystkie powiązane `ProductionOrder`.
+- Dla `ProductionWorkOrder` dostępny jest wydruk PDF karty zlecenia produkcyjnego dla pokoju produkcyjnego, który pokazuje:
+  - nagłówek (pokój produkcyjny, numer ZP, numer zamówienia, klient, priorytet),
+  - tabelę pozycji z lokalizacją, ilością całkowitą oraz podziałem na projekty (`selectedProjects`, `projectQuantities`, `quantitySource`),
+  - sekcję podpisów (wydaje/przyjmuje/zakończył) i stopkę na dole strony.
 
 Docelowo (zgodnie z powyższą specyfikacją) przejście na `IN_PRODUCTION` może stać się głównym wyzwalaczem tworzenia zleceń, ale aktualna implementacja wykorzystuje status `APPROVED`.
 
@@ -2085,7 +2132,7 @@ Główne założenia:
   i produkcji.
 - `GraphicRequest` – reprezentuje zlecenia **tylko na projekty** (bez rezerwacji
   mocy produkcyjnych). Ma osobną numerację, np. `G-2025/015`. Widoczny
-  głównie w module Grafiki i ewentualnym widoku „Zlecenia graficzne” dla
+  głównie w module Grafiki i ewentualnym widoku „Zlecenia na projekty” dla
   handlowców.
 
 Przykładowy szkic tabel:
@@ -2368,6 +2415,258 @@ Uprawnienia:
 
 - `SALES_REP`, `SALES_DEPT` – mogą akceptować/odrzucać projekty powiązane
   z „własnymi” zamówieniami (zgodnie z RLS/CHECK na właściciela zamówienia).
+
+---
+
+## 10. System Druku Zleceń Produkcyjnych
+
+### 10.1 Cel i zakres
+
+System druku zleceń produkcyjnych zapewnia cyfrowo-papierowy most między działem sprzedaży a produkcją.
+
+**WAŻNE – nazewnictwo biznesowe vs techniczne:**
+
+- Dla użytkowników (**sprzedaż, produkcja, grafika**):
+  - „**Zlecenie produkcyjne**” = **kartka / PDF dla pokoju** – technicznie `ProductionWorkOrder`.
+  - Pozycje na tej kartce to „**pozycje zlecenia produkcyjnego**” – technicznie `ProductionOrder`.
+- W kodzie **nie używamy nazwy „zlecenie produkcyjne” dla pojedynczego `ProductionOrder`** – to zawsze tylko element `ProductionWorkOrder`.
+
+System umożliwia:
+- Generowanie **kart zleceń produkcyjnych (ProductionWorkOrder) pogrupowanych po pokojach**
+- Drukowanie zleceń graficznych (GraphicTask)
+- Tworzenie list kompletacyjnych dla pakowania (packing list)
+- Audyt druku z historią i wersjonowaniem szablonów
+
+### 10.2 Architektura PDF
+
+#### 10.2.1 Szablony dokumentów
+
+| Typ dokumentu (biznesowo) | Szablon | Tabele źródłowe | Przypadek użycia |
+|---------------------------|---------|-----------------|-----------------|
+| **Zlecenie produkcyjne (karta pokoju)** | `productionWorkOrderTemplate` | ProductionWorkOrder, ProductionOrder, Order, OrderItem, Product | Sprzedaż drukuje kartkę dla pokoju (ZP) |
+| **Zlecenie graficzne** | `graphicsTaskTemplate` | GraphicTask, Order, OrderItem, Product | Graficy drukują swoje zadania |
+| **Lista kompletacyjna** | `packingListTemplate` | Order, OrderItem, ProductionOrder, Product | Pakowanie kompletuje zamówienia |
+
+#### 10.2.2 Generatory PDF
+
+```javascript
+// backend/pdfGenerator.js - nowe funkcje
+async function createProductionWorkOrderPDF(workOrderData) {
+  // Pobiera dane z ProductionWorkOrder + powiązane ProductionOrder
+  // Generuje kartę z:
+  // - Numerem zlecenia pokojowego (workOrderNumber)
+  // - Numerem zamówienia źródłowego (orderNumber)
+  // - Nazwą klienta (customerName)
+  // - Priorytetem (1-4) z kolorowym badge'em
+  // - Datą planowaną i datą wydruku
+  // - Tabelą pozycji zawierającą:
+  //   - Lp., Produkt, Lokalizacja (PM/KI + nazwa), Ilość, Projekty (z podziałem ilości)
+  //   - Uwagi produkcyjne (jeśli są)
+  //   - Szczegółowy podział na projekty z oznaczeniem źródła prawdy
+  //   - Dane projektów pobierane z:
+  //     - item.selectedProjects: np. "1,3,5"
+  //     - item.projectQuantities: JSON.stringify([{ projectNo, qty }]) – np. [{ projectNo: 1, qty: 20 }, { projectNo: 3, qty: 20 }]
+  //   - Kolumna „Projekty” prezentuje skrót: „1: 20, 3: 20, 5: 20”
+  // - Podsumowaniem (Razem pozycji, Razem sztuk)
+  // - Miejscem na podpisy (Wydał, Przyjął, Zakończył)
+  //
+  // Źródło prawdy dla ilości:
+  // - Jeśli quantitySource === 'total' → kolumna "Ilość" jest pogrubiona
+  // - Jeśli quantitySource === 'perProject' → kolumna "Projekty" jest pogrubiona
+  //
+  // Lokalizacja wyświetlana jako: "PM Kołobrzeg" lub "KI Arka Medical SPA2"
+  // na podstawie pól: source (MIEJSCOWOSCI/KATALOG_INDYWIDUALNY/...) + locationName
+}
+
+async function createGraphicsTaskPDF(taskId) {
+  // Pobiera dane z GraphicTask + Order
+  // Generuje kartę z:
+  // - Numerem zadania i zamówienia
+  // - Projektami i plikami
+  // - Checklistą graficzną
+  // - Terminami i osobami odpowiedzialnymi
+}
+
+async function createPackingListPDF(orderId) {
+  // Pobiera dane z Order + OrderItem + ProductionOrder
+  // Generuje listę z:
+  // - Wszystkimi pozycjami zamówienia
+  // - Statusami realizacji
+  // - Miejscem na podpisy pakującego i kontrolującego
+}
+```
+
+### 10.3 API Endpoints do druku
+
+#### 10.3.1 Zlecenia produkcyjne (ProductionWorkOrder)
+
+```javascript
+// GET /api/orders/:id/production-work-orders
+// Zwraca listę zleceń pokojowych (ProductionWorkOrder) powiązanych z zamówieniem.
+// Używane przez:
+//   - widok zamówień (scripts/orders.js → printProductionWorkOrders)
+//   - panel admina (admin/admin.js → adminPrintProductionWorkOrders)
+// Uprawnienia: ADMIN, SALES_DEPT, PRODUCTION_MANAGER, PRODUCTION, OPERATOR, WAREHOUSE
+
+// GET /api/production/work-orders/:id/print
+// Generuje PDF zlecenia produkcyjnego dla pokoju (createProductionWorkOrderPDF).
+// Zwraca: application/pdf (binary stream)
+// Uprawnienia: SALES_DEPT, ADMIN (pełne), PRODUCTION (ponowny druk własnych zleceń),
+//              PRODUCTION_MANAGER, OPERATOR, WAREHOUSE
+```
+
+#### 10.3.2 Zlecenia na projekty (GraphicTask)
+
+```javascript
+// GET /api/graphics/tasks/:id/print
+// Uprawnienia: GRAPHICS / GRAPHIC_DESIGNER, ADMIN, SALES_DEPT, PRODUCTION_MANAGER
+// Zwraca: PDF GraphicsTask
+
+// GET /api/graphics/tasks/:id/print-preview
+// Podgląd PDF zlecenia na projekty
+```
+
+#### 10.3.3 Listy kompletacyjne (Packing List)
+
+```javascript
+// GET /api/orders/:id/packing-list/print
+// Uprawnienia: SALES_DEPT, ADMIN, WAREHOUSE, PRODUCTION_MANAGER
+// Zwraca: PDF lista kompletacyjna
+
+// GET /api/orders/:id/packing-status
+// Zwraca status kompletacji zamówienia
+```
+
+### 10.4 Uprawnienia do druku
+
+| Rola | Zlecenia produkcyjne (karty pokoju) | Zlecenia na projekty | Listy kompletacyjne | Uwagi |
+|------|--------------------------------------|----------------------|---------------------|-------|
+| SALES_DEPT | ✅ Tworzy i drukuje pierwsze zlecenia | ✅ Podgląd i druk | ✅ Druk i statusy | Główna rola druku |
+| ADMIN | ✅ Pełne uprawnienia | ✅ Pełne uprawnienia | ✅ Pełne uprawnienia | Nadzór i awarie |
+| PRODUCTION_MANAGER | ✅ Podgląd i druk wszystkich zleceń | ✅ Podgląd i druk | ✅ Podgląd i druk | Nadzór produkcji |
+| PRODUCTION / OPERATOR | ✅ Tylko ponowny druk zleceń swojego pokoju | ❌ | ❌ | Kopie zapasowe na hali |
+| GRAPHICS / GRAPHIC_DESIGNER | ❌ | ✅ Druk swoich zadań | ❌ | Zlecenia na projekty |
+| WAREHOUSE | ❌ | ❌ | ✅ Druk list kompletacyjnych | Pakowanie |
+| SALES_REP | ❌ | ❌ | ❌ | Tylko zamówienia |
+
+> Uwaga: `PRODUCTION_MANAGER` jest rolą dodatkową. System nie wymaga, aby ktoś miał tę rolę – uprawnienia do druku pozostają dostępne z innych ról zgodnie z powyższą tabelą.
+
+### 10.5 Audyt druku
+
+#### 10.5.1 Pola audytowe
+
+Każdy drukowany dokument zapisuje:
+- `printedAt` - timestamp druku
+- `printedBy` - UUID użytkownika
+- `templateVersion` - wersja szablonu PDF
+- `printCount` - liczba wydruków
+
+#### 10.5.2 Tabela audytu
+
+```sql
+CREATE TABLE public."PrintAudit" (
+  id serial PRIMARY KEY,
+  documentType text NOT NULL, -- 'production_work_order', 'graphics_task', 'packing_list'
+  documentId text NOT NULL,
+  "printedAt" timestamp DEFAULT CURRENT_TIMESTAMP,
+  "printedBy" text REFERENCES "User"(id) ON DELETE SET NULL,
+  "templateVersion" varchar(10) DEFAULT '1.0',
+  "printCount" integer DEFAULT 1,
+  "ipAddress" inet,
+  "userAgent" text
+);
+```
+
+### 10.6 Workflow druku
+
+#### 10.6.1 Proces sprzedaży → produkcja
+
+1. **Sprzedaż tworzy zamówienie** (status APPROVED)
+2. **Podział na pokoje** w interfejsie sprzedaży:
+   - Przeciąganie pozycji do pokoi
+   - Automatyczne tworzenie ProductionWorkOrder (status: DRAFT)
+   - Możliwość edycji podziału przed drukiem
+3. **Walidacja i podgląd**:
+   - Sprawdzenie czy wszystkie pozycje przypisane
+   - Podgląd PDF przed finalnym drukiem
+4. **Druk zleceń**:
+   - Przycisk "Drukuj zlecenia produkcyjne"
+   - Status zmienia się na PLANNED → IN_PRODUCTION
+   - Zapis audytu druku
+5. **Przekazanie do produkcji**:
+   - Papierowe karty + kod QR
+   - Status w systemie: IN_PRODUCTION
+
+**Uwaga:** Podział na pokoje można edytować tylko do momentu pierwszego druku. Po wydruku zlecenia są zamrożone.
+
+#### 10.6.2 Proces produkcji
+
+1. **Operator odbiera kartę** papierową
+2. **Realizacja zlecenia** w panelu produkcyjnym
+3. **Ponowny druk** (opcjonalnie):
+   - Jeśli karta się zgubi
+   - Przycisk "Drukuj ponownie" (tylko swoje zlecenia)
+4. **Zakończenie zlecenia**:
+   - Status COMPLETED
+   - Karta przechodzi do pakowania
+
+#### 10.6.3 Proces pakowania
+
+1. **Sprawdzenie statusów** wszystkich zleceń zamówienia
+2. **Druk listy kompletacyjnej**:
+   - Przycisk "Drukuj listę kompletacyjną"
+   - Podsumowanie pozycji i statusów
+3. **Kompletacja fizyczna**:
+   - Zaznaczanie pozycji na liście
+   - Podpisy pakującego i kontrolującego
+4. **Status zamówienia**: PACKED → SHIPPED
+
+### 10.7 Szczegóły techniczne
+
+#### 10.7.1 Mapowania pól PDF
+
+**Karta zlecenia produkcyjnego:**
+- `workOrderNumber` → ProductionWorkOrder.workOrderNumber
+- `orderNumber` → Order.orderNumber
+- `customerName` → Customer.name
+- `roomName` → ProductionWorkOrder.roomName
+- `items[]` → JOIN ProductionOrder + OrderItem + Product
+
+**Karta zlecenia na projekty:**
+- `taskNumber` → GraphicTask.id (formatowany)
+- `orderNumber` → Order.orderNumber
+- `projectNumbers` → GraphicTask.projectNumbers
+- `checklist` → GraphicTask.checklist
+- `filesLocation` → GraphicTask.filesLocation
+
+#### 10.7.2 Obsługa błędów
+
+- **Brak danych**: PDF z pustymi polami i ostrzeżeniem
+- **Błąd generowania**: Log błędu + powiadomienie użytkownika
+- **Timeout**: Retry mechanism (max 3 próby)
+- **Brak uprawnień**: HTTP 403 z komunikatem
+
+#### 10.7.3 Wersjonowanie szablonów
+
+- Każdy szablon ma wersję (np. "1.0", "1.1")
+- Wersja zapisywana w audycie druku
+- Możliwość druku starszą wersją (dla zgodności)
+- Mechanizm migracji szablonów
+
+### 10.8 Przejście papier → cyfra (future)
+
+#### 10.8.1 Kody QR
+
+Każdy dokument zawiera kod QR z:
+- Linkiem do dokumentu w systemie
+- ID dokumentu i typem
+- Wersją szablonu
+
+#### 10.8.2 Skanowanie statusów
+
+- Stanowiska skanują kody QR przy rozpoczęciu/zakończeniu
+- Automatyczna aktualizacja statusów
+- Redukcja ręcznych wpisów
 
 ---
 
