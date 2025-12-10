@@ -5139,6 +5139,9 @@ function renderWorkCenters(centers) {
                     <button onclick="editWorkCenter(${wc.id})" class="flex-1 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
                         <i class="fas fa-edit mr-1"></i> Edytuj
                     </button>
+                    <button onclick="editWorkCenterPaths(${wc.id})" class="flex-1 px-3 py-1.5 text-sm bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors">
+                        <i class="fas fa-route mr-1"></i> Ścieżki
+                    </button>
                 </div>
             </div>
         </div>
@@ -5350,49 +5353,116 @@ async function deleteProductionRoom(id) {
     }
 }
 
-function openWorkCenterModal(wc = null) {
-    const name = prompt('Nazwa gniazda:', wc?.name || '');
-    if (!name) return;
-    
-    const code = prompt('Kod gniazda:', wc?.code || '');
-    if (!code) return;
-    
-    const types = Object.entries(WORK_CENTER_TYPE_LABELS).map(([k, v]) => `${k}: ${v}`).join('\n');
-    const type = prompt(`Typ gniazda:\n${types}`, wc?.type || 'laser_co2');
-    if (!type) return;
-    
-    saveWorkCenter({ id: wc?.id, name, code, type });
-}
-
-async function saveWorkCenter(data) {
-    try {
-        const method = data.id ? 'PATCH' : 'POST';
-        const url = data.id ? `/api/production/work-centers/${data.id}` : '/api/production/work-centers';
-        
-        const response = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify(data)
-        });
-        
-        const result = await response.json();
-        
-        if (result.status === 'success') {
-            showAdminToast(data.id ? 'Gniazdo zaktualizowane' : 'Gniazdo utworzone', 'success');
-            loadWorkCenters();
-        } else {
-            showAdminToast(result.message || 'Błąd zapisu', 'error');
-        }
-    } catch (error) {
-        console.error('Błąd zapisu gniazda:', error);
-        showAdminToast('Błąd zapisu', 'error');
-    }
-}
-
 function editWorkCenter(id) {
     const wc = workCenters.find(w => w.id === id);
     if (wc) openWorkCenterModal(wc);
+}
+
+async function editWorkCenterPaths(id) {
+    const wc = workCenters.find(w => w.id === id);
+    if (!wc) return;
+
+    try {
+        // Równolegle pobierz listę wszystkich ścieżek oraz bieżące mapowania dla gniazda
+        const [pathsResp, mappingsResp] = await Promise.all([
+            fetch('/api/production/path-codes', { credentials: 'include' }),
+            fetch(`/api/production/workcenters/${encodeURIComponent(id)}/path-mappings`, { credentials: 'include' })
+        ]);
+
+        const pathsResult = await pathsResp.json();
+        const mappingsResult = await mappingsResp.json();
+
+        if (pathsResult.status !== 'success') {
+            showAdminToast(pathsResult.message || 'Nie udało się pobrać listy ścieżek', 'error');
+            return;
+        }
+
+        if (mappingsResult.status !== 'success') {
+            showAdminToast(mappingsResult.message || 'Nie udało się pobrać mapowań ścieżek dla gniazda', 'error');
+            return;
+        }
+
+        const allPathDetails = (pathsResult.data?.paths || []);
+        const allCodes = allPathDetails
+            .map(p => (p.baseCode || p.code || '').toString().trim())
+            .filter(Boolean);
+        const uniqueCodes = [...new Set(allCodes)].sort((a, b) => {
+            const aNum = parseFloat(a);
+            const bNum = parseFloat(b);
+            if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+            return a.localeCompare(b, 'pl');
+        });
+
+        const currentMappings = (mappingsResult.data?.mappings || []);
+        const currentCodes = currentMappings
+            .map(m => (m.pathCode || m.pathcode || '').toString().trim())
+            .filter(Boolean);
+
+        const promptMessage = [
+            `Gniazdo: ${wc.name} [${wc.code}]`,
+            '',
+            `Dostępne proste ścieżki (z produktów): ${uniqueCodes.length ? uniqueCodes.join(', ') : '(brak danych)'}`,
+            `Aktualnie przypisane do tego gniazda: ${currentCodes.length ? currentCodes.join(', ') : '(brak)'}`,
+            '',
+            'Wpisz kody ścieżek, które mają być powiązane z tym gniazdem (rozdzielone przecinkami),',
+            'np. 1,3,5. Produkt ze ścieżką złożoną (np. 5%3&2.1) będzie widoczny we wszystkich gniazdach,',
+            'dla których wpiszesz odpowiadające mu proste ścieżki (5, 3, 2).'
+        ].join('\n');
+
+        const input = prompt(promptMessage, currentCodes.join(', '));
+        if (input === null) return; // anulowano
+
+        const newCodes = [...new Set(
+            input
+                .split(',')
+                .map(s => s.trim())
+                .filter(Boolean)
+        )];
+
+        // Oblicz różnice
+        const toAdd = newCodes.filter(code => !currentCodes.includes(code));
+        const toRemove = currentCodes.filter(code => !newCodes.includes(code));
+
+        // Zapisz dodawane mapowania
+        for (const code of toAdd) {
+            try {
+                const resp = await fetch(`/api/production/workcenters/${encodeURIComponent(id)}/path-mappings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ pathCode: code })
+                });
+                const result = await resp.json();
+                if (result.status !== 'success') {
+                    console.warn('Nie udało się dodać mapowania', id, code, result);
+                }
+            } catch (e) {
+                console.error('Błąd dodawania mapowania ścieżki', code, 'dla gniazda', id, e);
+            }
+        }
+
+        // Dezaktywuj usuwane mapowania
+        for (const code of toRemove) {
+            try {
+                const resp = await fetch(`/api/production/workcenters/${encodeURIComponent(id)}/path-mappings/${encodeURIComponent(code)}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+                const result = await resp.json();
+                if (result.status !== 'success') {
+                    console.warn('Nie udało się usunąć mapowania', id, code, result);
+                }
+            } catch (e) {
+                console.error('Błąd usuwania mapowania ścieżki', code, 'dla gniazda', id, e);
+            }
+        }
+
+        showAdminToast('Ścieżki dla gniazda zostały zaktualizowane', 'success');
+
+    } catch (error) {
+        console.error('Błąd edycji ścieżek gniazda:', error);
+        showAdminToast('Błąd podczas aktualizacji ścieżek gniazda', 'error');
+    }
 }
 
 function openWorkStationModal(ws = null) {
@@ -6443,3 +6513,413 @@ async function restoreDepartment(id, name) {
         showAdminToast('Błąd połączenia z serwerem', 'error');
     }
 }
+
+// ============================================
+// MODALE PRODUKCYJNE - POKOJE, GNIAZDA, MASZYNY
+// (Nadpisują stare funkcje oparte na prompt())
+// ============================================
+
+(function initProductionModals() {
+    // Elementy DOM dla modali
+    const productionRoomModal = document.getElementById('production-room-modal');
+    const productionRoomForm = document.getElementById('production-room-form');
+    const productionRoomModalTitle = document.getElementById('production-room-modal-title');
+    const productionRoomSubmitText = document.getElementById('production-room-submit-text');
+    const productionRoomFormError = document.getElementById('production-room-form-error');
+
+    const workCenterModal = document.getElementById('work-center-modal');
+    const workCenterForm = document.getElementById('work-center-form');
+    const workCenterModalTitle = document.getElementById('work-center-modal-title');
+    const workCenterSubmitText = document.getElementById('work-center-submit-text');
+    const workCenterFormError = document.getElementById('work-center-form-error');
+
+    const workStationModal = document.getElementById('work-station-modal');
+    const workStationForm = document.getElementById('work-station-form');
+    const workStationModalTitle = document.getElementById('work-station-modal-title');
+    const workStationSubmitText = document.getElementById('work-station-submit-text');
+    const workStationFormError = document.getElementById('work-station-form-error');
+
+    // Event listenery dla modali
+    document.getElementById('production-room-modal-close')?.addEventListener('click', closeProductionRoomModal);
+    document.getElementById('production-room-form-cancel')?.addEventListener('click', closeProductionRoomModal);
+    productionRoomForm?.addEventListener('submit', handleProductionRoomSubmit);
+
+    document.getElementById('work-center-modal-close')?.addEventListener('click', closeWorkCenterModal);
+    document.getElementById('work-center-form-cancel')?.addEventListener('click', closeWorkCenterModal);
+    workCenterForm?.addEventListener('submit', handleWorkCenterSubmit);
+
+    document.getElementById('work-station-modal-close')?.addEventListener('click', closeWorkStationModal);
+    document.getElementById('work-station-form-cancel')?.addEventListener('click', closeWorkStationModal);
+    workStationForm?.addEventListener('submit', handleWorkStationSubmit);
+
+    // Zamykanie modali przy kliknięciu w tło
+    productionRoomModal?.addEventListener('click', (e) => { if (e.target === productionRoomModal) closeProductionRoomModal(); });
+    workCenterModal?.addEventListener('click', (e) => { if (e.target === workCenterModal) closeWorkCenterModal(); });
+    workStationModal?.addEventListener('click', (e) => { if (e.target === workStationModal) closeWorkStationModal(); });
+
+    // ============================================
+    // MODAL: POKÓJ PRODUKCYJNY
+    // ============================================
+
+    window.openProductionRoomModal = function(room = null) {
+        if (!productionRoomModal || !productionRoomForm) return;
+        
+        productionRoomForm.reset();
+        productionRoomFormError?.classList.add('hidden');
+        
+        populateSupervisorSelect();
+        
+        if (room) {
+            productionRoomModalTitle.innerHTML = '<i class="fas fa-door-open"></i> Edytuj pokój produkcyjny';
+            productionRoomSubmitText.textContent = 'Zapisz zmiany';
+            productionRoomForm.querySelector('[name="id"]').value = room.id;
+            productionRoomForm.querySelector('[name="name"]').value = room.name || '';
+            productionRoomForm.querySelector('[name="area"]').value = room.area || '';
+            productionRoomForm.querySelector('[name="description"]').value = room.description || '';
+            if (room.supervisorId) {
+                productionRoomForm.querySelector('[name="supervisorId"]').value = room.supervisorId;
+            }
+        } else {
+            productionRoomModalTitle.innerHTML = '<i class="fas fa-door-open"></i> Nowy pokój produkcyjny';
+            productionRoomSubmitText.textContent = 'Utwórz pokój';
+            productionRoomForm.querySelector('[name="id"]').value = '';
+        }
+        
+        productionRoomModal.classList.remove('hidden');
+        productionRoomForm.querySelector('[name="name"]').focus();
+    };
+
+    function closeProductionRoomModal() {
+        productionRoomModal?.classList.add('hidden');
+    }
+
+    async function populateSupervisorSelect() {
+        const select = productionRoomForm?.querySelector('[name="supervisorId"]');
+        if (!select) return;
+        
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">Brak</option>';
+        
+        try {
+            const response = await fetch('/api/admin/users?role=PRODUCTION', { credentials: 'include' });
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                (result.data || []).forEach(user => {
+                    const opt = document.createElement('option');
+                    opt.value = user.id;
+                    opt.textContent = user.name || user.email;
+                    select.appendChild(opt);
+                });
+            }
+            
+            if (currentVal) select.value = currentVal;
+        } catch (error) {
+            console.error('Błąd ładowania nadzorców:', error);
+        }
+    }
+
+    async function handleProductionRoomSubmit(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(productionRoomForm);
+        const id = formData.get('id');
+        const name = formData.get('name')?.trim();
+        const area = formData.get('area');
+        const description = formData.get('description')?.trim();
+        const supervisorId = formData.get('supervisorId');
+        
+        if (!name) {
+            showProductionRoomError('Nazwa pokoju jest wymagana');
+            return;
+        }
+        
+        productionRoomFormError?.classList.add('hidden');
+        
+        const data = {
+            name,
+            area: area ? parseFloat(area) : null,
+            description: description || null,
+            supervisorId: supervisorId || null
+        };
+        
+        try {
+            const url = id ? `/api/production/rooms/${id}` : '/api/production/rooms';
+            const method = id ? 'PATCH' : 'POST';
+            
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                showAdminToast(id ? 'Pokój zaktualizowany' : 'Pokój utworzony', 'success');
+                closeProductionRoomModal();
+                loadProductionRooms();
+            } else {
+                showProductionRoomError(result.message || 'Błąd zapisu');
+            }
+        } catch (error) {
+            console.error('Błąd zapisu pokoju:', error);
+            showProductionRoomError('Błąd połączenia z serwerem');
+        }
+    }
+
+    function showProductionRoomError(message) {
+        if (productionRoomFormError) {
+            productionRoomFormError.querySelector('span').textContent = message;
+            productionRoomFormError.classList.remove('hidden');
+        }
+    }
+
+    // ============================================
+    // MODAL: GNIAZDO PRODUKCYJNE
+    // ============================================
+
+    window.openWorkCenterModal = function(wc = null) {
+        if (!workCenterModal || !workCenterForm) return;
+        
+        workCenterForm.reset();
+        workCenterFormError?.classList.add('hidden');
+        
+        populateRoomSelectForWorkCenter();
+        
+        if (wc) {
+            workCenterModalTitle.innerHTML = '<i class="fas fa-cogs"></i> Edytuj gniazdo produkcyjne';
+            workCenterSubmitText.textContent = 'Zapisz zmiany';
+            workCenterForm.querySelector('[name="id"]').value = wc.id;
+            workCenterForm.querySelector('[name="name"]').value = wc.name || '';
+            workCenterForm.querySelector('[name="type"]').value = wc.type || '';
+            workCenterForm.querySelector('[name="description"]').value = wc.description || '';
+            if (wc.roomId) {
+                workCenterForm.querySelector('[name="roomId"]').value = wc.roomId;
+            }
+        } else {
+            workCenterModalTitle.innerHTML = '<i class="fas fa-cogs"></i> Nowe gniazdo produkcyjne';
+            workCenterSubmitText.textContent = 'Utwórz gniazdo';
+            workCenterForm.querySelector('[name="id"]').value = '';
+        }
+        
+        workCenterModal.classList.remove('hidden');
+        workCenterForm.querySelector('[name="name"]').focus();
+    };
+
+    function closeWorkCenterModal() {
+        workCenterModal?.classList.add('hidden');
+    }
+
+    async function populateRoomSelectForWorkCenter() {
+        const select = workCenterForm?.querySelector('[name="roomId"]');
+        if (!select) return;
+        
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">Brak przypisania</option>';
+        
+        if (productionRooms.length === 0) {
+            try {
+                const response = await fetch('/api/production/rooms', { credentials: 'include' });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    productionRooms = result.data || [];
+                }
+            } catch (error) {
+                console.error('Błąd ładowania pokoi:', error);
+            }
+        }
+        
+        productionRooms.forEach(room => {
+            const opt = document.createElement('option');
+            opt.value = room.id;
+            opt.textContent = `${room.name} [${room.code}]`;
+            select.appendChild(opt);
+        });
+        
+        if (currentVal) select.value = currentVal;
+    }
+
+    async function handleWorkCenterSubmit(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(workCenterForm);
+        const id = formData.get('id');
+        const name = formData.get('name')?.trim();
+        const type = formData.get('type');
+        const roomId = formData.get('roomId');
+        const description = formData.get('description')?.trim();
+        
+        if (!name || !type) {
+            showWorkCenterError('Nazwa i typ gniazda są wymagane');
+            return;
+        }
+        
+        workCenterFormError?.classList.add('hidden');
+        
+        const data = {
+            name,
+            type,
+            roomId: roomId || null,
+            description: description || null
+        };
+        
+        try {
+            const url = id ? `/api/production/work-centers/${id}` : '/api/production/work-centers';
+            const method = id ? 'PATCH' : 'POST';
+            
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                showAdminToast(id ? 'Gniazdo zaktualizowane' : 'Gniazdo utworzone', 'success');
+                closeWorkCenterModal();
+                loadWorkCenters();
+            } else {
+                showWorkCenterError(result.message || 'Błąd zapisu');
+            }
+        } catch (error) {
+            console.error('Błąd zapisu gniazda:', error);
+            showWorkCenterError('Błąd połączenia z serwerem');
+        }
+    }
+
+    function showWorkCenterError(message) {
+        if (workCenterFormError) {
+            workCenterFormError.querySelector('span').textContent = message;
+            workCenterFormError.classList.remove('hidden');
+        }
+    }
+
+    // ============================================
+    // MODAL: MASZYNA / STANOWISKO
+    // ============================================
+
+    window.openWorkStationModal = function(ws = null) {
+        if (!workStationModal || !workStationForm) return;
+        
+        workStationForm.reset();
+        workStationFormError?.classList.add('hidden');
+        
+        populateWorkCenterSelectForWorkStation();
+        
+        if (ws) {
+            workStationModalTitle.innerHTML = '<i class="fas fa-tools"></i> Edytuj maszynę';
+            workStationSubmitText.textContent = 'Zapisz zmiany';
+            workStationForm.querySelector('[name="id"]').value = ws.id;
+            workStationForm.querySelector('[name="name"]').value = ws.name || '';
+            workStationForm.querySelector('[name="type"]').value = ws.type || '';
+            workStationForm.querySelector('[name="manufacturer"]').value = ws.manufacturer || '';
+            workStationForm.querySelector('[name="model"]').value = ws.model || '';
+            if (ws.workCenterId) {
+                workStationForm.querySelector('[name="workCenterId"]').value = ws.workCenterId;
+            }
+        } else {
+            workStationModalTitle.innerHTML = '<i class="fas fa-tools"></i> Nowa maszyna';
+            workStationSubmitText.textContent = 'Utwórz maszynę';
+            workStationForm.querySelector('[name="id"]').value = '';
+        }
+        
+        workStationModal.classList.remove('hidden');
+        workStationForm.querySelector('[name="name"]').focus();
+    };
+
+    function closeWorkStationModal() {
+        workStationModal?.classList.add('hidden');
+    }
+
+    async function populateWorkCenterSelectForWorkStation() {
+        const select = workStationForm?.querySelector('[name="workCenterId"]');
+        if (!select) return;
+        
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">Brak przypisania</option>';
+        
+        if (workCenters.length === 0) {
+            try {
+                const response = await fetch('/api/production/work-centers', { credentials: 'include' });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    workCenters = result.data || [];
+                }
+            } catch (error) {
+                console.error('Błąd ładowania gniazd:', error);
+            }
+        }
+        
+        workCenters.forEach(wc => {
+            const opt = document.createElement('option');
+            opt.value = wc.id;
+            opt.textContent = `${wc.name} [${wc.code}]`;
+            select.appendChild(opt);
+        });
+        
+        if (currentVal) select.value = currentVal;
+    }
+
+    async function handleWorkStationSubmit(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(workStationForm);
+        const id = formData.get('id');
+        const name = formData.get('name')?.trim();
+        const type = formData.get('type');
+        const workCenterId = formData.get('workCenterId');
+        const manufacturer = formData.get('manufacturer')?.trim();
+        const model = formData.get('model')?.trim();
+        
+        if (!name || !type) {
+            showWorkStationError('Nazwa i typ maszyny są wymagane');
+            return;
+        }
+        
+        workStationFormError?.classList.add('hidden');
+        
+        const data = {
+            name,
+            type,
+            workCenterId: workCenterId || null,
+            manufacturer: manufacturer || null,
+            model: model || null
+        };
+        
+        try {
+            const url = id ? `/api/production/work-stations/${id}` : '/api/production/work-stations';
+            const method = id ? 'PATCH' : 'POST';
+            
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                showAdminToast(id ? 'Maszyna zaktualizowana' : 'Maszyna utworzona', 'success');
+                closeWorkStationModal();
+                loadWorkStations();
+            } else {
+                showWorkStationError(result.message || 'Błąd zapisu');
+            }
+        } catch (error) {
+            console.error('Błąd zapisu maszyny:', error);
+            showWorkStationError('Błąd połączenia z serwerem');
+        }
+    }
+
+    function showWorkStationError(message) {
+        if (workStationFormError) {
+            workStationFormError.querySelector('span').textContent = message;
+            workStationFormError.classList.remove('hidden');
+        }
+    }
+})();

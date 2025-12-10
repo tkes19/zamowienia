@@ -21,12 +21,30 @@ Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
 ### Moduł produkcji (MES)
 
 - **Model danych i API** – `docs/SPEC_PRODUCTION_PANEL.md` (rozdziały 2–3).
-- **Stan wdrożenia** – podrozdział `2.3.1 Stan wdrożenia (2025-12-06)` w `docs/SPEC_PRODUCTION_PANEL.md`.
-- **Najważniejsze rzeczy już działają w kodzie:**
-  - migracje Supabase utworzyły tabele: `ProductionRoom`, `WorkCenter`, `WorkStation`, `ProductionPath`, `ProductionOrder`, `ProductionOperation`;
-  - zmiana statusu zamówienia na `APPROVED` automatycznie tworzy zlecenia produkcyjne (`ProductionOrder` + `ProductionOperation`);
-  - zmiana statusu na `CANCELLED` automatycznie anuluje powiązane zlecenia produkcyjne;
-  - backend oblicza `productionProgress` dla zamówień na podstawie zleceń i operacji (do wykorzystania w UI).
+- **Stan wdrożenia – opis szczegółowy** – podrozdział `2.3.1 Stan wdrożenia (2025-12-06)` w `docs/SPEC_PRODUCTION_PANEL.md`.
+
+**Co jest zrobione (backend + baza):**
+- migracje Supabase utworzyły główne tabele: `ProductionRoom`, `WorkCenter`, `WorkStation`, `ProductionPath`, `ProductionOrder`, `ProductionOperation`, logi wydruków itp.;
+- zmiana statusu zamówienia na `APPROVED` automatycznie tworzy zlecenia produkcyjne (`ProductionWorkOrder`, `ProductionOrder`, `ProductionOperation`) na podstawie zdefiniowanej ścieżki produkcyjnej (`ProductionPath`);
+- zmiana statusu zamówienia na `CANCELLED` automatycznie anuluje powiązane zlecenia produkcyjne;
+- endpointy do zarządzania strukturą produkcji (sale, centra robocze, stanowiska, ścieżki produkcyjne) są dostępne w `backend/server.js`;
+- endpoint `/api/production/orders/active` zwraca aktywne zlecenia produkcyjne zgrupowane w ramach zleceń roboczych (work orders) na potrzeby panelu operatora;
+- endpoint `/api/production/work-orders/:id/print` generuje PDF zlecenia produkcyjnego (work order) za pomocą `backend/pdfGenerator.js`;
+- frontendowy panel produkcji (`production.html` + `scripts/production.js`) istnieje: pokazuje listę zleceń, filtry, widoki kompaktowe/szczegółowe, podgląd produktów (modal ze zdjęciem z galerii).
+
+**Zaimplementowane (MVP panel operatora) – 2025-12-09:**
+- ✅ backendowe endpointy akcji operatora: `/api/production/operations/:id/{start|pause|complete|cancel|problem}`;
+- ✅ każda akcja operatora logowana do tabeli `ProductionLog` (czas, użytkownik, poprzedni/nowy status);
+- ✅ trwałe śledzenie czasu operacji po stronie serwera (pola `starttime`, `endtime`, `actualtime` w minutach);
+- ✅ automatyczne przejścia statusów `ProductionWorkOrder` na podstawie statusów operacji (`updateWorkOrderStatusFromOperations`);
+- ✅ endpoint statystyk operatora `/api/production/operator/stats` z filtrowaniem po pokoju produkcyjnym;
+- ✅ uprawnienia dla ról `PRODUCTION`, `OPERATOR`, `PRODUCTION_MANAGER`, `ADMIN`;
+- ✅ testy jednostkowe logiki statusów (`backend/production.test.js`).
+
+**Co jest jeszcze do zrobienia (po MVP):**
+- rozważyć dodanie aktualizacji w czasie rzeczywistym (WebSocket) dla listy zleceń i statystyk;
+- dodać przyciski druku dla operatora (ponowny druk zlecenia);
+- rozbudować panel admina o zakładkę "Produkcja" (zarządzanie pokojami, gniazdami, stanowiskami).
 
 ---
 

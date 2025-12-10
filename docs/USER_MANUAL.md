@@ -49,9 +49,9 @@ System zamówień służy do obsługi sprzedaży pamiątek i gadżetów w firmie
 | `ADMIN` | Administrator – pełny dostęp |
 | `SALES_REP` | Handlowiec terenowy |
 | `SALES_DEPT` | Dział sprzedaży (biuro) |
-| `PRODUCTION_MANAGER` | Kierownik produkcji – zarządzanie produkcją |
-| `OPERATOR` | Operator produkcyjny – realizacja zadań |
-| `PRODUCTION` | Dział produkcji (legacy) |
+| `PRODUCTION_MANAGER` | Kierownik produkcji – pełne zarządzanie produkcją (planowanie, przypisania produktów, dostęp do panelu grafiki) |
+| `OPERATOR` | Operator produkcyjny – realizacja zadań na maszynie |
+| `PRODUCTION` | Dział produkcji – użytkownicy produkcji z podglądem i wybranymi akcjami, **bez pełnych uprawnień kierownika** |
 | `WAREHOUSE` | Magazyn / wysyłka |
 | `GRAPHICS` | Dział graficzny |
 | `CLIENT` | Klient zewnętrzny |
@@ -98,8 +98,8 @@ Po zalogowaniu w górnej belce widoczne są linki zależne od roli:
 
 - **Handlowiec (SALES_REP)**: Formularz, Zamówienia, Moi Klienci
 - **Dział sprzedaży (SALES_DEPT)**: Formularz, Zamówienia, Moi Klienci, Produkcja, Grafika, Panel admina
-- **Produkcja (OPERATOR/PRODUCTION)**: Produkcja, Zamówienia
-- **Kierownik produkcji (PRODUCTION_MANAGER)**: Produkcja, Zamówienia, Grafika
+- **Produkcja (OPERATOR/PRODUCTION)**: Panel produkcji (`/production`), podgląd Zamówień – bez dostępu do panelu grafika i edytora przypisań produktów do maszyn
+- **Kierownik produkcji (PRODUCTION_MANAGER)**: Panel produkcji (`/production`), Zamówienia, Grafika, **edytor przypisań produktów do maszyn** (link w panelu produkcji i w panelu admina → sekcja Produkcja)
 - **Grafik (GRAPHICS)**: Formularz (podgląd), Grafika, Nowe miejscowości
 - **Administrator (ADMIN)**: wszystkie linki
 
@@ -614,7 +614,28 @@ Panel produkcyjny to nowoczesny system zarządzania produkcją (MES), który umo
    - Produkcja dzienna
    - Wydajność maszyn
    - Czasy realizacji zleceń
-   - Jakość produkcji
+   - Czasy realizacji zleceń
+
+#### 10.2.6. Przypisania produktów do maszyn (Kanban)
+
+Kierownik produkcji i administrator mają dostęp do specjalnego edytora przypisań produktów do maszyn:
+
+- **Wejście z panelu admina**: Panel admina → sekcja **Produkcja** → **„Przypisania produktów do maszyn”**.
+- **Wejście z panelu produkcji**: w nagłówku `production.html` link **„Przypisania”** (widoczny dla ról `PRODUCTION_MANAGER` i `ADMIN`).
+
+Widok ma formę **tablicy Kanban**:
+
+- kolumna **„Nieprzypisane”** – produkty, które nie mają przypisań w danym pokoju;
+- kolumny dla każdej **maszyny w pokoju** – przeciągnięcie produktu do kolumny dodaje przypisanie;
+- przycisk **„Zablokuj/Odblokuj”** na maszynie ustawia tryb „tylko przypisane produkty”.
+
+Zasady działania:
+
+- produkt może być przypisany do **wielu maszyn** w tym samym pokoju;
+- jeśli produkt **ma przypisania** w pokoju, system kieruje operacje tylko na te maszyny;
+- jeśli produkt **nie ma przypisań**, może trafić na wszystkie aktywne maszyny w pokoju,
+  z wyjątkiem maszyn oznaczonych jako „tylko przypisane produkty”;
+- maszyna z włączoną opcją „tylko przypisane produkty” przyjmuje wyłącznie produkty z listy przypisań.
 
 ### 10.3. Administrator Produkcji
 

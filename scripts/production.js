@@ -16,6 +16,11 @@ let selectedProblemType = null;
 let refreshInterval = null;
 let orderTimers = {};
 
+// Maszyny w pokoju operatora
+let currentRoomId = null;
+let roomMachines = [];
+let selectedMachineId = null;
+
 // Ustawienia widoku
 let viewMode = localStorage.getItem('prodViewMode') || 'grid'; // grid, list
 let sortMode = localStorage.getItem('prodSortMode') || 'priority';
@@ -350,6 +355,10 @@ function applyFiltersAndSort() {
         if (activeFilters.pinned && !isPinned(order.id)) {
             return false;
         }
+        // Filtr: Wybrana maszyna
+        if (selectedMachineId && !orderMatchesSelectedMachine(order)) {
+            return false;
+        }
         return true;
     });
     
@@ -384,6 +393,41 @@ function applyFiltersAndSort() {
     });
 }
 
+// Sprawdza, czy zlecenie pasuje do wybranej maszyny w pokoju
+function orderMatchesSelectedMachine(order) {
+    if (!selectedMachineId || !roomMachines || roomMachines.length === 0) {
+        return true;
+    }
+
+    const machine = roomMachines.find(m => m.id === selectedMachineId);
+    if (!machine) return true;
+
+    const ops = Array.isArray(order.operations) ? order.operations : [];
+    if (ops.length === 0) return true;
+
+    const machineId = machine.id;
+    const machineType = machine.type || (machine.WorkCenter && machine.WorkCenter.type) || null;
+
+    return ops.some(op => {
+        const opWorkStationId =
+            (op.workStation && op.workStation.id) ||
+            op.workstationid ||
+            op.workStationId ||
+            null;
+
+        if (opWorkStationId && opWorkStationId === machineId) {
+            return true;
+        }
+
+        const opType = op.operationtype || op.operationType;
+        if (!machineType || !opType) return false;
+
+        if (opType === machineType) return true;
+        if (opType === `path_${machineType}`) return true;
+        return opType.includes(machineType);
+    });
+}
+
 // ============================================
 // AUTORYZACJA
 // ============================================
@@ -406,7 +450,7 @@ function checkAuth() {
             }
 
             const role = data.role;
-            const allowedRoles = ['ADMIN', 'PRODUCTION', 'OPERATOR'];
+            const allowedRoles = ['ADMIN', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER'];
 
             // Zalogowany, ale bez uprawnień do panelu produkcji – pokaż komunikat zamiast logowania
             if (!allowedRoles.includes(role)) {
@@ -439,8 +483,13 @@ function checkAuth() {
 
             // Pokaż link do Grafiki dla kierownika produkcji i admina
             const prodNavGraphics = document.getElementById('prod-nav-graphics');
-            if (prodNavGraphics && ['PRODUCTION_MANAGER', 'ADMIN'].includes(data.role)) {
+            if (prodNavGraphics && ['PRODUCTION_MANAGER', 'ADMIN'].includes(role)) {
                 prodNavGraphics.style.display = 'flex';
+            }
+
+            const prodNavAssignments = document.getElementById('prod-nav-assignments');
+            if (prodNavAssignments && ['PRODUCTION_MANAGER', 'ADMIN'].includes(role)) {
+                prodNavAssignments.style.display = 'flex';
             }
 
             // Wyświetl nazwę pokoju produkcyjnego
@@ -450,6 +499,15 @@ function checkAuth() {
             if (roomName && roomBadge && roomNameEl) {
                 roomNameEl.textContent = roomName;
                 roomBadge.style.display = 'flex';
+            }
+
+            // Zapamiętaj pokój produkcyjny operatora i wczytaj maszyny w pokoju
+            if (data.productionroomid !== undefined && data.productionroomid !== null) {
+                const parsedRoomId = parseInt(data.productionroomid, 10);
+                if (!Number.isNaN(parsedRoomId)) {
+                    currentRoomId = parsedRoomId;
+                    loadRoomMachines();
+                }
             }
         })
         .catch((err) => {
@@ -461,6 +519,104 @@ function checkAuth() {
                 userNameEl.textContent = 'Offline?';
             }
         });
+}
+
+// ============================================
+// MASZYNY W POKOJU OPERATORA
+// ============================================
+
+async function loadRoomMachines() {
+    const bar = document.getElementById('machineBar');
+    if (!bar || !currentRoomId) return;
+
+    try {
+        const response = await fetch(`/api/production/rooms/${currentRoomId}/machine-assignments`, {
+            credentials: 'include'
+        });
+        const result = await response.json();
+
+        if (result.status === 'success' && result.data && Array.isArray(result.data.machines)) {
+            roomMachines = result.data.machines;
+            renderMachineBar();
+        } else {
+            console.warn('Błąd ładowania maszyn pokoju:', result.message);
+        }
+    } catch (error) {
+        console.error('Błąd ładowania maszyn pokoju:', error);
+    }
+}
+
+function renderMachineBar() {
+    const bar = document.getElementById('machineBar');
+    if (!bar) return;
+
+    if (!roomMachines || roomMachines.length === 0) {
+        bar.style.display = 'none';
+        bar.innerHTML = '';
+        return;
+    }
+
+    bar.style.display = 'flex';
+
+    let html = '';
+
+    // Kafelek "Wszystkie maszyny"
+    const isAllActive = !selectedMachineId;
+    html += `
+        <button type="button" class="prod-machine-chip ${isAllActive ? 'active' : ''}" onclick="setSelectedMachine(null)">
+            <div class="prod-machine-chip-title">
+                <i class="fas fa-layer-group"></i>
+                <span>Wszystkie maszyny</span>
+            </div>
+            <div class="prod-machine-chip-status">
+                ${orders.length} zleceń
+            </div>
+        </button>
+    `;
+
+    roomMachines.forEach(machine => {
+        const isActive = selectedMachineId === machine.id;
+        const status = machine.status || 'available';
+        let statusLabel = 'Dostępna';
+        let statusIcon = 'fa-circle';
+
+        if (status === 'in_use') {
+            statusLabel = 'W użyciu';
+            statusIcon = 'fa-bolt';
+        } else if (status === 'maintenance') {
+            statusLabel = 'Przegląd';
+            statusIcon = 'fa-tools';
+        } else if (status === 'breakdown') {
+            statusLabel = 'Awaria';
+            statusIcon = 'fa-exclamation-triangle';
+        }
+
+        html += `
+            <button type="button" class="prod-machine-chip ${isActive ? 'active' : ''}" onclick="setSelectedMachine(${machine.id})">
+                <div class="prod-machine-chip-title">
+                    <i class="fas ${statusIcon}"></i>
+                    <span>${machine.name}</span>
+                </div>
+                <div class="prod-machine-chip-code">${machine.code}</div>
+                <div class="prod-machine-chip-status">${statusLabel}</div>
+            </button>
+        `;
+    });
+
+    bar.innerHTML = html;
+}
+
+function setSelectedMachine(machineId) {
+    if (machineId === null || machineId === undefined) {
+        selectedMachineId = null;
+    } else {
+        const parsed = parseInt(machineId, 10);
+        selectedMachineId = Number.isNaN(parsed) ? null : parsed;
+    }
+
+    applyFiltersAndSort();
+    renderOrders();
+    renderMachineBar();
 }
 
 function logout() {
@@ -608,6 +764,9 @@ function renderOrders() {
             startTimer(order.id, order.currentOperation.starttime);
         }
     });
+
+    // Zaktualizuj pasek maszyn (może używać liczby zleceń)
+    renderMachineBar();
 }
 
 // Renderowanie widoku Zbiorczych ZP (ProductionWorkOrder)

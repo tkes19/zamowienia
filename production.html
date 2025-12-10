@@ -1879,6 +1879,61 @@
             font-family: monospace;
             margin-right: 4px;
         }
+
+        /* Pasek wyboru maszyn w pokoju */
+        .prod-machine-bar {
+            display: flex;
+            align-items: stretch;
+            gap: 8px;
+            padding: 4px 16px 0;
+            overflow-x: auto;
+        }
+        
+        .prod-machine-chip {
+            display: inline-flex;
+            flex-direction: column;
+            justify-content: center;
+            min-width: 150px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(148, 163, 184, 0.6);
+            color: var(--prod-text-muted);
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+            white-space: nowrap;
+        }
+        
+        .prod-machine-chip:hover {
+            transform: translateY(-1px);
+            border-color: #38bdf8;
+        }
+        
+        .prod-machine-chip.active {
+            background: linear-gradient(135deg, #3b82f6, #22c55e);
+            border-color: transparent;
+            color: #ffffff;
+        }
+        
+        .prod-machine-chip-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 2px;
+        }
+        
+        .prod-machine-chip-code {
+            font-size: 11px;
+            opacity: 0.9;
+        }
+        
+        .prod-machine-chip-status {
+            font-size: 11px;
+            opacity: 0.9;
+        }
         
         /* Toast info */
         .toast-info {
@@ -1906,6 +1961,9 @@
             <a href="/graphics.html" class="prod-nav-link" id="prod-nav-graphics" style="display: none;" title="Panel grafika">
                 <i class="fas fa-palette"></i> Grafika
             </a>
+            <a href="/machine-assignments.html" class="prod-nav-link" id="prod-nav-assignments" style="display: none;" title="Przypisania produktów do maszyn">
+                <i class="fas fa-project-diagram"></i> Przypisania
+            </a>
             <span class="prod-user" id="userName">---</span>
             <button class="prod-btn-logout" onclick="logout()">
                 <i class="fas fa-sign-out-alt"></i> Wyloguj
@@ -1928,7 +1986,10 @@
             <div class="prod-stat-label">Dziś</div>
         </div>
     </div>
-    
+
+    <!-- Maszyny w pokoju operatora -->
+    <div class="prod-machine-bar" id="machineBar" style="display: none;"></div>
+
     <!-- Pasek narzędzi -->
     <div class="prod-toolbar">
         <div class="prod-toolbar-left">

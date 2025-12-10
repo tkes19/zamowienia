@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Przypisania produktów do maszyn - Kanban</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .kanban-column {
+            min-height: 400px;
+            max-height: calc(100vh - 250px);
+            overflow-y: auto;
+        }
+        .product-card {
+            cursor: grab;
+            transition: all 0.2s ease;
+        }
+        .product-card:active {
+            cursor: grabbing;
+        }
+        .product-card.dragging {
+            opacity: 0.5;
+            transform: rotate(2deg);
+        }
+        .kanban-column.drag-over {
+            background-color: rgba(59, 130, 246, 0.1);
+            border-color: #3b82f6;
+        }
+        .machine-header.restricted {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <a href="production.html" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-arrow-left"></i>
+                </a>
+                <h1 class="text-xl font-bold text-gray-800">
+                    <i class="fas fa-cogs mr-2 text-blue-600"></i>
+                    Przypisania produktów do maszyn
+                </h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <select id="roomSelect" class="border rounded-lg px-4 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="">Wybierz pokój...</option>
+                </select>
+                <button onclick="refreshData()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">
+                    <i class="fas fa-sync-alt mr-2"></i>Odśwież
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        <!-- Loading state -->
+        <div id="loadingState" class="hidden flex items-center justify-center py-20">
+            <div class="loading-spinner"></div>
+            <span class="ml-3 text-gray-600">Ładowanie...</span>
+        </div>
+
+        <!-- Empty state -->
+        <div id="emptyState" class="flex flex-col items-center justify-center py-20 text-gray-500">
+            <i class="fas fa-industry text-6xl mb-4 text-gray-300"></i>
+            <p class="text-lg">Wybierz pokój produkcyjny, aby zobaczyć przypisania</p>
+        </div>
+
+        <!-- Kanban board -->
+        <div id="kanbanBoard" class="hidden">
+            <!-- Room info -->
+            <div id="roomInfo" class="mb-6 bg-white rounded-lg shadow p-4">
+                <h2 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-door-open mr-2 text-green-600"></i>
+                    <span id="roomName">-</span>
+                </h2>
+                <p class="text-sm text-gray-500">Kod: <span id="roomCode">-</span></p>
+            </div>
+
+            <!-- Kanban columns container -->
+            <div id="columnsContainer" class="flex gap-4 overflow-x-auto pb-4">
+                <!-- Columns will be generated here -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Product search modal -->
+    <div id="searchModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div class="p-4 border-b flex items-center justify-between">
+                <h3 class="font-semibold text-gray-800">
+                    <i class="fas fa-search mr-2"></i>Dodaj produkt do maszyny
+                </h3>
+                <button onclick="closeSearchModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="p-4">
+                <input type="text" id="productSearch" placeholder="Szukaj produktu..." 
+                    class="w-full border rounded-lg px-4 py-2 mb-4 focus:ring-2 focus:ring-blue-500"
+                    oninput="filterProducts()">
+                <div id="productList" class="max-h-64 overflow-y-auto space-y-2">
+                    <!-- Products will be listed here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let currentRoomId = null;
+        let kanbanData = null;
+        let targetMachineId = null;
+
+        // API base
+        const API_BASE = 'http://localhost:3001';
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadRooms();
+            document.getElementById('roomSelect').addEventListener('change', (e) => {
+                if (e.target.value) {
+                    currentRoomId = parseInt(e.target.value);
+                    loadMachineAssignments(currentRoomId);
+                } else {
+                    showEmptyState();
+                }
+            });
+        });
+
+        // Load rooms list
+        async function loadRooms() {
+            try {
+                const response = await fetch(`${API_BASE}/api/production/rooms`, {
+                    credentials: 'include'
+                });
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    const select = document.getElementById('roomSelect');
+                    select.innerHTML = '<option value="">Wybierz pokój...</option>';
+                    result.data.forEach(room => {
+                        select.innerHTML += `<option value="${room.id}">${room.name} (${room.code})</option>`;
+                    });
+                }
+            } catch (error) {
+                console.error('Błąd ładowania pokojów:', error);
+                showNotification('Błąd ładowania pokojów', 'error');
+            }
+        }
+
+        // Load machine assignments for room
+        async function loadMachineAssignments(roomId) {
+            showLoading();
+            try {
+                const response = await fetch(`${API_BASE}/api/production/rooms/${roomId}/machine-assignments`, {
+                    credentials: 'include'
+                });
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    kanbanData = result.data;
+                    renderKanban();
+                } else {
+                    showNotification(result.message || 'Błąd ładowania danych', 'error');
+                    showEmptyState();
+                }
+            } catch (error) {
+                console.error('Błąd ładowania przypisań:', error);
+                showNotification('Błąd połączenia z serwerem', 'error');
+                showEmptyState();
+            }
+        }
+
+        // Render Kanban board
+        function renderKanban() {
+            if (!kanbanData) return;
+
+            document.getElementById('loadingState').classList.add('hidden');
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('kanbanBoard').classList.remove('hidden');
+
+            // Room info
+            document.getElementById('roomName').textContent = kanbanData.room.name;
+            document.getElementById('roomCode').textContent = kanbanData.room.code;
+
+            // Build columns
+            const container = document.getElementById('columnsContainer');
+            container.innerHTML = '';
+
+            // Unassigned products column
+            container.innerHTML += `
+                <div class="flex-shrink-0 w-72 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                    <div class="p-3 bg-gray-200 rounded-t-lg">
+                        <h3 class="font-semibold text-gray-700">
+                            <i class="fas fa-inbox mr-2"></i>Nieprzypisane
+                            <span class="ml-2 bg-gray-500 text-white text-xs px-2 py-1 rounded-full">
+                                ${kanbanData.unassignedProducts.length}
+                            </span>
+                        </h3>
+                    </div>
+                    <div class="kanban-column p-2 space-y-2" 
+                         data-machine-id="unassigned"
+                         ondragover="handleDragOver(event)"
+                         ondrop="handleDrop(event)"
+                         ondragleave="handleDragLeave(event)">
+                        ${kanbanData.unassignedProducts.map(product => `
+                            <div class="product-card bg-white p-3 rounded-lg shadow-sm border hover:shadow-md"
+                                 draggable="true"
+                                 data-product-id="${product.id}"
+                                 ondragstart="handleDragStart(event)"
+                                 ondragend="handleDragEnd(event)">
+                                <div class="font-medium text-sm text-gray-800 truncate">${product.name}</div>
+                                <div class="text-xs text-gray-500">${product.identifier || '-'}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Machine columns
+            kanbanData.machines.forEach(machine => {
+                const restrictedClass = machine.restrictToAssignedProducts ? 'restricted' : '';
+                const lockIcon = machine.restrictToAssignedProducts 
+                    ? '<i class="fas fa-lock text-yellow-800 ml-2" title="Tylko przypisane produkty"></i>'
+                    : '<i class="fas fa-lock-open text-gray-400 ml-2" title="Otwarta dla wszystkich"></i>';
+
+                container.innerHTML += `
+                    <div class="flex-shrink-0 w-72 bg-white rounded-lg shadow border">
+                        <div class="machine-header ${restrictedClass} p-3 rounded-t-lg bg-gradient-to-r from-blue-500 to-blue-600 text-white">
+                            <div class="flex items-center justify-between">
+                                <h3 class="font-semibold truncate flex-1">
+                                    <i class="fas fa-cog mr-2"></i>${machine.name}
+                                </h3>
+                                ${lockIcon}
+                            </div>
+                            <div class="text-xs opacity-80 mt-1">${machine.code} • ${machine.status}</div>
+                            <div class="flex items-center gap-2 mt-2">
+                                <button onclick="openSearchModal(${machine.id})" 
+                                    class="text-xs bg-white bg-opacity-20 hover:bg-opacity-30 px-2 py-1 rounded transition">
+                                    <i class="fas fa-plus mr-1"></i>Dodaj
+                                </button>
+                                <button onclick="toggleRestriction(${machine.id}, ${!machine.restrictToAssignedProducts})"
+                                    class="text-xs bg-white bg-opacity-20 hover:bg-opacity-30 px-2 py-1 rounded transition"
+                                    title="${machine.restrictToAssignedProducts ? 'Odblokuj maszynę' : 'Zablokuj tylko na przypisane'}">
+                                    <i class="fas fa-${machine.restrictToAssignedProducts ? 'unlock' : 'lock'} mr-1"></i>
+                                    ${machine.restrictToAssignedProducts ? 'Odblokuj' : 'Zablokuj'}
+                                </button>
+                            </div>
+                        </div>
+                        <div class="kanban-column p-2 space-y-2"
+                             data-machine-id="${machine.id}"
+                             ondragover="handleDragOver(event)"
+                             ondrop="handleDrop(event)"
+                             ondragleave="handleDragLeave(event)">
+                            ${machine.products.length === 0 ? `
+                                <div class="text-center text-gray-400 py-8 text-sm">
+                                    <i class="fas fa-inbox text-2xl mb-2"></i>
+                                    <p>Przeciągnij produkty tutaj</p>
+                                </div>
+                            ` : machine.products.map(product => `
+                                <div class="product-card bg-gray-50 p-3 rounded-lg border hover:shadow-md relative group"
+                                     draggable="true"
+                                     data-product-id="${product.id}"
+                                     ondragstart="handleDragStart(event)"
+                                     ondragend="handleDragEnd(event)">
+                                    <button onclick="removeAssignment(${machine.id}, '${product.id}')"
+                                        class="absolute top-1 right-1 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                    <div class="font-medium text-sm text-gray-800 truncate pr-6">${product.name}</div>
+                                    <div class="text-xs text-gray-500">${product.identifier || '-'}</div>
+                                    ${product.notes ? `<div class="text-xs text-blue-600 mt-1 truncate">${product.notes}</div>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="p-2 border-t bg-gray-50 rounded-b-lg">
+                            <span class="text-xs text-gray-500">
+                                <i class="fas fa-box mr-1"></i>${machine.products.length} produktów
+                            </span>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        // Drag & Drop handlers
+        let draggedProductId = null;
+        let sourceMachineId = null;
+
+        function handleDragStart(event) {
+            draggedProductId = event.target.dataset.productId;
+            sourceMachineId = event.target.closest('.kanban-column').dataset.machineId;
+            event.target.classList.add('dragging');
+            event.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragEnd(event) {
+            event.target.classList.remove('dragging');
+            document.querySelectorAll('.kanban-column').forEach(col => {
+                col.classList.remove('drag-over');
+            });
+        }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.currentTarget.classList.add('drag-over');
+        }
+
+        function handleDragLeave(event) {
+            event.currentTarget.classList.remove('drag-over');
+        }
+
+        async function handleDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+
+            const targetMachineId = event.currentTarget.dataset.machineId;
+            
+            if (!draggedProductId || sourceMachineId === targetMachineId) return;
+
+            // If dropping to unassigned - remove assignment
+            if (targetMachineId === 'unassigned') {
+                if (sourceMachineId !== 'unassigned') {
+                    await removeAssignment(parseInt(sourceMachineId), draggedProductId);
+                }
+                return;
+            }
+
+            // If dropping to machine - add assignment
+            if (targetMachineId !== 'unassigned') {
+                // First remove from old machine if needed
+                if (sourceMachineId !== 'unassigned') {
+                    await removeAssignmentSilent(parseInt(sourceMachineId), draggedProductId);
+                }
+                // Then add to new machine
+                await addAssignment(parseInt(targetMachineId), draggedProductId);
+            }
+        }
+
+        // API calls
+        async function addAssignment(workStationId, productId, notes = null) {
+            try {
+                const response = await fetch(`${API_BASE}/api/production/machine-assignments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ workStationId, productId, notes })
+                });
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showNotification('Produkt przypisany do maszyny', 'success');
+                    refreshData();
+                } else {
+                    showNotification(result.message || 'Błąd przypisywania', 'error');
+                }
+            } catch (error) {
+                console.error('Błąd:', error);
+                showNotification('Błąd połączenia', 'error');
+            }
+        }
+
+        async function removeAssignment(workStationId, productId) {
+            if (!confirm('Czy na pewno usunąć to przypisanie?')) return;
+            await removeAssignmentSilent(workStationId, productId);
+            showNotification('Przypisanie usunięte', 'success');
+            refreshData();
+        }
+
+        async function removeAssignmentSilent(workStationId, productId) {
+            try {
+                await fetch(`${API_BASE}/api/production/machine-assignments/${workStationId}/${productId}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+            } catch (error) {
+                console.error('Błąd usuwania:', error);
+            }
+        }
+
+        async function toggleRestriction(workStationId, restrictToAssignedProducts) {
+            try {
+                const response = await fetch(`${API_BASE}/api/production/workstations/${workStationId}/restriction`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ restrictToAssignedProducts })
+                });
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showNotification(
+                        restrictToAssignedProducts 
+                            ? 'Maszyna zablokowana - tylko przypisane produkty' 
+                            : 'Maszyna odblokowana - wszystkie produkty',
+                        'success'
+                    );
+                    refreshData();
+                } else {
+                    showNotification(result.message || 'Błąd zmiany ustawień', 'error');
+                }
+            } catch (error) {
+                console.error('Błąd:', error);
+                showNotification('Błąd połączenia', 'error');
+            }
+        }
+
+        // Search modal
+        function openSearchModal(machineId) {
+            targetMachineId = machineId;
+            document.getElementById('searchModal').classList.remove('hidden');
+            document.getElementById('productSearch').value = '';
+            renderProductList();
+            document.getElementById('productSearch').focus();
+        }
+
+        function closeSearchModal() {
+            document.getElementById('searchModal').classList.add('hidden');
+            targetMachineId = null;
+        }
+
+        function renderProductList() {
+            const list = document.getElementById('productList');
+            const search = document.getElementById('productSearch').value.toLowerCase();
+            
+            const filtered = kanbanData.unassignedProducts.filter(p => 
+                p.name.toLowerCase().includes(search) || 
+                (p.identifier && p.identifier.toLowerCase().includes(search))
+            ).slice(0, 30);
+
+            list.innerHTML = filtered.map(product => `
+                <div class="p-2 border rounded hover:bg-blue-50 cursor-pointer transition"
+                     onclick="selectProduct('${product.id}')">
+                    <div class="font-medium text-sm">${product.name}</div>
+                    <div class="text-xs text-gray-500">${product.identifier || '-'}</div>
+                </div>
+            `).join('');
+
+            if (filtered.length === 0) {
+                list.innerHTML = '<div class="text-center text-gray-500 py-4">Brak wyników</div>';
+            }
+        }
+
+        function filterProducts() {
+            renderProductList();
+        }
+
+        function selectProduct(productId) {
+            if (targetMachineId) {
+                addAssignment(targetMachineId, productId);
+                closeSearchModal();
+            }
+        }
+
+        // UI helpers
+        function showLoading() {
+            document.getElementById('loadingState').classList.remove('hidden');
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('kanbanBoard').classList.add('hidden');
+        }
+
+        function showEmptyState() {
+            document.getElementById('loadingState').classList.add('hidden');
+            document.getElementById('emptyState').classList.remove('hidden');
+            document.getElementById('kanbanBoard').classList.add('hidden');
+        }
+
+        function refreshData() {
+            if (currentRoomId) {
+                loadMachineAssignments(currentRoomId);
+            }
+        }
+
+        function showNotification(message, type = 'info') {
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                info: 'bg-blue-500'
+            };
+            
+            const notification = document.createElement('div');
+            notification.className = `fixed bottom-4 right-4 ${colors[type]} text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-pulse`;
+            notification.innerHTML = `<i class="fas fa-${type === 'success' ? 'check' : type === 'error' ? 'exclamation-triangle' : 'info-circle'} mr-2"></i>${message}`;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => notification.remove(), 3000);
+        }
+    </script>
+</body>
+</html>

@@ -5937,6 +5937,175 @@ const WORK_CENTER_TYPES = ['laser_co2', 'laser_fiber', 'uv_print', 'cnc', 'cutti
 const WORK_STATION_STATUSES = ['available', 'in_use', 'maintenance', 'breakdown'];
 
 // ============================================
+// GENERATOR KODÓW DLA POKOI, GNIAZD, MASZYN
+// ============================================
+
+/**
+ * Generuje kod z nazwy - usuwa polskie znaki, bierze pierwsze litery słów lub całe słowo
+ * @param {string} name - nazwa do przetworzenia
+ * @returns {string} - kod bazowy (bez numeru)
+ */
+function generateBaseCode(name) {
+    if (!name) return 'ITEM';
+    
+    // Zamień polskie znaki na ASCII
+    const polishMap = {
+        'ą': 'a', 'ć': 'c', 'ę': 'e', 'ł': 'l', 'ń': 'n',
+        'ó': 'o', 'ś': 's', 'ź': 'z', 'ż': 'z',
+        'Ą': 'A', 'Ć': 'C', 'Ę': 'E', 'Ł': 'L', 'Ń': 'N',
+        'Ó': 'O', 'Ś': 'S', 'Ź': 'Z', 'Ż': 'Z'
+    };
+    
+    let normalized = name;
+    for (const [pl, ascii] of Object.entries(polishMap)) {
+        normalized = normalized.replace(new RegExp(pl, 'g'), ascii);
+    }
+    
+    // Usuń znaki specjalne, zostaw tylko litery i cyfry
+    normalized = normalized.replace(/[^a-zA-Z0-9\s]/g, '');
+    
+    const words = normalized.trim().split(/\s+/).filter(w => w.length > 0);
+    
+    if (words.length === 0) return 'ITEM';
+    
+    if (words.length === 1) {
+        // Jedno słowo - weź pierwsze 6 znaków
+        return words[0].substring(0, 6).toUpperCase();
+    }
+    
+    // Wiele słów - weź pierwsze litery (max 6)
+    const initials = words.map(w => w[0]).join('').substring(0, 6).toUpperCase();
+    
+    // Jeśli za krótkie, dodaj więcej liter z pierwszego słowa
+    if (initials.length < 3 && words[0].length > 1) {
+        return (words[0].substring(0, 4) + initials.substring(1)).toUpperCase();
+    }
+    
+    return initials;
+}
+
+/**
+ * Generuje unikalny kod dla pokoju produkcyjnego
+ * Format: BAZOWY-NNN (np. LASER-001, UV-002)
+ */
+async function generateRoomCode(supabaseClient, name) {
+    const baseCode = generateBaseCode(name);
+    
+    // Znajdź najwyższy numer dla tego prefiksu
+    const { data: existing } = await supabaseClient
+        .from('ProductionRoom')
+        .select('code')
+        .like('code', `${baseCode}-%`);
+    
+    let maxNum = 0;
+    (existing || []).forEach(row => {
+        const match = row.code.match(new RegExp(`^${baseCode}-(\\d+)$`));
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+        }
+    });
+    
+    const nextNum = maxNum + 1;
+    return `${baseCode}-${String(nextNum).padStart(3, '0')}`;
+}
+
+/**
+ * Generuje unikalny kod dla gniazda produkcyjnego
+ * Format: ROOMCODE-TYP-NN (np. LASER-001-CO2-01)
+ */
+async function generateWorkCenterCode(supabaseClient, name, roomId, type) {
+    let prefix = '';
+    
+    // Pobierz kod pokoju jeśli podano
+    if (roomId) {
+        const { data: room } = await supabaseClient
+            .from('ProductionRoom')
+            .select('code')
+            .eq('id', roomId)
+            .single();
+        if (room) {
+            prefix = room.code + '-';
+        }
+    }
+    
+    // Dodaj skrót typu
+    const typeShort = {
+        'laser_co2': 'CO2',
+        'laser_fiber': 'FIB',
+        'uv_print': 'UV',
+        'cnc': 'CNC',
+        'cutting': 'CUT',
+        'assembly': 'ASM',
+        'packaging': 'PAK',
+        'other': 'OTH'
+    }[type] || 'OTH';
+    
+    const baseCode = prefix + typeShort;
+    
+    // Znajdź najwyższy numer
+    const { data: existing } = await supabaseClient
+        .from('WorkCenter')
+        .select('code')
+        .like('code', `${baseCode}-%`);
+    
+    let maxNum = 0;
+    (existing || []).forEach(row => {
+        const match = row.code.match(new RegExp(`^${baseCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`));
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+        }
+    });
+    
+    const nextNum = maxNum + 1;
+    return `${baseCode}-${String(nextNum).padStart(2, '0')}`;
+}
+
+/**
+ * Generuje unikalny kod dla maszyny/stanowiska
+ * Format: WORKCENTERCODE-NN (np. LASER-001-CO2-01-01)
+ */
+async function generateWorkStationCode(supabaseClient, name, workCenterId) {
+    let prefix = 'WS';
+    
+    // Pobierz kod gniazda jeśli podano
+    if (workCenterId) {
+        const { data: wc } = await supabaseClient
+            .from('WorkCenter')
+            .select('code')
+            .eq('id', workCenterId)
+            .single();
+        if (wc) {
+            prefix = wc.code;
+        }
+    }
+    
+    // Znajdź najwyższy numer
+    const { data: existing } = await supabaseClient
+        .from('WorkStation')
+        .select('code')
+        .like('code', `${prefix}-%`);
+    
+    let maxNum = 0;
+    (existing || []).forEach(row => {
+        const match = row.code.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`));
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+        }
+    });
+    
+    const nextNum = maxNum + 1;
+    return `${prefix}-${String(nextNum).padStart(2, '0')}`;
+}
+
+// Eksportuj funkcje do testów
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { generateBaseCode, generateRoomCode, generateWorkCenterCode, generateWorkStationCode };
+}
+
+// ============================================
 // GET /api/production/rooms - lista pokoi produkcyjnych
 // ============================================
 app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
@@ -6018,28 +6187,20 @@ app.post('/api/production/rooms', requireRole(['ADMIN']), async (req, res) => {
     }
 
     try {
-        const { name, code, area, description, supervisorId } = req.body;
+        const { name, area, description, supervisorId } = req.body;
 
-        if (!name || !code) {
-            return res.status(400).json({ status: 'error', message: 'Nazwa i kod są wymagane' });
+        if (!name) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa jest wymagana' });
         }
 
-        // Sprawdź unikalność kodu
-        const { data: existing } = await supabase
-            .from('ProductionRoom')
-            .select('id')
-            .eq('code', code.toUpperCase())
-            .single();
-
-        if (existing) {
-            return res.status(400).json({ status: 'error', message: 'Pokój o tym kodzie już istnieje' });
-        }
+        // Automatycznie generuj kod na podstawie nazwy
+        const generatedCode = await generateRoomCode(supabase, name);
 
         const { data: room, error } = await supabase
             .from('ProductionRoom')
             .insert({
                 name: name.trim(),
-                code: code.toUpperCase().trim(),
+                code: generatedCode,
                 area: area || null,
                 description: description || null,
                 supervisorId: supervisorId || null,
@@ -6185,10 +6346,10 @@ app.post('/api/production/work-centers', requireRole(['ADMIN']), async (req, res
     }
 
     try {
-        const { name, code, roomId, type, description } = req.body;
+        const { name, roomId, type, description } = req.body;
 
-        if (!name || !code || !type) {
-            return res.status(400).json({ status: 'error', message: 'Nazwa, kod i typ są wymagane' });
+        if (!name || !type) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa i typ są wymagane' });
         }
 
         if (!WORK_CENTER_TYPES.includes(type)) {
@@ -6198,11 +6359,14 @@ app.post('/api/production/work-centers', requireRole(['ADMIN']), async (req, res
             });
         }
 
+        // Automatycznie generuj kod na podstawie pokoju i typu
+        const generatedCode = await generateWorkCenterCode(supabase, name, roomId, type);
+
         const { data: workCenter, error } = await supabase
             .from('WorkCenter')
             .insert({
                 name: name.trim(),
-                code: code.toUpperCase().trim(),
+                code: generatedCode,
                 roomId: roomId || null,
                 type,
                 description: description || null,
@@ -6274,17 +6438,20 @@ app.post('/api/production/work-stations', requireRole(['ADMIN']), async (req, re
     }
 
     try {
-        const { name, code, workCenterId, type, manufacturer, model, capabilities } = req.body;
+        const { name, workCenterId, type, manufacturer, model, capabilities } = req.body;
 
-        if (!name || !code || !type) {
-            return res.status(400).json({ status: 'error', message: 'Nazwa, kod i typ są wymagane' });
+        if (!name || !type) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa i typ są wymagane' });
         }
+
+        // Automatycznie generuj kod na podstawie gniazda
+        const generatedCode = await generateWorkStationCode(supabase, name, workCenterId);
 
         const { data: workStation, error } = await supabase
             .from('WorkStation')
             .insert({
                 name: name.trim(),
-                code: code.toUpperCase().trim(),
+                code: generatedCode,
                 workCenterId: workCenterId || null,
                 type,
                 manufacturer: manufacturer || null,
@@ -7348,6 +7515,89 @@ async function updateOrderStatusFromProduction(orderId) {
     }
 }
 
+/**
+ * Aktualizuje status ProductionWorkOrder na podstawie statusów powiązanych operacji
+ * @param {string} productionOrderId - ID zlecenia produkcyjnego
+ */
+async function updateWorkOrderStatusFromOperations(productionOrderId) {
+    if (!supabase || !productionOrderId) return;
+    
+    try {
+        // Pobierz zlecenie produkcyjne z workOrderId
+        const { data: prodOrder, error: prodOrderError } = await supabase
+            .from('ProductionOrder')
+            .select('id, status, workOrderId')
+            .eq('id', productionOrderId)
+            .single();
+        
+        if (prodOrderError || !prodOrder || !prodOrder.workOrderId) {
+            console.log('[updateWorkOrderStatusFromOperations] Brak workOrderId dla zlecenia', productionOrderId);
+            return;
+        }
+        
+        // Pobierz wszystkie ProductionOrder dla tego work order
+        const { data: prodOrders, error: prodOrdersError } = await supabase
+            .from('ProductionOrder')
+            .select('id')
+            .eq('workOrderId', prodOrder.workOrderId);
+        
+        if (prodOrdersError || !prodOrders || prodOrders.length === 0) return;
+        
+        // Pobierz WSZYSTKIE operacje dla WSZYSTKICH ProductionOrder w tym work order
+        const productionOrderIds = prodOrders.map(po => po.id);
+        const { data: operations, error: opsError } = await supabase
+            .from('ProductionOperation')
+            .select('id, status')
+            .in('productionOrderId', productionOrderIds);
+        
+        if (opsError || !operations || operations.length === 0) return;
+        
+        // Określ nowy status na podstawie wszystkich operacji
+        // Statusy operacji: pending, active, paused, completed, cancelled
+        let newStatus = prodOrder.status;
+        
+        const allCompleted = operations.every(op => op.status === 'completed');
+        const anyActive = operations.some(op => op.status === 'active');
+        const anyPaused = operations.some(op => op.status === 'paused');
+        const anyPending = operations.some(op => op.status === 'pending');
+        const anyCancelled = operations.some(op => op.status === 'cancelled');
+        const allCancelled = operations.every(op => op.status === 'cancelled');
+        
+        if (allCompleted) {
+            newStatus = 'completed';
+        } else if (allCancelled) {
+            newStatus = 'cancelled';
+        } else if (anyActive || anyPaused) {
+            newStatus = 'in_progress';
+        } else if (anyPending && !anyCancelled) {
+            newStatus = 'approved'; // Gotowe do realizacji
+        } else if (anyPending) {
+            // Są pending i cancelled - zostaw obecny status
+            newStatus = prodOrder.status;
+        }
+        
+        // Aktualizuj tylko jeśli status się zmienił
+        if (newStatus !== prodOrder.status) {
+            const { error: updateError } = await supabase
+                .from('ProductionWorkOrder')
+                .update({ 
+                    status: newStatus,
+                    updatedat: new Date().toISOString()
+                })
+                .eq('id', prodOrder.workOrderId);
+            
+            if (!updateError) {
+                console.log(`[updateWorkOrderStatusFromOperations] WorkOrder ${prodOrder.workOrderId}: ${prodOrder.status} → ${newStatus}`);
+            } else {
+                console.error('[updateWorkOrderStatusFromOperations] Błąd aktualizacji work order:', updateError);
+            }
+        }
+        
+    } catch (error) {
+        console.error('[updateWorkOrderStatusFromOperations] Błąd:', error);
+    }
+}
+
 // ============================================
 // PATCH /api/production/orders/:id/status - zmiana statusu zlecenia produkcyjnego
 // ============================================
@@ -7615,10 +7865,6 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
                 .select('id, name, roomId, type')
                 .eq('roomId', userRoomId);
 
-            console.log('[PRODUCTION DEBUG] userRoomId:', userRoomId);
-            console.log('[PRODUCTION DEBUG] workCenters found:', workCenters);
-            console.log('[PRODUCTION DEBUG] wcError:', wcError);
-
             if (workCenters && workCenters.length > 0) {
                 allowedWorkCenterIds = workCenters.map(wc => wc.id);
                 allowedWorkCenterTypes = workCenters
@@ -7629,8 +7875,6 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
                 allowedWorkCenterTypes = [];
             }
 
-            console.log('[PRODUCTION DEBUG] allowedWorkCenterIds:', allowedWorkCenterIds);
-            console.log('[PRODUCTION DEBUG] allowedWorkCenterTypes:', allowedWorkCenterTypes);
         }
 
         let query = supabase
@@ -7687,8 +7931,6 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
                 .in('productionorderid', orderIds)
                 .order('operationnumber', { ascending: true });
 
-            console.log('[PRODUCTION DEBUG] operations count:', operations?.length);
-
             if (operations) {
                 operations.forEach(op => {
                     const orderId = op.productionorderid;
@@ -7700,8 +7942,7 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
             }
         }
 
-        // Przetwórz zlecenia i filtruj wg pokoju
-        let ordersWithDetails = (orders || []).map(order => {
+        let filteredOrders = (orders || []).map(order => {
             const ops = operationsMap[order.id] || [];
             
             // Sprawdź, czy zlecenie ma operacje w pokoju użytkownika
@@ -8200,8 +8441,73 @@ app.post('/api/production/operations/:id/problem', requireRole(['ADMIN', 'PRODUC
     }
 });
 
+// POST /api/production/operations/:id/cancel - anulowanie operacji
+app.post('/api/production/operations/:id/cancel', requireRole(['ADMIN', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+        const { reason } = req.body || {};
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+
+        // Pobierz operację
+        const { data: operation, error: getError } = await supabase
+            .from('ProductionOperation')
+            .select('id, productionorderid, status, operationnumber, operatorid')
+            .eq('id', id)
+            .single();
+
+        if (getError || !operation) {
+            return res.status(404).json({ status: 'error', message: 'Operacja nie znaleziona' });
+        }
+
+        // Nie można anulować zakończonych operacji
+        if (operation.status === 'completed') {
+            return res.status(400).json({ status: 'error', message: 'Nie można anulować zakończonej operacji' });
+        }
+
+        // Aktualizuj operację
+        const { data: updated, error: updateError } = await supabase
+            .from('ProductionOperation')
+            .update({
+                status: 'cancelled',
+                qualitynotes: reason ? `ANULOWANO: ${reason}` : 'Operacja anulowana',
+                updatedat: new Date().toISOString()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (updateError) {
+            console.error('[POST /api/production/operations/:id/cancel] Błąd:', updateError);
+            return res.status(500).json({ status: 'error', message: 'Błąd anulowania operacji' });
+        }
+
+        // Zapisz log
+        await supabase.from('ProductionLog').insert({
+            productionOrderId: operation.productionorderid,
+            action: 'operation_cancelled',
+            previousStatus: operation.status,
+            newStatus: 'cancelled',
+            userId: userId,
+            notes: reason ? `Anulowano: ${reason}` : `Operacja #${operation.operationnumber} anulowana`
+        });
+
+        // Zaktualizuj status work order
+        await updateWorkOrderStatusFromOperations(operation.productionorderid);
+
+        return res.json({ status: 'success', data: updated, message: 'Operacja anulowana' });
+    } catch (error) {
+        console.error('[POST /api/production/operations/:id/cancel] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
 // GET /api/production/operator/stats - statystyki dla operatora (filtrowane po pokoju)
-app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'OPERATOR']), async (req, res) => {
+app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -8209,10 +8515,12 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
     try {
         const cookies = parseCookies(req);
         const userId = cookies.auth_id;
+        const userRole = cookies.auth_role;
 
         // Pobierz pokój użytkownika i dozwolone typy operacji
         let allowedWorkCenterTypes = null;
         let userRoomName = null;
+        let userRoomId = null;
         
         if (userId) {
             const { data: user } = await supabase
@@ -8222,6 +8530,7 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
                 .single();
             
             if (user?.productionroomid) {
+                userRoomId = user.productionroomid;
                 userRoomName = user.productionRoom?.name;
                 
                 const { data: workCenters } = await supabase
@@ -8234,6 +8543,9 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
                 }
             }
         }
+        
+        // Dla ADMIN i PRODUCTION_MANAGER bez przypisanego pokoju - pokaż wszystkie statystyki
+        const showAllStats = (userRole === 'ADMIN' || userRole === 'PRODUCTION_MANAGER') && !userRoomId;
 
         // Pobierz wszystkie zlecenia z operacjami
         const today = new Date();
@@ -8246,9 +8558,10 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
             .in('status', ['planned', 'approved', 'in_progress', 'completed']);
 
         // Jeśli operator ma przypisany pokój, filtruj zlecenia po typie operacji
+        // Dla ADMIN/PRODUCTION_MANAGER bez pokoju - pokaż wszystkie
         let filteredOrders = orders || [];
         
-        if (allowedWorkCenterTypes && allowedWorkCenterTypes.length > 0) {
+        if (!showAllStats && allowedWorkCenterTypes && allowedWorkCenterTypes.length > 0) {
             const orderIds = filteredOrders.map(o => o.id);
             
             if (orderIds.length > 0) {
@@ -8278,7 +8591,8 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
             active: 0,          // in_progress w moim pokoju
             queue: 0,           // planned + approved w moim pokoju
             completedToday: 0,  // completed dziś w moim pokoju
-            roomName: userRoomName
+            roomName: showAllStats ? 'Wszystkie pokoje' : (userRoomName || 'Brak przypisanego pokoju'),
+            showAllStats: showAllStats
         };
 
         filteredOrders.forEach(order => {
@@ -9060,6 +9374,626 @@ app.get('/api/test/diagnostics', async (req, res) => {
     } catch (error) {
         console.error('[DIAGNOSTICS] Wyjątek:', error);
         return res.status(500).json({ status: 'error', message: error.message });
+    }
+});
+
+// ============================================
+// UWAGA: Endpointy akcji operatora (/start, /pause, /complete, /problem, /cancel)
+// są zdefiniowane wyżej w sekcji "PANEL OPERATORA - DEDYKOWANE ENDPOINTY"
+// (linie ~7959-8282). Nie duplikować!
+// ============================================
+
+// =============================================
+// WORK CENTER PATH MAPPING - EDYTOR ŚCIEŻEK
+// =============================================
+
+/**
+ * GET /api/production/path-codes
+ * Zwraca unikalne kody ścieżek z Product.productionPath
+ */
+app.get('/api/production/path-codes', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    const tag = '[GET /api/production/path-codes]';
+    
+    try {
+        // Pobierz wszystkie aktywne produkty z productionPath
+        const { data: products, error } = await supabase
+            .from('Product')
+            .select('"productionPath"')
+            .eq('isActive', true)
+            .not('productionPath', 'is', null)
+            .limit(1000);
+
+        if (error) {
+            console.error(`${tag} Błąd pobierania produktów:`, error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania produktów' });
+        }
+
+        // Funkcja do parsowania wyrażenia ścieżki produktu
+        function parsePathExpression(expr) {
+            if (!expr) return [];
+            // Traktujemy %, $, & jako separatory
+            const normalized = expr.replace(/[%$&]/g, '|');
+            return normalized.split('|').map(s => s.trim()).filter(Boolean);
+        }
+
+        const pathCodesSet = new Set();
+        const pathDetails = [];
+
+        for (const product of products || []) {
+            if (!product.productionPath) continue;
+            const codes = parsePathExpression(product.productionPath);
+            for (const code of codes) {
+                if (!pathCodesSet.has(code)) {
+                    pathCodesSet.add(code);
+                    pathDetails.push({
+                        code,
+                        baseCode: code.split('.')[0], // np. 5.1 -> 5
+                        examplePath: product.productionPath
+                    });
+                }
+            }
+        }
+
+        // Sortuj: najpierw numeryczne, potem alfabetycznie
+        pathDetails.sort((a, b) => {
+            const aNum = parseFloat(a.code);
+            const bNum = parseFloat(b.code);
+            if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+            return a.code.localeCompare(b.code);
+        });
+
+        console.log(`${tag} Znaleziono ${pathDetails.length} unikalnych kodów ścieżek`);
+
+        return res.json({
+            status: 'success',
+            data: {
+                paths: pathDetails,
+                total: pathDetails.length
+            }
+        });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * GET /api/production/workcenters/:workCenterId/path-mappings
+ * Pobiera mapowania ścieżek dla danego gniazda
+ */
+app.get('/api/production/workcenters/:workCenterId/path-mappings', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    const tag = '[GET /api/production/workcenters/:workCenterId/path-mappings]';
+    const workCenterId = parseInt(req.params.workCenterId);
+    
+    try {
+        const { data: mappings, error } = await supabase
+            .from('WorkCenterPathMapping')
+            .select('*')
+            .eq('workcenterid', workCenterId)
+            .eq('isactive', true)
+            .order('pathcode');
+
+        if (error) {
+            console.error(`${tag} Błąd pobierania mapowań:`, error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania mapowań' });
+        }
+
+        console.log(`${tag} WorkCenter ${workCenterId}: ${mappings?.length || 0} mapowań`);
+
+        return res.json({
+            status: 'success',
+            data: {
+                workCenterId,
+                mappings: mappings || []
+            }
+        });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * POST /api/production/workcenters/:workCenterId/path-mappings
+ * Dodaje mapowanie ścieżki do gniazda
+ */
+app.post('/api/production/workcenters/:workCenterId/path-mappings', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    const tag = '[POST /api/production/workcenters/:workCenterId/path-mappings]';
+    const workCenterId = parseInt(req.params.workCenterId);
+    const { pathCode } = req.body;
+    
+    if (!pathCode || typeof pathCode !== 'string') {
+        return res.status(400).json({ status: 'error', message: 'pathCode jest wymagany' });
+    }
+
+    try {
+        const { data: mapping, error } = await supabase
+            .from('WorkCenterPathMapping')
+            .insert({
+                workcenterid: workCenterId,
+                pathcode: pathCode.trim()
+            })
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === '23505') {
+                return res.status(409).json({ status: 'error', message: 'To mapowanie już istnieje' });
+            }
+            console.error(`${tag} Błąd dodawania mapowania:`, error);
+            return res.status(500).json({ status: 'error', message: 'Błąd dodawania mapowania' });
+        }
+
+        console.log(`${tag} Dodano mapowanie: WorkCenter ${workCenterId} -> ${pathCode}`);
+
+        return res.json({
+            status: 'success',
+            message: 'Mapowanie zostało dodane',
+            data: mapping
+        });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * DELETE /api/production/workcenters/:workCenterId/path-mappings/:pathCode
+ * Usuwa (dezaktywuje) mapowanie ścieżki
+ */
+app.delete('/api/production/workcenters/:workCenterId/path-mappings/:pathCode', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    const tag = '[DELETE /api/production/workcenters/:workCenterId/path-mappings/:pathCode]';
+    const workCenterId = parseInt(req.params.workCenterId);
+    const pathCode = req.params.pathCode;
+    
+    try {
+        const { error } = await supabase
+            .from('WorkCenterPathMapping')
+            .update({ isactive: false })
+            .eq('workcenterid', workCenterId)
+            .eq('pathcode', pathCode);
+
+        if (error) {
+            console.error(`${tag} Błąd usuwania mapowania:`, error);
+            return res.status(500).json({ status: 'error', message: 'Błąd usuwania mapowania' });
+        }
+
+        console.log(`${tag} Usunięto mapowanie: WorkCenter ${workCenterId} -> ${pathCode}`);
+
+        return res.json({
+            status: 'success',
+            message: 'Mapowanie zostało usunięte'
+        });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// =============================================
+// MACHINE PRODUCT ASSIGNMENTS - KANBAN MANAGERA
+// =============================================
+
+const WORKCENTER_TYPE_TO_PATH_CODES = {
+    laser_co2: ['3'],
+    uv_print: ['1'],
+    solvent: ['2'],
+};
+
+/**
+ * Sprawdza czy user jest managerem pokoju lub ADMIN
+ */
+async function isRoomManagerOrAdmin(userId, userRole, roomId) {
+    if (userRole === 'ADMIN') return true;
+    if (!supabase || !roomId) return false;
+    
+    const { data: room } = await supabase
+        .from('ProductionRoom')
+        .select('"roomManagerUserId"')
+        .eq('id', roomId)
+        .single();
+    
+    return room && room.roomManagerUserId === userId;
+}
+
+/**
+ * GET /api/production/rooms/:roomId/machine-assignments
+ * Zwraca dane do Kanban: maszyny z przypisaniami + produkty bez przypisań
+ * Dostęp: ADMIN, PRODUCTION_MANAGER, PRODUCTION, OPERATOR (tylko własny pokój)
+ */
+app.get('/api/production/rooms/:roomId/machine-assignments', requireRole(['ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION', 'OPERATOR']), async (req, res) => {
+    const tag = '[GET /api/production/rooms/:roomId/machine-assignments]';
+    const roomId = parseInt(req.params.roomId);
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const userRole = cookies.auth_role;
+
+    try {
+        // Sprawdź uprawnienia
+        let hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
+
+        // Operator ma dostęp tylko do swojego pokoju produkcyjnego
+        if (!hasAccess && userRole === 'OPERATOR' && supabase && userId) {
+            const { data: user } = await supabase
+                .from('User')
+                .select('productionroomid')
+                .eq('id', userId)
+                .single();
+
+            if (user?.productionroomid === roomId) {
+                hasAccess = true;
+            }
+        }
+
+        if (!hasAccess && userRole !== 'PRODUCTION_MANAGER' && userRole !== 'PRODUCTION') {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego pokoju' });
+        }
+
+        // Pobierz dane pokoju
+        const { data: room, error: roomError } = await supabase
+            .from('ProductionRoom')
+            .select('id, name, code')
+            .eq('id', roomId)
+            .single();
+
+        if (roomError || !room) {
+            return res.status(404).json({ status: 'error', message: 'Pokój nie znaleziony' });
+        }
+
+        // Pobierz maszyny w pokoju (przez WorkCenter)
+        const { data: machines, error: machinesError } = await supabase
+            .from('WorkStation')
+            .select(`
+                id, name, code, status, "isActive", "restrictToAssignedProducts", type,
+                "WorkCenter"!inner(id, "roomId", type)
+            `)
+            .eq('WorkCenter.roomId', roomId)
+            .eq('isActive', true);
+
+        if (machinesError) {
+            console.error(`${tag} Błąd pobierania maszyn:`, machinesError);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania maszyn' });
+        }
+
+        // Pobierz wszystkie przypisania dla maszyn w tym pokoju
+        const machineIds = machines?.map(m => m.id) || [];
+        let assignments = [];
+        if (machineIds.length > 0) {
+            const { data: assignmentsData, error: assignmentsError } = await supabase
+                .from('MachineProductAssignment')
+                .select(`
+                    workstationid, productid, notes,
+                    "Product"(id, name, identifier)
+                `)
+                .in('workstationid', machineIds);
+
+            if (assignmentsError) {
+                console.error(`${tag} Błąd pobierania przypisań maszyn:`, assignmentsError);
+            } else {
+                assignments = assignmentsData || [];
+            }
+        }
+
+        // Mapuj przypisania do maszyn
+        const machinesWithProducts = (machines || []).map(machine => {
+            const machineAssignments = assignments.filter(a => a.workstationid === machine.id);
+            return {
+                id: machine.id,
+                name: machine.name,
+                code: machine.code,
+                status: machine.status,
+                isActive: machine.isActive,
+                restrictToAssignedProducts: machine.restrictToAssignedProducts || false,
+                products: machineAssignments.map(a => ({
+                    id: a.Product?.id || a.productid,
+                    name: a.Product?.name || 'Nieznany produkt',
+                    identifier: a.Product?.identifier || '',
+                    notes: a.notes
+                }))
+            };
+        });
+
+        // Ustal kody ścieżek dopuszczalne w tym pokoju na podstawie mapowań WorkCenterPathMapping
+        const workCenterIds = [...new Set(machines?.map(m => m.WorkCenter?.id).filter(Boolean))];
+        let roomPathCodes = new Set();
+        
+        if (workCenterIds.length > 0) {
+            // Pobierz aktywne mapowania dla wszystkich gniazd w tym pokoju
+            const { data: mappings, error: mappingError } = await supabase
+                .from('WorkCenterPathMapping')
+                .select('workcenterid, pathcode')
+                .in('workcenterid', workCenterIds)
+                .eq('isactive', true);
+            
+            if (!mappingError && mappings) {
+                mappings.forEach(m => roomPathCodes.add(m.pathcode));
+                console.log(`${tag} Załadowano ${mappings.length} mapowań dla ${workCenterIds.length} gniazd w pokoju ${roomId}`);
+            } else {
+                console.warn(`${tag} Błąd pobierania mapowań, używam fallbacku:`, mappingError?.message);
+            }
+        }
+        
+        // Fallback: jeśli nie ma mapowań, użyj stałej WORKCENTER_TYPE_TO_PATH_CODES
+        if (roomPathCodes.size === 0) {
+            for (const machine of machines || []) {
+                const wcType = machine.WorkCenter?.type || machine.type;
+                if (!wcType) continue;
+                const mapped = WORKCENTER_TYPE_TO_PATH_CODES[wcType];
+                if (mapped && mapped.length > 0) {
+                    mapped.forEach(code => roomPathCodes.add(code));
+                }
+            }
+            console.log(`${tag} Użyto fallbacku WORKCENTER_TYPE_TO_PATH_CODES dla pokoju ${roomId}:`, Array.from(roomPathCodes));
+        }
+
+        // Funkcja do parsowania wyrażenia ścieżki produktu
+        function parsePathExpression(expr) {
+            if (!expr) return [];
+            // Ścieżki równoległe/szeregowe: 5%3, 5$3, 5%3&2.1 → ["5","3","2.1"]
+            // Traktujemy %, $, & jako separatory pomiędzy gałęziami/etapami
+            const normalized = expr.replace(/[%$&]/g, '|');
+            return normalized.split('|').map(s => s.trim()).filter(Boolean);
+        }
+
+        // Pobierz produkty bez przypisań w tym pokoju, filtrowane po ścieżce
+        const assignedProductIds = assignments.map(a => a.productid);
+        let unassignedProducts = [];
+
+        const { data: allProducts } = await supabase
+            .from('Product')
+            .select('id, name, identifier, "productionPath"')
+            .eq('isActive', true)
+            .limit(500);
+
+        if (allProducts) {
+            const withPath = allProducts.filter(p => p.productionPath && p.productionPath.trim() !== '');
+            const withoutPath = allProducts.filter(p => !p.productionPath || p.productionPath.trim() === '');
+            console.log(`${tag} Produkty: ${allProducts.length} total, ${withPath.length} z productionPath, ${withoutPath.length} bez/"" productionPath`);
+            console.log(`${tag} roomPathCodes dla pokoju ${roomId}:`, Array.from(roomPathCodes));
+
+            unassignedProducts = withPath.filter(p => {
+                if (assignedProductIds.includes(p.id)) return false;
+
+                const pathCodes = parsePathExpression(p.productionPath);
+
+                // Produkt pasuje, jeśli którakolwiek z jego ścieżek (lub ich prefiks przed kropką) jest w roomPathCodes
+                const matches = pathCodes.some(code => {
+                    if (roomPathCodes.has(code)) return true;
+                    const base = code.split('.')[0];
+                    return roomPathCodes.has(base);
+                });
+
+                return matches;
+            });
+        }
+
+        console.log(`${tag} Pokój ${roomId}: ${machinesWithProducts.length} maszyn, ${unassignedProducts.length} nieprzypisanych produktów`);
+
+        return res.json({
+            status: 'success',
+            data: {
+                room,
+                machines: machinesWithProducts,
+                unassignedProducts
+            }
+        });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * POST /api/production/machine-assignments
+ * Dodaje przypisanie produktu do maszyny
+ */
+app.post('/api/production/machine-assignments', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    const tag = '[POST /api/production/machine-assignments]';
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const userRole = cookies.auth_role;
+    const { workStationId, productId, notes } = req.body;
+
+    try {
+        if (!workStationId || !productId) {
+            return res.status(400).json({ status: 'error', message: 'Wymagane: workStationId, productId' });
+        }
+
+        // Znajdź pokój maszyny i sprawdź uprawnienia
+        const { data: machine } = await supabase
+            .from('WorkStation')
+            .select(`
+                id,
+                "WorkCenter"!inner(id, "roomId")
+            `)
+            .eq('id', workStationId)
+            .single();
+
+        if (!machine) {
+            return res.status(404).json({ status: 'error', message: 'Maszyna nie znaleziona' });
+        }
+
+        const roomId = machine.WorkCenter?.roomId;
+        const hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
+        if (!hasAccess) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do zarządzania przypisaniami w tym pokoju' });
+        }
+
+        // Dodaj przypisanie
+        const { data: assignment, error: insertError } = await supabase
+            .from('MachineProductAssignment')
+            .insert({
+                workstationid: workStationId,
+                productid: productId,
+                assignedby: userId,
+                notes: notes || null
+            })
+            .select()
+            .single();
+
+        if (insertError) {
+            if (insertError.code === '23505') { // unique violation
+                return res.status(409).json({ status: 'error', message: 'Produkt jest już przypisany do tej maszyny' });
+            }
+            console.error(`${tag} Błąd dodawania:`, insertError);
+            return res.status(500).json({ status: 'error', message: 'Błąd dodawania przypisania' });
+        }
+
+        console.log(`${tag} Przypisano produkt ${productId} do maszyny ${workStationId} przez ${userId}`);
+        return res.json({ status: 'success', data: assignment });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * DELETE /api/production/machine-assignments/:workStationId/:productId
+ * Usuwa przypisanie produktu z maszyny
+ */
+app.delete('/api/production/machine-assignments/:workStationId/:productId', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    const tag = '[DELETE /api/production/machine-assignments]';
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const userRole = cookies.auth_role;
+    const workStationId = parseInt(req.params.workStationId);
+    const productId = req.params.productId;
+
+    try {
+        // Znajdź pokój maszyny i sprawdź uprawnienia
+        const { data: machine } = await supabase
+            .from('WorkStation')
+            .select(`
+                id,
+                "WorkCenter"!inner(id, "roomId")
+            `)
+            .eq('id', workStationId)
+            .single();
+
+        if (!machine) {
+            return res.status(404).json({ status: 'error', message: 'Maszyna nie znaleziona' });
+        }
+
+        const roomId = machine.WorkCenter?.roomId;
+        const hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
+        if (!hasAccess) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień' });
+        }
+
+        // Usuń przypisanie
+        const { data: deleted, error: deleteError } = await supabase
+            .from('MachineProductAssignment')
+            .delete()
+            .eq('workstationid', workStationId)
+            .eq('productid', productId)
+            .select();
+
+        if (deleteError) {
+            console.error(`${tag} Błąd usuwania:`, deleteError);
+            return res.status(500).json({ status: 'error', message: 'Błąd usuwania przypisania' });
+        }
+
+        console.log(`${tag} Usunięto przypisanie produktu ${productId} z maszyny ${workStationId}`);
+        return res.json({ status: 'success', deleted: deleted?.length || 0 });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * PATCH /api/production/workstations/:id/restriction
+ * Zmienia flagę restrictToAssignedProducts na maszynie
+ */
+app.patch('/api/production/workstations/:id/restriction', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    const tag = '[PATCH /api/production/workstations/:id/restriction]';
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const userRole = cookies.auth_role;
+    const workStationId = parseInt(req.params.id);
+    const { restrictToAssignedProducts } = req.body;
+
+    try {
+        if (typeof restrictToAssignedProducts !== 'boolean') {
+            return res.status(400).json({ status: 'error', message: 'Wymagane: restrictToAssignedProducts (boolean)' });
+        }
+
+        // Znajdź pokój maszyny i sprawdź uprawnienia
+        const { data: machine } = await supabase
+            .from('WorkStation')
+            .select(`
+                id,
+                "WorkCenter"!inner(id, "roomId")
+            `)
+            .eq('id', workStationId)
+            .single();
+
+        if (!machine) {
+            return res.status(404).json({ status: 'error', message: 'Maszyna nie znaleziona' });
+        }
+
+        const roomId = machine.WorkCenter?.roomId;
+        const hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
+        if (!hasAccess) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień' });
+        }
+
+        // Zaktualizuj flagę
+        const { data: updated, error: updateError } = await supabase
+            .from('WorkStation')
+            .update({ 
+                restrictToAssignedProducts,
+                updatedAt: new Date().toISOString()
+            })
+            .eq('id', workStationId)
+            .select('id, name, "restrictToAssignedProducts"')
+            .single();
+
+        if (updateError) {
+            console.error(`${tag} Błąd aktualizacji:`, updateError);
+            return res.status(500).json({ status: 'error', message: 'Błąd aktualizacji' });
+        }
+
+        console.log(`${tag} Maszyna ${workStationId}: restrictToAssignedProducts = ${restrictToAssignedProducts}`);
+        return res.json({ status: 'success', data: updated });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * GET /api/production/rooms
+ * Lista pokojów produkcyjnych (dla wyboru w UI)
+ */
+app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION', 'OPERATOR']), async (req, res) => {
+    const tag = '[GET /api/production/rooms]';
+
+    try {
+        const { data: rooms, error } = await supabase
+            .from('ProductionRoom')
+            .select('id, name, code, "isActive", "roomManagerUserId"')
+            .eq('isActive', true)
+            .order('name');
+
+        if (error) {
+            console.error(`${tag} Błąd:`, error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania pokojów' });
+        }
+
+        return res.json({ status: 'success', data: rooms || [] });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
 

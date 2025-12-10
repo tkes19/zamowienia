@@ -414,6 +414,9 @@ PROBLEM     → #EF4444 (red-500)      czerwony
 
 ### 6.2 Modal: Dodaj/Edytuj pokój
 
+**UWAGA:** Kod pokoju jest generowany automatycznie przez system na podstawie nazwy.
+Admin wpisuje tylko nazwę, a system generuje unikalny kod w formacie `BAZOWY-NNN` (np. `LASER-001`).
+
 ```
 ┌─────────────────────────────────────────────┐
 │  🏭 Nowy pokój produkcyjny             [X]  │
@@ -422,10 +425,8 @@ PROBLEM     → #EF4444 (red-500)      czerwony
 │  Nazwa:         ┌─────────────────────────┐ │
 │                 │ Laser CO2               │ │
 │                 └─────────────────────────┘ │
-│                                             │
-│  Kod:           ┌─────────────────────────┐ │
-│                 │ LASER-1                 │ │
-│                 └─────────────────────────┘ │
+│                 (Kod zostanie wygenerowany  │
+│                  automatycznie)             │
 │                                             │
 │  Powierzchnia:  ┌──────────────┐ m²        │
 │                 │ 45           │            │
@@ -440,14 +441,33 @@ PROBLEM     → #EF4444 (red-500)      czerwony
 │                 │ CO2 do grawerowania     │ │
 │                 └─────────────────────────┘ │
 │                                             │
-│  [ ] Aktywny                                │
-│                                             │
 │  ┌──────────────┐  ┌──────────────────────┐ │
-│  │   Anuluj     │  │      💾 Zapisz       │ │
+│  │   Anuluj     │  │   💾 Utwórz pokój    │ │
 │  └──────────────┘  └──────────────────────┘ │
 │                                             │
 └─────────────────────────────────────────────┘
 ```
+
+### 6.3 Automatyczne generowanie kodów
+
+System automatycznie generuje unikalne kody dla pokoi, gniazd i maszyn:
+
+| Typ | Format kodu | Przykład |
+|-----|-------------|----------|
+| **Pokój** | `BAZOWY-NNN` | `LASER-001`, `UV-002` |
+| **Gniazdo** | `ROOMCODE-TYP-NN` | `LASER-001-CO2-01` |
+| **Maszyna** | `WORKCENTERCODE-NN` | `LASER-001-CO2-01-01` |
+
+**Konwersja nazwy na kod bazowy:**
+- Polskie znaki zamieniane na ASCII (ą→a, ł→l, etc.)
+- Znaki specjalne usuwane
+- Dla jednego słowa: pierwsze 6 znaków
+- Dla wielu słów: inicjały (max 6 znaków)
+
+**Przykłady:**
+- "Laser CO2" → `LASEC-001`
+- "Hala Montażu Główna" → `HMG-001`
+- "Pakowanie" → `PAKOWA-001`
 
 ---
 

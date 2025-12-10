@@ -55,6 +55,16 @@
 
 Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
+#### ✅ Ukończone (2025-12-XX)
+- [x] **Generator kodów produkcyjnych** – automatyczne generowanie unikalnych kodów dla pokoi, gniazd i maszyn
+  - Backend: funkcje `generateRoomCode()`, `generateWorkCenterCode()`, `generateWorkStationCode()` w `server.js`
+  - Format kodów: `BAZOWY-NNN` (pokoje), `ROOMCODE-TYP-NN` (gniazda), `WORKCENTERCODE-NN` (maszyny)
+  - Testy jednostkowe: `backend/code-generator.test.js`
+- [x] **Modale UX/UI** – piękne formularze do dodawania/edycji pokoi, gniazd i maszyn
+  - HTML: `admin/index.html` (modale z gradientami: amber/blue/green)
+  - JS: `admin/admin.js` (IIFE `initProductionModals()`)
+  - Automatyczne ładowanie list (nadzorcy, pokoje, gniazda)
+
 ---
 
 ### 📋 Planowane (niski priorytet)
@@ -79,12 +89,24 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
 #### 🏭 Panel Produkcyjny (v2.0.0)
 - [ ] **Faza 1: Fundamenty produkcyjne**
-  - [x] Migracja bazodanowa: ProductionRoom, WorkCenter, WorkStation, ProductionPath, ProductionOrder, ProductionOperation
-  - [x] **Nowa tabela ProductionWorkOrder** (grupowanie zleceń po pokojach) ✅ 2025-12-08
-  - [x] **Rozszerzenie ProductionOrder o workOrderId** (powiązanie z ProductionWorkOrder) ✅ 2025-12-08
-  - [ ] Backend API: zarządzanie pokojami, gniazdami, stanowiskami, ścieżkami
-  - [x] Integracja: automatyczne zamówienie → zlecenia produkcyjne (`ProductionOrder`) na podstawie ścieżek produkcji (`createProductionOrdersForOrder`) ✅ 2025-12-08
+  - [x] Migracja bazodanowa: `ProductionRoom`, `WorkCenter`, `WorkStation`, `ProductionPath`, `ProductionOrder`, `ProductionOperation`
+  - [x] **Nowa tabela `ProductionWorkOrder`** (grupowanie zleceń po pokojach) ✅ 2025-12-08
+  - [x] **Rozszerzenie `ProductionOrder` o `workOrderId`** (powiązanie z `ProductionWorkOrder`) ✅ 2025-12-08
+  - [ ] Backend API: zarządzanie pokojami, gniazdami, stanowiskami, ścieżkami (CRUD w `backend/server.js`)
+  - [x] Integracja: automatyczne zamówienie → zlecenia produkcyjne (`ProductionWorkOrder` + `ProductionOrder` + `ProductionOperation`) na podstawie ścieżek produkcji (`createProductionOrdersForOrder`) ✅ 2025-12-08
   - [x] System numeracji zleceń pokojowych `ZP-YYYY-NNNN` (np. `ZP-2025-0001`) dla `ProductionWorkOrder.workOrderNumber` ✅ 2025-12-08
+
+- [ ] **Faza 2: Panel operatora (MVP)**
+  - [x] Widok panelu produkcji: lista zleceń, filtry, widoki kompaktowe/szczegółowe, podgląd produktów (modal ze zdjęciem z galerii) – `production.html`, `scripts/production.js`
+  - [x] Endpoint `/api/production/orders/active` – zwraca aktywne zlecenia produkcyjne zgrupowane w ramach work orders
+  - [x] Endpoint `/api/production/work-orders/:id/print` – generowanie PDF zlecenia produkcyjnego (work order)
+  - [ ] Endpointy akcji operatora dla operacji produkcyjnych: **start / pause / complete / cancel**
+  - [ ] Logika `ProductionLog`: zapisywanie historii akcji operatorów (czasy startu/pauzy/zakończenia, użytkownik)
+  - [ ] Trwałe śledzenie czasu trwania operacji po stronie serwera (sumaryczny czas, liczba przerw)
+  - [ ] Automatyczne przejścia statusów `ProductionWorkOrder` na podstawie statusów powiązanych operacji (np. wszystkie zakończone ⇒ work order = `DONE`)
+  - [ ] Endpoint statystyk operatora / sali produkcyjnej (`/api/production/operator/stats`) – podstawowe KPI do panelu
+  - [ ] Weryfikacja i dopięcie reguł uprawnień dla produkcji (role: `PRODUCTION`, `OPERATOR`, `ADMIN`)
+  - [ ] (po MVP) WebSocket / real‑time updates dla listy zleceń i statystyk
   - [ ] Podstawowy routing w panelu admina
 
 - [ ] **Faza 2: System druku zleceń produkcyjnych**
@@ -107,6 +129,7 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
   - [ ] Kolorowe statusy i duże przyciski
   - [x] **Widok zleceń pokojowych + podgląd grafik prosto z OrderItem.projectViewUrl** (dekodowanie nazw, poprawione proporcje modala) ✅ 2025-12-09
   - [ ] **Przyciski druku** dla swoich zleceń (ponowny druk)
+  - [x] **System przypisań produktów do maszyn** (tabela `MachineProductAssignment`, RLS po `roomManagerUserId`, Kanban w panelu admina + link „Przypisania” w panelu produkcji) ✅ 2025-12-09
 
 - [ ] **Faza 4: Podział zleceń w sprzedaży**
   - [ ] **Ekran podziału zamówienia na pokoje**:
@@ -227,5 +250,5 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
 ---
 
-**Wersja dokumentu:** 3.2  
-**Data aktualizacji:** 2025-12-08
+**Wersja dokumentu:** 3.3  
+**Data aktualizacji:** 2025-12-09

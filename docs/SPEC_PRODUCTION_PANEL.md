@@ -44,6 +44,25 @@ CREATE TABLE public."ProductionRoom" (
   "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Flaga ograniczająca maszynę tylko do przypisanych produktów
+ALTER TABLE public."WorkStation"
+  ADD COLUMN IF NOT EXISTS "restrictToAssignedProducts" boolean NOT NULL DEFAULT false;
+
+-- Menedżer pokoju produkcyjnego (odpowiedzialny za przypisania produktów)
+ALTER TABLE public."ProductionRoom"
+  ADD COLUMN IF NOT EXISTS "roomManagerUserId" text REFERENCES public."User"(id);
+
+-- Przypisania produktów do maszyn w pokojach (Machine→Product)
+CREATE TABLE IF NOT EXISTS public."MachineProductAssignment" (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "workStationId" integer NOT NULL REFERENCES public."WorkStation"(id) ON DELETE CASCADE,
+  "productId" text NOT NULL REFERENCES public."Product"(id) ON DELETE CASCADE,
+  "assignedBy" text NOT NULL REFERENCES public."User"(id),
+  "assignedAt" timestamp with time zone DEFAULT now(),
+  notes text,
+  UNIQUE ("workStationId", "productId")
+);
+
 -- Gniazda produkcyjne
 CREATE TABLE public."WorkCenter" (
   id serial PRIMARY KEY,
@@ -199,7 +218,12 @@ CREATE TABLE public."UserRoleAssignment" (
 | OPERATOR | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | 📊 (tylko swoje) |
 | CLIENT | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
-> **Uwaga:** Nowe role: `PRODUCTION_MANAGER`, `GRAPHIC_DESIGNER`, `OPERATOR`.
+> **Uwaga:**
+> - `PRODUCTION` to zwykła rola działu produkcji (podgląd + wybrane akcje),
+>   nie ma pełnych uprawnień konfiguracyjnych.
+> - `PRODUCTION_MANAGER` ma dodatkowo: zarządzanie strukturą produkcji,
+>   dostęp do panelu grafiki oraz **edytora przypisań produktów do maszyn**
+>   (operuje na tabeli `MachineProductAssignment`).
 
 ### 2.2.1 Wielorole i tryb pracy
 
