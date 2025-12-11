@@ -95,6 +95,10 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (IS_PRODUCTION) {
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'");
+  }
   next();
 });
 
@@ -232,6 +236,14 @@ function verifySameOrigin(req, res, next) {
         return res.status(400).json({ status: 'error', message: 'Nieprawidłowe nagłówki źródła żądania' });
     }
 }
+
+function attachErrorDetails(payload, error) {
+    if (!IS_PRODUCTION && error && error.message) {
+        payload.details = error.message;
+    }
+    return payload;
+}
+
 async function getAuthContext(req) {
     if (req._authContext) {
         return req._authContext;
@@ -363,8 +375,8 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, '../login.html'));
 });
 
-// Panel admina – wymaga zalogowania jako ADMIN, SALES_DEPT, GRAPHICS, WAREHOUSE lub PRODUCTION
-app.get('/admin', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'WAREHOUSE', 'PRODUCTION']), (req, res) => {
+// Panel admina – wymaga zalogowania jako ADMIN, SALES_DEPT, GRAPHICS/GRAPHIC_DESIGNER, WAREHOUSE lub PRODUCTION
+app.get('/admin', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRAPHIC_DESIGNER', 'WAREHOUSE', 'PRODUCTION']), (req, res) => {
   res.sendFile(path.join(__dirname, '../admin/index.html'));
 });
 
@@ -1090,6 +1102,479 @@ app.get('/api/auth/me', async (req, res) => {
         return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas pobierania użytkownika' });
     }
 });
+
+// ============================================
+// WIELOROLE - MES-compliant role management
+// ============================================
+
+/**
+ * Lista wszystkich dozwolonych ról w systemie (MES-compliant)
+ * Używana do walidacji i UI
+ */
+const ALL_ROLES = [
+    'ADMIN',
+    'SALES_REP',
+    'SALES_DEPT',
+    'WAREHOUSE',
+    'PRODUCTION',
+    'PRODUCTION_MANAGER',
+    'OPERATOR',
+    'GRAPHIC_DESIGNER',
+    'GRAPHICS',  // legacy, do stopniowej migracji na GRAPHIC_DESIGNER
+    'CLIENT',
+    'NEW_USER'
+];
+
+/**
+ * Role produkcyjne - wymagają przypisania do pokoju produkcyjnego
+ */
+const PRODUCTION_ROLES = ['PRODUCTION', 'PRODUCTION_MANAGER', 'OPERATOR'];
+
+/**
+ * GET /api/auth/roles
+ * Zwraca wszystkie aktywne role zalogowanego użytkownika
+ */
+app.get('/api/auth/roles', async (req, res) => {
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+
+    if (!userId) {
+        return res.status(401).json({ status: 'error', message: 'Nieautoryzowany' });
+    }
+
+    if (!supabase) {
+        // Fallback: zwróć rolę z ciasteczka
+        const role = cookies.auth_role;
+        return res.json({
+            status: 'success',
+            data: {
+                userId,
+                activeRole: role,
+                roles: role ? [role] : []
+            }
+        });
+    }
+
+    try {
+        // Pobierz wszystkie aktywne role użytkownika
+        const { data: assignments, error } = await supabase
+            .from('UserRoleAssignment')
+            .select('role, assignedAt')
+            .eq('userId', userId)
+            .eq('isActive', true)
+            .order('assignedAt', { ascending: true });
+
+        if (error) {
+            console.error('[GET /api/auth/roles] Błąd:', error);
+            // Fallback do roli z User
+            const { data: user } = await supabase
+                .from('User')
+                .select('role')
+                .eq('id', userId)
+                .single();
+            
+            return res.json({
+                status: 'success',
+                data: {
+                    userId,
+                    activeRole: cookies.auth_role || user?.role,
+                    roles: user?.role ? [user.role] : []
+                }
+            });
+        }
+
+        const roles = (assignments || []).map(a => a.role);
+        const activeRole = cookies.auth_role;
+
+        return res.json({
+            status: 'success',
+            data: {
+                userId,
+                activeRole,
+                roles,
+                allAvailableRoles: ALL_ROLES
+            }
+        });
+    } catch (err) {
+        console.error('[GET /api/auth/roles] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * POST /api/auth/active-role
+ * Zmienia aktywną rolę użytkownika (musi mieć tę rolę przypisaną)
+ */
+app.post('/api/auth/active-role', async (req, res) => {
+    const cookies = parseCookies(req);
+    const userId = cookies.auth_id;
+    const { role } = req.body || {};
+
+    if (!userId) {
+        return res.status(401).json({ status: 'error', message: 'Nieautoryzowany' });
+    }
+
+    if (!role || !ALL_ROLES.includes(role)) {
+        return res.status(400).json({ status: 'error', message: 'Nieprawidłowa rola' });
+    }
+
+    if (!supabase) {
+        // Bez Supabase - po prostu ustaw ciasteczko
+        setAuthCookies(res, { id: userId, role });
+        return res.json({ status: 'success', data: { activeRole: role } });
+    }
+
+    try {
+        // Sprawdź czy użytkownik ma tę rolę
+        const { data: assignment, error } = await supabase
+            .from('UserRoleAssignment')
+            .select('id')
+            .eq('userId', userId)
+            .eq('role', role)
+            .eq('isActive', true)
+            .single();
+
+        if (error || !assignment) {
+            // Sprawdź też główną rolę w User
+            const { data: user } = await supabase
+                .from('User')
+                .select('role')
+                .eq('id', userId)
+                .single();
+
+            if (!user || user.role !== role) {
+                return res.status(403).json({ 
+                    status: 'error', 
+                    message: 'Nie masz przypisanej tej roli' 
+                });
+            }
+        }
+
+        // Ustaw nową aktywną rolę w ciasteczku
+        setAuthCookies(res, { id: userId, role });
+
+        return res.json({ 
+            status: 'success', 
+            data: { activeRole: role },
+            message: `Aktywna rola zmieniona na ${role}`
+        });
+    } catch (err) {
+        console.error('[POST /api/auth/active-role] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * GET /api/admin/user-role-assignments
+ * Pobiera przypisania ról dla użytkownika (tylko ADMIN)
+ * Query params: userId (wymagane)
+ */
+app.get('/api/admin/user-role-assignments', requireRole(['ADMIN']), async (req, res) => {
+    const { userId } = req.query;
+
+    if (!userId) {
+        return res.status(400).json({ status: 'error', message: 'userId jest wymagane' });
+    }
+
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data: assignments, error } = await supabase
+            .from('UserRoleAssignment')
+            .select('id, role, assignedBy, assignedAt, isActive')
+            .eq('userId', userId)
+            .order('role');
+
+        if (error) {
+            console.error('[GET /api/admin/user-role-assignments] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania ról' });
+        }
+
+        return res.json({
+            status: 'success',
+            data: {
+                userId,
+                assignments: assignments || [],
+                allAvailableRoles: ALL_ROLES,
+                productionRoles: PRODUCTION_ROLES
+            }
+        });
+    } catch (err) {
+        console.error('[GET /api/admin/user-role-assignments] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * POST /api/admin/user-role-assignments
+ * Przypisuje rolę do użytkownika (tylko ADMIN)
+ */
+app.post('/api/admin/user-role-assignments', requireRole(['ADMIN']), async (req, res) => {
+    const { userId, role } = req.body || {};
+    const cookies = parseCookies(req);
+    const adminId = cookies.auth_id;
+
+    if (!userId || !role) {
+        return res.status(400).json({ status: 'error', message: 'userId i role są wymagane' });
+    }
+
+    if (!ALL_ROLES.includes(role)) {
+        return res.status(400).json({ status: 'error', message: `Nieprawidłowa rola: ${role}` });
+    }
+
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        // Sprawdź czy przypisanie już istnieje
+        const { data: existing } = await supabase
+            .from('UserRoleAssignment')
+            .select('id, isActive')
+            .eq('userId', userId)
+            .eq('role', role)
+            .single();
+
+        if (existing) {
+            if (existing.isActive) {
+                return res.status(409).json({ 
+                    status: 'error', 
+                    message: 'Użytkownik ma już przypisaną tę rolę' 
+                });
+            }
+            // Reaktywuj istniejące przypisanie
+            const { data: updated, error: updateError } = await supabase
+                .from('UserRoleAssignment')
+                .update({ isActive: true, assignedBy: adminId, assignedAt: new Date().toISOString() })
+                .eq('id', existing.id)
+                .select()
+                .single();
+
+            if (updateError) {
+                console.error('[POST /api/admin/user-role-assignments] Błąd reaktywacji:', updateError);
+                return res.status(500).json({ status: 'error', message: 'Błąd reaktywacji roli' });
+            }
+
+            // Log audytu
+            await supabase.from('UserRoleAssignmentLog').insert({
+                assignmentId: existing.id,
+                userId,
+                role,
+                action: 'ACTIVATED',
+                changedBy: adminId
+            });
+
+            return res.json({ status: 'success', data: updated, message: 'Rola została reaktywowana' });
+        }
+
+        // Utwórz nowe przypisanie
+        const { data: assignment, error } = await supabase
+            .from('UserRoleAssignment')
+            .insert({
+                userId,
+                role,
+                assignedBy: adminId,
+                isActive: true
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[POST /api/admin/user-role-assignments] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd przypisywania roli' });
+        }
+
+        // Log audytu
+        await supabase.from('UserRoleAssignmentLog').insert({
+            assignmentId: assignment.id,
+            userId,
+            role,
+            action: 'ASSIGNED',
+            changedBy: adminId
+        });
+
+        console.log(`[POST /api/admin/user-role-assignments] Admin ${adminId} przypisał rolę ${role} użytkownikowi ${userId}`);
+
+        return res.status(201).json({ 
+            status: 'success', 
+            data: assignment,
+            message: `Rola ${role} została przypisana`
+        });
+    } catch (err) {
+        console.error('[POST /api/admin/user-role-assignments] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * DELETE /api/admin/user-role-assignments/:id
+ * Usuwa (dezaktywuje) przypisanie roli (tylko ADMIN)
+ */
+app.delete('/api/admin/user-role-assignments/:id', requireRole(['ADMIN']), async (req, res) => {
+    const assignmentId = parseInt(req.params.id);
+    const cookies = parseCookies(req);
+    const adminId = cookies.auth_id;
+
+    if (isNaN(assignmentId)) {
+        return res.status(400).json({ status: 'error', message: 'Nieprawidłowe ID przypisania' });
+    }
+
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        // Pobierz przypisanie
+        const { data: assignment, error: fetchError } = await supabase
+            .from('UserRoleAssignment')
+            .select('id, userId, role, isActive')
+            .eq('id', assignmentId)
+            .single();
+
+        if (fetchError || !assignment) {
+            return res.status(404).json({ status: 'error', message: 'Przypisanie nie znalezione' });
+        }
+
+        if (!assignment.isActive) {
+            return res.status(400).json({ status: 'error', message: 'Przypisanie jest już nieaktywne' });
+        }
+
+        // Dezaktywuj (soft delete)
+        const { error: updateError } = await supabase
+            .from('UserRoleAssignment')
+            .update({ isActive: false })
+            .eq('id', assignmentId);
+
+        if (updateError) {
+            console.error('[DELETE /api/admin/user-role-assignments] Błąd:', updateError);
+            return res.status(500).json({ status: 'error', message: 'Błąd usuwania przypisania' });
+        }
+
+        // Log audytu
+        await supabase.from('UserRoleAssignmentLog').insert({
+            assignmentId,
+            userId: assignment.userId,
+            role: assignment.role,
+            action: 'REVOKED',
+            changedBy: adminId
+        });
+
+        console.log(`[DELETE /api/admin/user-role-assignments] Admin ${adminId} odebrał rolę ${assignment.role} użytkownikowi ${assignment.userId}`);
+
+        return res.json({ 
+            status: 'success', 
+            message: `Rola ${assignment.role} została odebrana`
+        });
+    } catch (err) {
+        console.error('[DELETE /api/admin/user-role-assignments] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+/**
+ * PUT /api/admin/user-role-assignments/sync/:userId
+ * Synchronizuje role użytkownika - ustawia dokładnie te role, które są w tablicy
+ * Body: { roles: ['OPERATOR', 'GRAPHIC_DESIGNER'] }
+ */
+app.put('/api/admin/user-role-assignments/sync/:userId', requireRole(['ADMIN']), async (req, res) => {
+    const { userId } = req.params;
+    const { roles } = req.body || {};
+    const cookies = parseCookies(req);
+    const adminId = cookies.auth_id;
+
+    if (!userId) {
+        return res.status(400).json({ status: 'error', message: 'userId jest wymagane' });
+    }
+
+    if (!Array.isArray(roles)) {
+        return res.status(400).json({ status: 'error', message: 'roles musi być tablicą' });
+    }
+
+    // Walidacja ról
+    const invalidRoles = roles.filter(r => !ALL_ROLES.includes(r));
+    if (invalidRoles.length > 0) {
+        return res.status(400).json({ 
+            status: 'error', 
+            message: `Nieprawidłowe role: ${invalidRoles.join(', ')}` 
+        });
+    }
+
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        // Pobierz aktualne przypisania
+        const { data: currentAssignments } = await supabase
+            .from('UserRoleAssignment')
+            .select('id, role, isActive')
+            .eq('userId', userId);
+
+        const currentRoles = (currentAssignments || [])
+            .filter(a => a.isActive)
+            .map(a => a.role);
+
+        const rolesToAdd = roles.filter(r => !currentRoles.includes(r));
+        const rolesToRemove = currentRoles.filter(r => !roles.includes(r));
+
+        // Dodaj nowe role
+        for (const role of rolesToAdd) {
+            const existing = (currentAssignments || []).find(a => a.role === role);
+            if (existing) {
+                // Reaktywuj
+                await supabase
+                    .from('UserRoleAssignment')
+                    .update({ isActive: true, assignedBy: adminId, assignedAt: new Date().toISOString() })
+                    .eq('id', existing.id);
+            } else {
+                // Utwórz nowe
+                await supabase
+                    .from('UserRoleAssignment')
+                    .insert({ userId, role, assignedBy: adminId, isActive: true });
+            }
+        }
+
+        // Usuń (dezaktywuj) role
+        for (const role of rolesToRemove) {
+            const existing = (currentAssignments || []).find(a => a.role === role && a.isActive);
+            if (existing) {
+                await supabase
+                    .from('UserRoleAssignment')
+                    .update({ isActive: false })
+                    .eq('id', existing.id);
+            }
+        }
+
+        // Zaktualizuj główną rolę w User (pierwsza z listy lub NEW_USER)
+        const primaryRole = roles.length > 0 ? roles[0] : 'NEW_USER';
+        await supabase
+            .from('User')
+            .update({ role: primaryRole, updatedAt: new Date().toISOString() })
+            .eq('id', userId);
+
+        console.log(`[PUT /api/admin/user-role-assignments/sync] Admin ${adminId} zsynchronizował role użytkownika ${userId}: ${roles.join(', ')}`);
+
+        return res.json({
+            status: 'success',
+            data: {
+                userId,
+                roles,
+                added: rolesToAdd,
+                removed: rolesToRemove
+            },
+            message: 'Role zostały zsynchronizowane'
+        });
+    } catch (err) {
+        console.error('[PUT /api/admin/user-role-assignments/sync] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// KONIEC SEKCJI WIELORÓL
+// ============================================
 
 // Test połączenia z Supabase – proste zapytanie do tabeli produktów (tylko ADMIN)
 app.get('/api/supabase/health', requireRole(['ADMIN']), async (req, res) => {
@@ -2453,8 +2938,8 @@ app.delete('/api/admin/departments/:id', requireRole(['ADMIN']), async (req, res
     }
 });
 
-// Lista użytkowników z działami (ADMIN + SALES_DEPT + GRAPHICS - do przypisywania miejscowości)
-app.get('/api/admin/users', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+// Lista użytkowników z działami (ADMIN + SALES_DEPT + GRAPHICS/GRAPHIC_DESIGNER - do przypisywania miejscowości)
+app.get('/api/admin/users', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRAPHIC_DESIGNER']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -2972,8 +3457,8 @@ async function logCityAccessChange(actorId, targetUserId, action, cityName, user
     }
 }
 
-// Lista wszystkich przypisań miejscowości (dla admina/SALES_DEPT/GRAPHICS)
-app.get('/api/admin/user-city-access', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+// Lista wszystkich przypisań miejscowości (dla admina/SALES_DEPT/GRAPHICS/GRAPHIC_DESIGNER)
+app.get('/api/admin/user-city-access', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRAPHIC_DESIGNER']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -3063,7 +3548,7 @@ app.get('/api/user-city-access', async (req, res) => {
 });
 
 // Tworzenie nowego przypisania miejscowości
-app.post('/api/admin/user-city-access', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+app.post('/api/admin/user-city-access', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRAPHIC_DESIGNER']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -3150,7 +3635,7 @@ app.post('/api/admin/user-city-access', requireRole(['ADMIN', 'SALES_DEPT', 'GRA
 });
 
 // Aktualizacja przypisania miejscowości
-app.patch('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+app.patch('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRAPHIC_DESIGNER']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -3214,8 +3699,8 @@ app.patch('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT',
     }
 });
 
-// Usunięcie przypisania miejscowości (ADMIN, SALES_DEPT, GRAPHICS)
-app.delete('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS']), async (req, res) => {
+// Usunięcie przypisania miejscowości (ADMIN, SALES_DEPT, GRAPHICS/GRAPHIC_DESIGNER)
+app.delete('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRAPHIC_DESIGNER']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -3256,8 +3741,311 @@ app.delete('/api/admin/user-city-access/:id', requireRole(['ADMIN', 'SALES_DEPT'
     }
 });
 
-// Wykrywanie nieprzypisanych miejscowości (dla GRAPHICS, ADMIN, SALES_DEPT)
-app.get('/api/admin/unassigned-cities', requireRole(['GRAPHICS', 'ADMIN', 'SALES_DEPT']), async (req, res) => {
+// -----------------------------
+// API - Presety terminów dostawy zamówień (OrderDeliveryPreset)
+// -----------------------------
+
+// Publiczna konfiguracja presetów dla formularza zamówień
+app.get('/api/config/order-delivery-presets', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('OrderDeliveryPreset')
+            .select('id, label, offsetDays, mode, fixedDate, isDefault, isActive, sortOrder')
+            .eq('isActive', true)
+            .order('sortOrder', { ascending: true })
+            .order('offsetDays', { ascending: true });
+
+        if (error) {
+            console.error('Błąd pobierania OrderDeliveryPreset (config):', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać presetów terminów dostawy', details: error.message });
+        }
+
+        const presets = Array.isArray(data) ? data : [];
+        const defaultPreset = presets.find((p) => p && p.isDefault) || null;
+
+        return res.json({
+            status: 'success',
+            data: presets,
+            defaultPreset,
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/config/order-delivery-presets:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Lista presetów dla panelu admina
+app.get('/api/admin/order-delivery-presets', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('OrderDeliveryPreset')
+            .select('id, label, offsetDays, mode, fixedDate, isDefault, isActive, sortOrder, createdAt, updatedAt')
+            .order('sortOrder', { ascending: true })
+            .order('offsetDays', { ascending: true });
+
+        if (error) {
+            console.error('Błąd pobierania OrderDeliveryPreset (admin):', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać presetów terminów dostawy', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            data: data || [],
+            count: data?.length || 0,
+        });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/admin/order-delivery-presets:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Tworzenie nowego preset-u terminu dostawy
+app.post('/api/admin/order-delivery-presets', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { label, offsetDays, mode, fixedDate, isDefault, isActive, sortOrder } = req.body || {};
+
+    if (!label || typeof label !== 'string' || !label.trim()) {
+        return res.status(400).json({ status: 'error', message: 'label jest wymagane' });
+    }
+
+    // Tryb: OFFSET (domyślny) lub FIXED_DATE
+    const normalizedMode = (typeof mode === 'string' && mode.trim()) ? mode.trim().toUpperCase() : 'OFFSET';
+    const finalMode = ['OFFSET', 'FIXED_DATE'].includes(normalizedMode) ? normalizedMode : 'OFFSET';
+
+    let normalizedOffset = 0;
+    let normalizedFixedDate = null;
+
+    if (finalMode === 'OFFSET') {
+        normalizedOffset = Number(offsetDays);
+        if (!Number.isFinite(normalizedOffset)) {
+            return res.status(400).json({ status: 'error', message: 'offsetDays musi być liczbą dla trybu OFFSET' });
+        }
+    } else {
+        // FIXED_DATE – wymagamy poprawnej daty, offsetDays opcjonalne (fallback 0)
+        if (!fixedDate || typeof fixedDate !== 'string' || !fixedDate.trim()) {
+            return res.status(400).json({ status: 'error', message: 'fixedDate jest wymagane dla trybu FIXED_DATE (format YYYY-MM-DD)' });
+        }
+
+        const parsed = new Date(fixedDate);
+        if (Number.isNaN(parsed.getTime())) {
+            return res.status(400).json({ status: 'error', message: 'fixedDate ma nieprawidłowy format (oczekiwany: YYYY-MM-DD)' });
+        }
+
+        // Normalizujemy do samej daty (bez czasu)
+        const year = parsed.getFullYear();
+        const month = String(parsed.getMonth() + 1).padStart(2, '0');
+        const day = String(parsed.getDate()).padStart(2, '0');
+        normalizedFixedDate = `${year}-${month}-${day}`;
+
+        if (offsetDays === undefined || offsetDays === null) {
+            normalizedOffset = 0;
+        } else {
+            const maybeOffset = Number(offsetDays);
+            normalizedOffset = Number.isFinite(maybeOffset) ? maybeOffset : 0;
+        }
+    }
+
+    const normalizedSortOrder = Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0;
+    const nowIso = new Date().toISOString();
+
+    try {
+        const { data, error } = await supabase
+            .from('OrderDeliveryPreset')
+            .insert({
+                label: label.trim(),
+                offsetDays: normalizedOffset,
+                mode: finalMode,
+                fixedDate: normalizedFixedDate,
+                isDefault: !!isDefault,
+                isActive: isActive === undefined ? true : !!isActive,
+                sortOrder: normalizedSortOrder,
+                createdAt: nowIso,
+                updatedAt: nowIso,
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Błąd tworzenia OrderDeliveryPreset:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć preset-u terminu dostawy', details: error.message });
+        }
+
+        // Jeśli ten preset jest domyślny, zdeaktywuj flagę isDefault dla innych
+        if (data && data.isDefault) {
+            try {
+                await supabase
+                    .from('OrderDeliveryPreset')
+                    .update({ isDefault: false, updatedAt: new Date().toISOString() })
+                    .neq('id', data.id)
+                    .eq('isDefault', true);
+            } catch (updateErr) {
+                console.error('Błąd aktualizacji flag isDefault w OrderDeliveryPreset (po INSERT):', updateErr);
+            }
+        }
+
+        return res.status(201).json({ status: 'success', data, message: 'Preset terminu dostawy utworzony' });
+    } catch (err) {
+        console.error('Wyjątek w POST /api/admin/order-delivery-presets:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Aktualizacja preset-u terminu dostawy
+app.patch('/api/admin/order-delivery-presets/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+    const { label, offsetDays, mode, fixedDate, isDefault, isActive, sortOrder } = req.body || {};
+
+    try {
+        const { data: current, error: currentError } = await supabase
+            .from('OrderDeliveryPreset')
+            .select('id, label, offsetDays, mode, fixedDate, isDefault, isActive, sortOrder')
+            .eq('id', id)
+            .single();
+
+        if (currentError || !current) {
+            return res.status(404).json({ status: 'error', message: 'Preset terminu dostawy nie znaleziony' });
+        }
+
+        const updateData = { updatedAt: new Date().toISOString() };
+
+        if (label !== undefined) {
+            if (!label || typeof label !== 'string' || !label.trim()) {
+                return res.status(400).json({ status: 'error', message: 'label nie może być puste' });
+            }
+            updateData.label = label.trim();
+        }
+
+        if (offsetDays !== undefined) {
+            const normalizedOffset = Number(offsetDays);
+            if (!Number.isFinite(normalizedOffset)) {
+                return res.status(400).json({ status: 'error', message: 'offsetDays musi być liczbą' });
+            }
+            updateData.offsetDays = normalizedOffset;
+        }
+
+        if (mode !== undefined) {
+            if (typeof mode !== 'string' || !mode.trim()) {
+                return res.status(400).json({ status: 'error', message: 'mode musi być niepustym stringiem' });
+            }
+            const normalizedMode = mode.trim().toUpperCase();
+            if (!['OFFSET', 'FIXED_DATE'].includes(normalizedMode)) {
+                return res.status(400).json({ status: 'error', message: 'mode musi być jednym z: OFFSET, FIXED_DATE' });
+            }
+            updateData.mode = normalizedMode;
+            // Jeśli przechodzimy na OFFSET i fixedDate nie jest nadpisane, wyczyść fixedDate
+            if (normalizedMode === 'OFFSET' && fixedDate === undefined) {
+                updateData.fixedDate = null;
+            }
+        }
+
+        if (fixedDate !== undefined) {
+            if (fixedDate === null || fixedDate === '') {
+                updateData.fixedDate = null;
+            } else if (typeof fixedDate === 'string') {
+                const parsed = new Date(fixedDate);
+                if (Number.isNaN(parsed.getTime())) {
+                    return res.status(400).json({ status: 'error', message: 'fixedDate ma nieprawidłowy format (oczekiwany: YYYY-MM-DD)' });
+                }
+                const year = parsed.getFullYear();
+                const month = String(parsed.getMonth() + 1).padStart(2, '0');
+                const day = String(parsed.getDate()).padStart(2, '0');
+                updateData.fixedDate = `${year}-${month}-${day}`;
+            } else {
+                return res.status(400).json({ status: 'error', message: 'fixedDate musi być stringiem lub null' });
+            }
+        }
+
+        if (isDefault !== undefined) {
+            updateData.isDefault = !!isDefault;
+        }
+
+        if (isActive !== undefined) {
+            updateData.isActive = !!isActive;
+        }
+
+        if (sortOrder !== undefined) {
+            const normalizedSortOrder = Number(sortOrder);
+            if (!Number.isFinite(normalizedSortOrder)) {
+                return res.status(400).json({ status: 'error', message: 'sortOrder musi być liczbą' });
+            }
+            updateData.sortOrder = normalizedSortOrder;
+        }
+
+        const { data, error } = await supabase
+            .from('OrderDeliveryPreset')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Błąd aktualizacji OrderDeliveryPreset:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować preset-u terminu dostawy', details: error.message });
+        }
+
+        // Jeśli ten preset jest teraz domyślny, usuń flagę z innych
+        if (data && data.isDefault) {
+            try {
+                await supabase
+                    .from('OrderDeliveryPreset')
+                    .update({ isDefault: false, updatedAt: new Date().toISOString() })
+                    .neq('id', data.id)
+                    .eq('isDefault', true);
+            } catch (updateErr) {
+                console.error('Błąd aktualizacji flag isDefault w OrderDeliveryPreset (po PATCH):', updateErr);
+            }
+        }
+
+        return res.json({ status: 'success', data, message: 'Preset terminu dostawy zaktualizowany' });
+    } catch (err) {
+        console.error('Wyjątek w PATCH /api/admin/order-delivery-presets/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Usunięcie preset-u terminu dostawy
+app.delete('/api/admin/order-delivery-presets/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('OrderDeliveryPreset')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Błąd usuwania OrderDeliveryPreset:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć preset-u terminu dostawy', details: error.message });
+        }
+
+        return res.json({ status: 'success', message: 'Preset terminu dostawy usunięty' });
+    } catch (err) {
+        console.error('Wyjątek w DELETE /api/admin/order-delivery-presets/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// Wykrywanie nieprzypisanych miejscowości (dla GRAPHICS/GRAPHIC_DESIGNER, ADMIN, SALES_DEPT)
+app.get('/api/admin/unassigned-cities', requireRole(['GRAPHICS', 'GRAPHIC_DESIGNER', 'ADMIN', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -3328,7 +4116,7 @@ const MAX_FAVORITES = 12;
 // -----------------------------
 
 // Lista zadań graficznych
-app.get('/api/graphics/tasks', requireRole(['GRAPHICS', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'ADMIN']), async (req, res) => {
+app.get('/api/graphics/tasks', requireRole(['GRAPHICS', 'GRAPHIC_DESIGNER', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'ADMIN']), async (req, res) => {
     console.log('[GET /api/graphics/tasks] Request received - DEBUG LOG');
     
     if (!supabase) {
@@ -3398,7 +4186,7 @@ app.get('/api/graphics/tasks', requireRole(['GRAPHICS', 'SALES_DEPT', 'PRODUCTIO
 });
 
 // Szczegóły zadania
-app.get('/api/graphics/tasks/:id', requireRole(['GRAPHICS', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'ADMIN']), async (req, res) => {
+app.get('/api/graphics/tasks/:id', requireRole(['GRAPHICS', 'GRAPHIC_DESIGNER', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'ADMIN']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -3449,7 +4237,7 @@ app.get('/api/graphics/tasks/:id', requireRole(['GRAPHICS', 'SALES_DEPT', 'PRODU
 });
 
 // Aktualizacja zadania (przypisanie, status, checklista)
-app.patch('/api/graphics/tasks/:id', requireRole(['GRAPHICS', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'ADMIN']), async (req, res) => {
+app.patch('/api/graphics/tasks/:id', requireRole(['GRAPHICS', 'GRAPHIC_DESIGNER', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'ADMIN']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -4423,11 +5211,31 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
     }
 
     const userId = req.user.id;
-    const { customerId, notes, items } = req.body || {};
+    const { customerId, deliveryDate, notes, items } = req.body || {};
 
     // Walidacja
     if (!customerId) {
         return res.status(400).json({ status: 'error', message: 'customerId jest wymagane' });
+    }
+
+    // Walidacja deliveryDate
+    if (!deliveryDate) {
+        return res.status(400).json({ status: 'error', message: 'deliveryDate jest wymagane (data "Na kiedy potrzebne")' });
+    }
+
+    // Sprawdź format daty i czy nie jest w przeszłości
+    const deliveryDateParsed = new Date(deliveryDate);
+    if (isNaN(deliveryDateParsed.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'deliveryDate ma nieprawidłowy format (oczekiwany: YYYY-MM-DD)' });
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const deliveryDay = new Date(deliveryDateParsed);
+    deliveryDay.setHours(0, 0, 0, 0);
+
+    if (deliveryDay < today) {
+        return res.status(400).json({ status: 'error', message: 'deliveryDate nie może być datą z przeszłości' });
     }
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -4465,7 +5273,7 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
         // Wygeneruj orderNumber
         const orderNumber = await generateOrderNumber(userId);
 
-        // Utwórz Order
+        // Utwórz Order (z deliveryDate i domyślnym priority=3)
         const { data: order, error: orderError } = await supabase
             .from('Order')
             .insert({
@@ -4474,6 +5282,8 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
                 orderNumber,
                 status: 'PENDING',
                 total: parseFloat(total.toFixed(2)),
+                deliveryDate: deliveryDateParsed.toISOString(),
+                priority: 3,
                 notes: notes || null,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
@@ -5318,6 +6128,8 @@ app.get('/api/orders', async (req, res) => {
                 userId,
                 status,
                 total,
+                deliveryDate,
+                priority,
                 notes,
                 createdAt,
                 updatedAt,
@@ -5864,6 +6676,8 @@ app.get('/api/orders/:id', async (req, res) => {
                 userId,
                 status,
                 total,
+                deliveryDate,
+                priority,
                 notes,
                 createdAt,
                 updatedAt,
@@ -6102,13 +6916,87 @@ async function generateWorkStationCode(supabaseClient, name, workCenterId) {
 
 // Eksportuj funkcje do testów
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { generateBaseCode, generateRoomCode, generateWorkCenterCode, generateWorkStationCode };
+    module.exports = { generateBaseCode, generateRoomCode, generateWorkCenterCode, generateWorkStationCode, computeOrderTimePriority };
+}
+
+// ============================================
+// HELPER: Auto-priorytet zamówień produkcyjnych
+// Oblicza timeStatus i priority na podstawie deliveryDate i estimatedTime
+// Zgodnie z docs/SPEC_PRODUCTION_PANEL.md §6.6
+// ============================================
+
+/**
+ * Oblicza status czasowy i priorytet dla zamówienia/zlecenia produkcyjnego.
+ * @param {Object} params
+ * @param {string|Date} params.deliveryDate - Data wymagana przez klienta
+ * @param {number} [params.estimatedTimeMinutes=0] - Szacowany czas produkcji w minutach
+ * @param {Date} [params.now=new Date()] - Aktualny czas (do testów)
+ * @returns {{ timeToDeadlineMinutes: number, slackMinutes: number, timeStatus: string, priority: number }}
+ */
+function computeOrderTimePriority({ deliveryDate, estimatedTimeMinutes = 0, now = new Date() }) {
+    // Domyślne wartości dla brakujących danych
+    if (!deliveryDate) {
+        return {
+            timeToDeadlineMinutes: null,
+            slackMinutes: null,
+            timeStatus: 'UNKNOWN',
+            priority: 3
+        };
+    }
+
+    const deadline = new Date(deliveryDate);
+    if (isNaN(deadline.getTime())) {
+        return {
+            timeToDeadlineMinutes: null,
+            slackMinutes: null,
+            timeStatus: 'UNKNOWN',
+            priority: 3
+        };
+    }
+
+    const timeToDeadlineMinutes = Math.floor((deadline.getTime() - now.getTime()) / (1000 * 60));
+    const slackMinutes = timeToDeadlineMinutes - (estimatedTimeMinutes || 0);
+
+    // Progi konfigurowalne (domyślne wartości)
+    const AT_RISK_HOURS = 24;
+    const HIGH_PRIORITY_HOURS = 4;
+    const LOW_PRIORITY_HOURS = 72;
+
+    let timeStatus;
+    let priority;
+
+    // Określ timeStatus
+    if (timeToDeadlineMinutes < 0) {
+        timeStatus = 'OVERDUE';
+    } else if (timeToDeadlineMinutes <= AT_RISK_HOURS * 60 || slackMinutes <= 0) {
+        timeStatus = 'AT_RISK';
+    } else {
+        timeStatus = 'ON_TIME';
+    }
+
+    // Określ priority (1-4)
+    if (timeStatus === 'OVERDUE') {
+        priority = 1; // urgent
+    } else if (timeStatus === 'AT_RISK' && (timeToDeadlineMinutes <= HIGH_PRIORITY_HOURS * 60 || slackMinutes <= 60)) {
+        priority = 2; // high
+    } else if (timeStatus === 'ON_TIME' && timeToDeadlineMinutes > LOW_PRIORITY_HOURS * 60 && slackMinutes > 2 * (estimatedTimeMinutes || 0)) {
+        priority = 4; // low
+    } else {
+        priority = 3; // normal
+    }
+
+    return {
+        timeToDeadlineMinutes,
+        slackMinutes,
+        timeStatus,
+        priority
+    };
 }
 
 // ============================================
 // GET /api/production/rooms - lista pokoi produkcyjnych
 // ============================================
-app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION', 'PRODUCTION_MANAGER', 'OPERATOR', 'SALES_DEPT']), async (req, res) => {
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -6119,6 +7007,7 @@ app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT
             .select(`
                 *,
                 supervisor:User!ProductionRoom_supervisorId_fkey(id, name, email),
+                roomManager:User!ProductionRoom_roomManagerUserId_fkey(id, name, email),
                 workCenters:WorkCenter(id, name, code, type)
             `)
             .eq('isActive', true)
@@ -6129,10 +7018,36 @@ app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT
             return res.status(500).json({ status: 'error', message: 'Błąd pobierania pokoi' });
         }
 
-        // Dodaj liczniki
+        // Pobierz operatorów przypisanych do każdego pokoju
+        const roomIds = (rooms || []).map(r => r.id);
+        let operatorsByRoom = {};
+        
+        if (roomIds.length > 0) {
+            const { data: operators } = await supabase
+                .from('User')
+                .select('id, name, email, role, productionroomid')
+                .in('productionroomid', roomIds)
+                .eq('isActive', true);
+            
+            // Grupuj operatorów po pokoju
+            (operators || []).forEach(op => {
+                const roomId = op.productionroomid;
+                if (!operatorsByRoom[roomId]) operatorsByRoom[roomId] = [];
+                operatorsByRoom[roomId].push({
+                    id: op.id,
+                    name: op.name,
+                    email: op.email,
+                    role: op.role
+                });
+            });
+        }
+
+        // Dodaj liczniki i operatorów
         const roomsWithCounts = (rooms || []).map(room => ({
             ...room,
-            workCenterCount: room.workCenters?.length || 0
+            workCenterCount: room.workCenters?.length || 0,
+            operators: operatorsByRoom[room.id] || [],
+            operatorCount: (operatorsByRoom[room.id] || []).length
         }));
 
         return res.json({ status: 'success', data: roomsWithCounts });
@@ -6231,7 +7146,7 @@ app.patch('/api/production/rooms/:id', requireRole(['ADMIN']), async (req, res) 
 
     try {
         const { id } = req.params;
-        const { name, code, area, description, supervisorId, isActive } = req.body;
+        const { name, code, area, description, supervisorId, roomManagerUserId, isActive } = req.body;
 
         const updates = {};
         if (name !== undefined) updates.name = name.trim();
@@ -6239,6 +7154,8 @@ app.patch('/api/production/rooms/:id', requireRole(['ADMIN']), async (req, res) 
         if (area !== undefined) updates.area = area;
         if (description !== undefined) updates.description = description;
         if (supervisorId !== undefined) updates.supervisorId = supervisorId || null;
+        // roomManagerUserId - menedżer pokoju (MES-compliant)
+        if (roomManagerUserId !== undefined) updates.roomManagerUserId = roomManagerUserId || null;
         if (isActive !== undefined) updates.isActive = isActive;
 
         if (Object.keys(updates).length === 0) {
@@ -6249,7 +7166,11 @@ app.patch('/api/production/rooms/:id', requireRole(['ADMIN']), async (req, res) 
             .from('ProductionRoom')
             .update(updates)
             .eq('id', id)
-            .select()
+            .select(`
+                *,
+                supervisor:User!ProductionRoom_supervisorId_fkey(id, name, email),
+                roomManager:User!ProductionRoom_roomManagerUserId_fkey(id, name, email)
+            `)
             .single();
 
         if (error) {
@@ -6257,6 +7178,7 @@ app.patch('/api/production/rooms/:id', requireRole(['ADMIN']), async (req, res) 
             return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować pokoju' });
         }
 
+        console.log(`[PATCH /api/production/rooms/:id] Zaktualizowano pokój ${id}, roomManagerUserId: ${roomManagerUserId}`);
         return res.json({ status: 'success', data: room });
     } catch (error) {
         console.error('[PATCH /api/production/rooms/:id] Wyjątek:', error);
@@ -6289,6 +7211,228 @@ app.delete('/api/production/rooms/:id', requireRole(['ADMIN']), async (req, res)
         return res.json({ status: 'success', message: 'Pokój został dezaktywowany' });
     } catch (error) {
         console.error('[DELETE /api/production/rooms/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// WorkCenterType API - słownik typów gniazd
+// ============================================
+app.get('/api/production/work-center-types', requireRole(['ADMIN', 'PRODUCTION', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { isActive } = req.query;
+
+        let query = supabase
+            .from('WorkCenterType')
+            .select('*')
+            .order('name');
+
+        if (typeof isActive !== 'undefined' && isActive !== '') {
+            const activeValue = isActive === 'true' || isActive === true || isActive === 1 || isActive === '1';
+            query = query.eq('isActive', activeValue);
+        }
+
+        const { data: types, error } = await query;
+
+        if (error) {
+            console.error('[GET /api/production/work-center-types] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania typów gniazd' });
+        }
+
+        return res.json({ status: 'success', data: types || [] });
+    } catch (error) {
+        console.error('[GET /api/production/work-center-types] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+app.post('/api/production/work-center-types', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { code, name, description, isActive } = req.body;
+
+        if (!code || !name) {
+            return res.status(400).json({ status: 'error', message: 'Kod i nazwa typu są wymagane' });
+        }
+
+        const normalizedCode = String(code).trim().toLowerCase();
+
+        const { data: typeRow, error } = await supabase
+            .from('WorkCenterType')
+            .insert({
+                code: normalizedCode,
+                name: name.trim(),
+                description: description || null,
+                isActive: typeof isActive === 'boolean' ? isActive : true
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[POST /api/production/work-center-types] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć typu gniazda' });
+        }
+
+        return res.status(201).json({ status: 'success', data: typeRow });
+    } catch (error) {
+        console.error('[POST /api/production/work-center-types] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+app.patch('/api/production/work-center-types/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+        const { name, description, isActive } = req.body;
+
+        const updates = {};
+        if (name !== undefined) updates.name = name.trim();
+        if (description !== undefined) updates.description = description || null;
+        if (isActive !== undefined) updates.isActive = isActive;
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Brak danych do aktualizacji' });
+        }
+
+        const { data: typeRow, error } = await supabase
+            .from('WorkCenterType')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[PATCH /api/production/work-center-types/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować typu gniazda' });
+        }
+
+        return res.json({ status: 'success', data: typeRow });
+    } catch (error) {
+        console.error('[PATCH /api/production/work-center-types/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// OperationType API - słownik typów operacji
+// ============================================
+app.get('/api/production/operation-types', requireRole(['ADMIN', 'PRODUCTION', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { isActive } = req.query;
+
+        let query = supabase
+            .from('OperationType')
+            .select('*')
+            .order('name');
+
+        if (typeof isActive !== 'undefined' && isActive !== '') {
+            const activeValue = isActive === 'true' || isActive === true || isActive === 1 || isActive === '1';
+            query = query.eq('isActive', activeValue);
+        }
+
+        const { data: types, error } = await query;
+
+        if (error) {
+            console.error('[GET /api/production/operation-types] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania typów operacji' });
+        }
+
+        return res.json({ status: 'success', data: types || [] });
+    } catch (error) {
+        console.error('[GET /api/production/operation-types] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+app.post('/api/production/operation-types', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { code, name, description, isActive } = req.body;
+
+        if (!code || !name) {
+            return res.status(400).json({ status: 'error', message: 'Kod i nazwa typu są wymagane' });
+        }
+
+        const normalizedCode = String(code).trim().toLowerCase();
+
+        if (!/^[a-z0-9_]+$/.test(normalizedCode)) {
+            return res.status(400).json({ status: 'error', message: 'Kod może zawierać tylko małe litery, cyfry i podkreślenia' });
+        }
+
+        const { data: typeRow, error } = await supabase
+            .from('OperationType')
+            .insert({
+                code: normalizedCode,
+                name: name.trim(),
+                description: description || null,
+                isActive: typeof isActive === 'boolean' ? isActive : true
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[POST /api/production/operation-types] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć typu operacji' });
+        }
+
+        return res.status(201).json({ status: 'success', data: typeRow });
+    } catch (error) {
+        console.error('[POST /api/production/operation-types] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+app.patch('/api/production/operation-types/:id', requireRole(['ADMIN']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { id } = req.params;
+        const { name, description, isActive } = req.body;
+
+        const updates = {};
+        if (name !== undefined) updates.name = String(name).trim();
+        if (description !== undefined) updates.description = description || null;
+        if (isActive !== undefined) updates.isActive = !!isActive;
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Brak danych do aktualizacji' });
+        }
+
+        const { data: typeRow, error } = await supabase
+            .from('OperationType')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[PATCH /api/production/operation-types/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować typu operacji' });
+        }
+
+        return res.json({ status: 'success', data: typeRow });
+    } catch (error) {
+        console.error('[PATCH /api/production/operation-types/:id] Wyjątek:', error);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
@@ -6346,21 +7490,54 @@ app.post('/api/production/work-centers', requireRole(['ADMIN']), async (req, res
     }
 
     try {
-        const { name, roomId, type, description } = req.body;
+        const { name, roomId, type, workCenterTypeId, description } = req.body;
 
-        if (!name || !type) {
-            return res.status(400).json({ status: 'error', message: 'Nazwa i typ są wymagane' });
+        if (!name) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa jest wymagana' });
         }
 
-        if (!WORK_CENTER_TYPES.includes(type)) {
-            return res.status(400).json({ 
-                status: 'error', 
-                message: `Nieprawidłowy typ. Dozwolone: ${WORK_CENTER_TYPES.join(', ')}` 
-            });
+        // Ustal typ gniazda na podstawie workCenterTypeId lub kodu typu (type)
+        let resolvedTypeCode = null;
+        let resolvedTypeId = null;
+
+        if (workCenterTypeId) {
+            const { data: typeRow, error: typeError } = await supabase
+                .from('WorkCenterType')
+                .select('id, code, "isActive"')
+                .eq('id', workCenterTypeId)
+                .single();
+
+            if (typeError || !typeRow) {
+                return res.status(400).json({ status: 'error', message: 'Nieprawidłowy typ gniazda (workCenterTypeId)' });
+            }
+            if (!typeRow.isActive) {
+                return res.status(400).json({ status: 'error', message: 'Typ gniazda jest nieaktywny' });
+            }
+
+            resolvedTypeId = typeRow.id;
+            resolvedTypeCode = typeRow.code;
+        } else if (type) {
+            const { data: typeRow, error: typeError } = await supabase
+                .from('WorkCenterType')
+                .select('id, code, "isActive"')
+                .eq('code', type)
+                .single();
+
+            if (typeError || !typeRow) {
+                return res.status(400).json({ status: 'error', message: 'Nieprawidłowy typ gniazda' });
+            }
+            if (!typeRow.isActive) {
+                return res.status(400).json({ status: 'error', message: 'Typ gniazda jest nieaktywny' });
+            }
+
+            resolvedTypeId = typeRow.id;
+            resolvedTypeCode = typeRow.code;
+        } else {
+            return res.status(400).json({ status: 'error', message: 'Typ gniazda jest wymagany' });
         }
 
         // Automatycznie generuj kod na podstawie pokoju i typu
-        const generatedCode = await generateWorkCenterCode(supabase, name, roomId, type);
+        const generatedCode = await generateWorkCenterCode(supabase, name, roomId, resolvedTypeCode);
 
         const { data: workCenter, error } = await supabase
             .from('WorkCenter')
@@ -6368,7 +7545,8 @@ app.post('/api/production/work-centers', requireRole(['ADMIN']), async (req, res
                 name: name.trim(),
                 code: generatedCode,
                 roomId: roomId || null,
-                type,
+                type: resolvedTypeCode,
+                workCenterTypeId: resolvedTypeId,
                 description: description || null,
                 isActive: true
             })
@@ -7882,7 +9060,7 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
             .select(`
                 *,
                 product:Product(id, name, code, identifier, imageUrl),
-                sourceOrder:Order(id, orderNumber, customerId, customer:Customer(id, name)),
+                sourceOrder:Order(id, orderNumber, customerId, deliveryDate, priority, customer:Customer(id, name)),
                 sourceOrderItem:OrderItem(
                     id,
                     selectedProjects,
@@ -7978,11 +9156,22 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
             const totalOps = ops.length;
             const activeOp = ops.find(op => op.status === 'active');
             const nextPendingOp = ops.find(op => op.status === 'pending');
+
+            // Oblicz auto-priorytet na podstawie deliveryDate z powiązanego zamówienia
+            const deliveryDate = order.sourceOrder?.deliveryDate || order.plannedenddate;
+            const estimatedTimeMinutes = order.estimatedtime || 0;
+            const timePriority = computeOrderTimePriority({ deliveryDate, estimatedTimeMinutes });
             
             return {
                 ...order,
                 operations: ops,
                 hasOperationsInUserRoom, // Flaga pomocnicza
+                // Dane czasowe z auto-priorytetu
+                deliveryDate: deliveryDate || null,
+                timeToDeadlineMinutes: timePriority.timeToDeadlineMinutes,
+                slackMinutes: timePriority.slackMinutes,
+                timeStatus: timePriority.timeStatus,
+                computedPriority: timePriority.priority,
                 progress: {
                     completed: completedOps,
                     total: totalOps,
@@ -7995,20 +9184,28 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
 
         // Filtrowanie finalne - usuń zlecenia, które nie dotyczą pokoju użytkownika
         if (userRoomId) {
-            ordersWithDetails = ordersWithDetails.filter(o => o.hasOperationsInUserRoom);
+            filteredOrders = filteredOrders.filter(o => o.hasOperationsInUserRoom);
         }
 
         // Sortuj: najpierw in_progress, potem approved, potem planned
+        // W ramach statusu: najpierw po deliveryDate (rosnąco), potem po computedPriority (1-4)
         const statusOrder = { 'in_progress': 0, 'approved': 1, 'planned': 2 };
-        ordersWithDetails.sort((a, b) => {
+        filteredOrders.sort((a, b) => {
             const statusDiff = (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
             if (statusDiff !== 0) return statusDiff;
-            return (a.priority || 3) - (b.priority || 3);
+            
+            // Sortuj po deliveryDate (rosnąco, null na końcu)
+            const aDate = a.deliveryDate ? new Date(a.deliveryDate).getTime() : Infinity;
+            const bDate = b.deliveryDate ? new Date(b.deliveryDate).getTime() : Infinity;
+            if (aDate !== bDate) return aDate - bDate;
+            
+            // Potem po computedPriority (1=urgent, 4=low)
+            return (a.computedPriority || 3) - (b.computedPriority || 3);
         });
 
         // Grupuj zlecenia po ProductionWorkOrder (Zbiorcze ZP)
         const workOrdersMap = new Map();
-        for (const order of ordersWithDetails) {
+        for (const order of filteredOrders) {
             const woId = order.workOrderId || order.workorderid;
             if (woId) {
                 if (!workOrdersMap.has(woId)) {
@@ -8033,19 +9230,19 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
         }
 
         // Oblicz podsumowanie kolejki
-        const queueOrders = ordersWithDetails.filter(o => o.status === 'planned' || o.status === 'approved');
-        const activeOrders = ordersWithDetails.filter(o => o.status === 'in_progress');
+        const queueOrders = filteredOrders.filter(o => o.status === 'planned' || o.status === 'approved');
+        const activeOrders = filteredOrders.filter(o => o.status === 'in_progress');
         const summary = {
-            totalOrders: ordersWithDetails.length,
+            totalOrders: filteredOrders.length,
             queueCount: queueOrders.length,
             activeCount: activeOrders.length,
-            totalQuantity: ordersWithDetails.reduce((sum, o) => sum + (o.quantity || 0), 0),
+            totalQuantity: filteredOrders.reduce((sum, o) => sum + (o.quantity || 0), 0),
             queueQuantity: queueOrders.reduce((sum, o) => sum + (o.quantity || 0), 0)
         };
 
         return res.json({ 
             status: 'success', 
-            data: ordersWithDetails,
+            data: filteredOrders,
             workOrders: Array.from(workOrdersMap.values()),
             summary
         });
@@ -8616,6 +9813,198 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
 });
 
 // ============================================
+// GET /api/production/kpi/overview - Dashboard KPI produkcji
+// ============================================
+/**
+ * Zwraca zagregowane KPI produkcyjne:
+ * - summary: completedOperations, producedQuantity, wasteQuantity, problemsReported
+ * - byRoom: statystyki per pokój produkcyjny
+ * - topProducts: top 5 produktów wg wyprodukowanej ilości
+ * 
+ * Query params (opcjonalne):
+ * - dateFrom: ISO date string (domyślnie: dziś 00:00)
+ * - dateTo: ISO date string (domyślnie: dziś 23:59)
+ * - roomId: number (filtruj po pokoju)
+ */
+app.get('/api/production/kpi/overview', requireRole(['ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION']), async (req, res) => {
+    const tag = '[GET /api/production/kpi/overview]';
+    console.log(`${tag} start`);
+
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { dateFrom, dateTo, roomId } = req.query;
+
+        // Domyślny zakres: dzisiaj
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        const startDate = dateFrom ? new Date(dateFrom) : today;
+        const endDate = dateTo ? new Date(dateTo) : tomorrow;
+
+        // 1. Pobierz zakończone operacje w zakresie dat
+        let operationsQuery = supabase
+            .from('ProductionOperation')
+            .select(`
+                id, status, outputquantity, wastequantity, actualtime, endtime,
+                productionorderid,
+                ProductionOrder!inner(id, workOrderId, Product(id, name, identifier))
+            `)
+            .eq('status', 'completed')
+            .gte('endtime', startDate.toISOString())
+            .lt('endtime', endDate.toISOString());
+
+        const { data: completedOps, error: opsError } = await operationsQuery;
+
+        if (opsError) {
+            console.error(`${tag} Błąd pobierania operacji:`, opsError);
+            return res.status(500).json({ status: 'error', message: 'Błąd pobierania danych operacji' });
+        }
+
+        // 2. Pobierz zgłoszone problemy w zakresie dat
+        let logsQuery = supabase
+            .from('ProductionLog')
+            .select('id, action, createdAt')
+            .eq('action', 'problem_reported')
+            .gte('createdAt', startDate.toISOString())
+            .lt('createdAt', endDate.toISOString());
+
+        const { data: problemLogs, error: logsError } = await logsQuery;
+
+        if (logsError) {
+            console.error(`${tag} Błąd pobierania logów:`, logsError);
+        }
+
+        // 3. Pobierz work orders dla statystyk per pokój
+        let workOrdersQuery = supabase
+            .from('ProductionWorkOrder')
+            .select('id, status, roomName, createdAt, updatedAt');
+
+        if (roomId) {
+            // Filtruj po nazwie pokoju (roomName) - ProductionWorkOrder nie ma roomId
+            const { data: room } = await supabase
+                .from('ProductionRoom')
+                .select('name')
+                .eq('id', parseInt(roomId))
+                .single();
+            
+            if (room) {
+                workOrdersQuery = workOrdersQuery.eq('roomName', room.name);
+            }
+        }
+
+        const { data: workOrders, error: woError } = await workOrdersQuery;
+
+        if (woError) {
+            console.error(`${tag} Błąd pobierania work orders:`, woError);
+        }
+
+        // 4. Oblicz summary
+        const summary = {
+            completedOperations: completedOps?.length || 0,
+            producedQuantity: 0,
+            wasteQuantity: 0,
+            problemsReported: problemLogs?.length || 0,
+            avgOperationTimeMinutes: 0
+        };
+
+        let totalActualTime = 0;
+        const productStats = {};
+
+        (completedOps || []).forEach(op => {
+            summary.producedQuantity += op.outputquantity || 0;
+            summary.wasteQuantity += op.wastequantity || 0;
+            totalActualTime += op.actualtime || 0;
+
+            // Agreguj po produktach
+            const product = op.ProductionOrder?.Product;
+            if (product) {
+                const productId = product.id;
+                if (!productStats[productId]) {
+                    productStats[productId] = {
+                        productId,
+                        name: product.name || product.identifier || 'Nieznany',
+                        identifier: product.identifier,
+                        producedQuantity: 0,
+                        wasteQuantity: 0,
+                        operationsCount: 0
+                    };
+                }
+                productStats[productId].producedQuantity += op.outputquantity || 0;
+                productStats[productId].wasteQuantity += op.wastequantity || 0;
+                productStats[productId].operationsCount += 1;
+            }
+        });
+
+        if (summary.completedOperations > 0) {
+            summary.avgOperationTimeMinutes = Math.round(totalActualTime / summary.completedOperations);
+        }
+
+        // 5. Oblicz byRoom
+        const roomStats = {};
+        (workOrders || []).forEach(wo => {
+            const roomName = wo.roomName || 'Nieprzypisany';
+            if (!roomStats[roomName]) {
+                roomStats[roomName] = {
+                    roomName,
+                    totalWorkOrders: 0,
+                    completedWorkOrders: 0,
+                    inProgressWorkOrders: 0,
+                    plannedWorkOrders: 0,
+                    cancelledWorkOrders: 0
+                };
+            }
+            roomStats[roomName].totalWorkOrders += 1;
+
+            switch (wo.status) {
+                case 'completed':
+                    roomStats[roomName].completedWorkOrders += 1;
+                    break;
+                case 'in_progress':
+                    roomStats[roomName].inProgressWorkOrders += 1;
+                    break;
+                case 'planned':
+                case 'approved':
+                    roomStats[roomName].plannedWorkOrders += 1;
+                    break;
+                case 'cancelled':
+                    roomStats[roomName].cancelledWorkOrders += 1;
+                    break;
+            }
+        });
+
+        const byRoom = Object.values(roomStats);
+
+        // 6. Top 5 produktów
+        const topProducts = Object.values(productStats)
+            .sort((a, b) => b.producedQuantity - a.producedQuantity)
+            .slice(0, 5);
+
+        // 7. Zwróć wynik
+        const result = {
+            summary,
+            byRoom,
+            topProducts,
+            dateRange: {
+                from: startDate.toISOString(),
+                to: endDate.toISOString()
+            }
+        };
+
+        console.log(`${tag} Zwracam KPI: ${summary.completedOperations} operacji, ${summary.producedQuantity} szt.`);
+        return res.json({ status: 'success', data: result });
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
 // ENDPOINTY DRUKU PDF
 // ============================================
 
@@ -8650,8 +10039,10 @@ app.get('/api/production/work-orders/:id/print', async (req, res) => {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
         }
 
-        const allowedRoles = ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'PRODUCTION', 'OPERATOR'];
-        if (!allowedRoles.includes(authRole)) {
+        const fullAccessRoles = ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'PRODUCTION', 'OPERATOR'];
+        const isSalesRep = authRole === 'SALES_REP';
+
+        if (!fullAccessRoles.includes(authRole) && !isSalesRep) {
             return res.status(403).json({ status: 'error', message: 'Brak uprawnień do druku zleceń' });
         }
 
@@ -8670,6 +10061,28 @@ app.get('/api/production/work-orders/:id/print', async (req, res) => {
         if (woError || !workOrder) {
             console.log(`${tag} Nie znaleziono zlecenia:`, woError);
             return res.status(404).json({ status: 'error', message: 'Nie znaleziono zlecenia produkcyjnego dla pokoju produkcyjnego' });
+        }
+
+        // Handlowiec (SALES_REP) może drukować ZP tylko dla własnych zamówień
+        if (isSalesRep) {
+            if (!workOrder.sourceOrderId) {
+                return res.status(403).json({ status: 'error', message: 'Brak uprawnień do druku zleceń dla tego zamówienia' });
+            }
+
+            const { data: order, error: orderError } = await supabase
+                .from('Order')
+                .select('id, userId')
+                .eq('id', workOrder.sourceOrderId)
+                .single();
+
+            if (orderError || !order) {
+                console.error(`${tag} Błąd pobierania zamówienia dla handlowca:`, orderError);
+                return res.status(404).json({ status: 'error', message: 'Nie znaleziono zamówienia powiązanego ze zleceniem' });
+            }
+
+            if (order.userId !== authId) {
+                return res.status(403).json({ status: 'error', message: 'Brak uprawnień do druku zleceń dla tego zamówienia' });
+            }
         }
 
         // Pobierz zamówienie źródłowe
@@ -8810,12 +10223,32 @@ app.get('/api/orders/:id/production-work-orders', async (req, res) => {
             return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
         }
 
-        const allowedRoles = ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'PRODUCTION', 'OPERATOR', 'WAREHOUSE'];
-        if (!allowedRoles.includes(authRole)) {
+        const fullAccessRoles = ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'PRODUCTION', 'OPERATOR', 'WAREHOUSE'];
+        const isSalesRep = authRole === 'SALES_REP';
+
+        if (!fullAccessRoles.includes(authRole) && !isSalesRep) {
             return res.status(403).json({ status: 'error', message: 'Brak uprawnień do podglądu zleceń produkcyjnych dla zamówienia' });
         }
 
         const orderId = req.params.id;
+
+        // Handlowiec (SALES_REP) widzi tylko ZP powiązane ze swoimi zamówieniami
+        if (isSalesRep) {
+            const { data: order, error: orderError } = await supabase
+                .from('Order')
+                .select('id, userId')
+                .eq('id', orderId)
+                .single();
+
+            if (orderError || !order) {
+                console.error(`${tag} Błąd pobierania zamówienia dla handlowca:`, orderError);
+                return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+            }
+
+            if (order.userId !== authId) {
+                return res.status(403).json({ status: 'error', message: 'Brak uprawnień do podglądu zleceń produkcyjnych dla tego zamówienia' });
+            }
+        }
 
         const { data: workOrders, error } = await supabase
             .from('ProductionWorkOrder')
@@ -9584,8 +11017,27 @@ const WORKCENTER_TYPE_TO_PATH_CODES = {
     solvent: ['2'],
 };
 
+// =============================================
+// HELPERY UPRAWNIEŃ PRODUKCYJNYCH (MES-compliant)
+// =============================================
+
+/**
+ * Typy dostępu do pokoju produkcyjnego
+ */
+const ROOM_ACCESS = {
+    NONE: 'none',           // Brak dostępu
+    VIEW: 'view',           // Tylko podgląd
+    OPERATE: 'operate',     // Wykonywanie operacji (operator)
+    MANAGE: 'manage',       // Zarządzanie przypisaniami (room manager)
+    FULL: 'full'            // Pełny dostęp (admin)
+};
+
 /**
  * Sprawdza czy user jest managerem pokoju lub ADMIN
+ * @param {string} userId - ID użytkownika
+ * @param {string} userRole - Aktywna rola użytkownika
+ * @param {number} roomId - ID pokoju produkcyjnego
+ * @returns {Promise<boolean>}
  */
 async function isRoomManagerOrAdmin(userId, userRole, roomId) {
     if (userRole === 'ADMIN') return true;
@@ -9601,6 +11053,114 @@ async function isRoomManagerOrAdmin(userId, userRole, roomId) {
 }
 
 /**
+ * Sprawdza czy użytkownik jest przypisany do danego pokoju (jako operator)
+ * @param {string} userId - ID użytkownika
+ * @param {number} roomId - ID pokoju produkcyjnego
+ * @returns {Promise<boolean>}
+ */
+async function isUserAssignedToRoom(userId, roomId) {
+    if (!supabase || !userId || !roomId) return false;
+    
+    const { data: user } = await supabase
+        .from('User')
+        .select('productionroomid')
+        .eq('id', userId)
+        .single();
+    
+    return user?.productionroomid === roomId;
+}
+
+/**
+ * Określa poziom dostępu użytkownika do pokoju produkcyjnego
+ * 
+ * Matryca uprawnień (MES-compliant):
+ * - ADMIN: FULL (wszędzie)
+ * - PRODUCTION_MANAGER + roomManagerUserId: MANAGE (w swoim pokoju)
+ * - PRODUCTION_MANAGER (bez przypisania): VIEW (wszędzie)
+ * - PRODUCTION: VIEW (wszędzie)
+ * - OPERATOR + productionroomid: OPERATE (w swoim pokoju)
+ * - OPERATOR (inny pokój): NONE
+ * - Inne role: NONE
+ * 
+ * @param {string} userId - ID użytkownika
+ * @param {string} userRole - Aktywna rola użytkownika
+ * @param {number} roomId - ID pokoju produkcyjnego
+ * @returns {Promise<string>} - Poziom dostępu z ROOM_ACCESS
+ */
+async function getRoomAccessLevel(userId, userRole, roomId) {
+    // ADMIN ma pełny dostęp wszędzie
+    if (userRole === 'ADMIN') {
+        return ROOM_ACCESS.FULL;
+    }
+    
+    // Sprawdź czy jest room managerem
+    const isRoomManager = await isRoomManagerOrAdmin(userId, userRole, roomId);
+    
+    // PRODUCTION_MANAGER
+    if (userRole === 'PRODUCTION_MANAGER') {
+        return isRoomManager ? ROOM_ACCESS.MANAGE : ROOM_ACCESS.VIEW;
+    }
+    
+    // PRODUCTION (brygadzista) - podgląd wszędzie
+    if (userRole === 'PRODUCTION') {
+        return ROOM_ACCESS.VIEW;
+    }
+    
+    // OPERATOR - tylko swój pokój
+    if (userRole === 'OPERATOR') {
+        const isAssigned = await isUserAssignedToRoom(userId, roomId);
+        return isAssigned ? ROOM_ACCESS.OPERATE : ROOM_ACCESS.NONE;
+    }
+    
+    // Inne role - brak dostępu do modułu produkcji
+    return ROOM_ACCESS.NONE;
+}
+
+/**
+ * Sprawdza czy użytkownik może zarządzać przypisaniami w pokoju
+ * (dodawać/usuwać produkty z maszyn, zmieniać restrykcje)
+ * 
+ * @param {string} userId - ID użytkownika
+ * @param {string} userRole - Aktywna rola użytkownika
+ * @param {number} roomId - ID pokoju produkcyjnego
+ * @returns {Promise<boolean>}
+ */
+async function canManageRoomAssignments(userId, userRole, roomId) {
+    const accessLevel = await getRoomAccessLevel(userId, userRole, roomId);
+    return accessLevel === ROOM_ACCESS.FULL || accessLevel === ROOM_ACCESS.MANAGE;
+}
+
+/**
+ * Sprawdza czy użytkownik może przeglądać dane pokoju
+ * 
+ * @param {string} userId - ID użytkownika
+ * @param {string} userRole - Aktywna rola użytkownika
+ * @param {number} roomId - ID pokoju produkcyjnego
+ * @returns {Promise<boolean>}
+ */
+async function canViewRoom(userId, userRole, roomId) {
+    const accessLevel = await getRoomAccessLevel(userId, userRole, roomId);
+    return accessLevel !== ROOM_ACCESS.NONE;
+}
+
+/**
+ * Sprawdza czy użytkownik może wykonywać operacje produkcyjne w pokoju
+ * 
+ * @param {string} userId - ID użytkownika
+ * @param {string} userRole - Aktywna rola użytkownika
+ * @param {number} roomId - ID pokoju produkcyjnego
+ * @returns {Promise<boolean>}
+ */
+async function canOperateInRoom(userId, userRole, roomId) {
+    const accessLevel = await getRoomAccessLevel(userId, userRole, roomId);
+    return [ROOM_ACCESS.FULL, ROOM_ACCESS.MANAGE, ROOM_ACCESS.OPERATE].includes(accessLevel);
+}
+
+// =============================================
+// KONIEC HELPERÓW UPRAWNIEŃ PRODUKCYJNYCH
+// =============================================
+
+/**
  * GET /api/production/rooms/:roomId/machine-assignments
  * Zwraca dane do Kanban: maszyny z przypisaniami + produkty bez przypisań
  * Dostęp: ADMIN, PRODUCTION_MANAGER, PRODUCTION, OPERATOR (tylko własny pokój)
@@ -9613,25 +11173,15 @@ app.get('/api/production/rooms/:roomId/machine-assignments', requireRole(['ADMIN
     const userRole = cookies.auth_role;
 
     try {
-        // Sprawdź uprawnienia
-        let hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
-
-        // Operator ma dostęp tylko do swojego pokoju produkcyjnego
-        if (!hasAccess && userRole === 'OPERATOR' && supabase && userId) {
-            const { data: user } = await supabase
-                .from('User')
-                .select('productionroomid')
-                .eq('id', userId)
-                .single();
-
-            if (user?.productionroomid === roomId) {
-                hasAccess = true;
-            }
-        }
-
-        if (!hasAccess && userRole !== 'PRODUCTION_MANAGER' && userRole !== 'PRODUCTION') {
+        // Sprawdź uprawnienia używając nowego helpera (MES-compliant)
+        const accessLevel = await getRoomAccessLevel(userId, userRole, roomId);
+        
+        if (accessLevel === ROOM_ACCESS.NONE) {
             return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego pokoju' });
         }
+        
+        // Dodaj informację o poziomie dostępu do odpowiedzi (dla UI)
+        const canManage = [ROOM_ACCESS.FULL, ROOM_ACCESS.MANAGE].includes(accessLevel);
 
         // Pobierz dane pokoju
         const { data: room, error: roomError } = await supabase
@@ -9771,14 +11321,21 @@ app.get('/api/production/rooms/:roomId/machine-assignments', requireRole(['ADMIN
             });
         }
 
-        console.log(`${tag} Pokój ${roomId}: ${machinesWithProducts.length} maszyn, ${unassignedProducts.length} nieprzypisanych produktów`);
+        console.log(`${tag} Pokój ${roomId}: ${machinesWithProducts.length} maszyn, ${unassignedProducts.length} nieprzypisanych produktów, accessLevel: ${accessLevel}`);
 
         return res.json({
             status: 'success',
             data: {
                 room,
                 machines: machinesWithProducts,
-                unassignedProducts
+                unassignedProducts,
+                // Informacje o uprawnieniach dla UI (MES-compliant)
+                permissions: {
+                    accessLevel,
+                    canManage,
+                    canOperate: [ROOM_ACCESS.FULL, ROOM_ACCESS.MANAGE, ROOM_ACCESS.OPERATE].includes(accessLevel),
+                    canView: true
+                }
             }
         });
 
@@ -9819,8 +11376,9 @@ app.post('/api/production/machine-assignments', requireRole(['ADMIN', 'PRODUCTIO
         }
 
         const roomId = machine.WorkCenter?.roomId;
-        const hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
-        if (!hasAccess) {
+        // Użyj nowego helpera MES-compliant
+        const canManage = await canManageRoomAssignments(userId, userRole, roomId);
+        if (!canManage) {
             return res.status(403).json({ status: 'error', message: 'Brak uprawnień do zarządzania przypisaniami w tym pokoju' });
         }
 
@@ -9881,9 +11439,10 @@ app.delete('/api/production/machine-assignments/:workStationId/:productId', requ
         }
 
         const roomId = machine.WorkCenter?.roomId;
-        const hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
-        if (!hasAccess) {
-            return res.status(403).json({ status: 'error', message: 'Brak uprawnień' });
+        // Użyj nowego helpera MES-compliant
+        const canManage = await canManageRoomAssignments(userId, userRole, roomId);
+        if (!canManage) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do zarządzania przypisaniami w tym pokoju' });
         }
 
         // Usuń przypisanie
@@ -9940,9 +11499,10 @@ app.patch('/api/production/workstations/:id/restriction', requireRole(['ADMIN', 
         }
 
         const roomId = machine.WorkCenter?.roomId;
-        const hasAccess = await isRoomManagerOrAdmin(userId, userRole, roomId);
-        if (!hasAccess) {
-            return res.status(403).json({ status: 'error', message: 'Brak uprawnień' });
+        // Użyj nowego helpera MES-compliant
+        const canManage = await canManageRoomAssignments(userId, userRole, roomId);
+        if (!canManage) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do zarządzania restrykcjami w tym pokoju' });
         }
 
         // Zaktualizuj flagę
