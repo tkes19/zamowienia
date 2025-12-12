@@ -55,6 +55,18 @@
 
 Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
+#### ✅ Ukończone (2025-12-10)
+- [x] **Refaktoryzacja ról i uprawnień MES** – zgodność z best practices MES
+  - Rozszerzenie enum `UserRole` o nowe role produkcyjne (OPERATOR, PRODUCTION_MANAGER, GRAPHIC_DESIGNER)
+  - Tabela `UserRoleAssignment` z wielorolami (isActive, assignedBy, assignedAt)
+  - Endpointy CRUD: `GET/POST/DELETE /api/admin/user-role-assignments`
+  - Endpoint synchronizacji: `PUT /api/admin/user-role-assignments/sync/:userId`
+  - Endpoint przełączania roli: `POST /api/auth/active-role`
+  - Helpery uprawnień: `getRoomAccessLevel()`, `canManageRoomAssignments()`, `canViewRoom()`, `canOperateInRoom()`
+  - UI Admin: sekcja wieloról w formularzu użytkownika (checkboxy)
+  - UI Admin: pole `roomManagerUserId` + lista operatorów w formularzu pokoju
+  - Testy jednostkowe: `backend/roles-permissions.test.js` (29 testów)
+
 #### ✅ Ukończone (2025-12-XX)
 - [x] **Generator kodów produkcyjnych** – automatyczne generowanie unikalnych kodów dla pokoi, gniazd i maszyn
   - Backend: funkcje `generateRoomCode()`, `generateWorkCenterCode()`, `generateWorkStationCode()` w `server.js`
@@ -96,16 +108,19 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
   - [x] Integracja: automatyczne zamówienie → zlecenia produkcyjne (`ProductionWorkOrder` + `ProductionOrder` + `ProductionOperation`) na podstawie ścieżek produkcji (`createProductionOrdersForOrder`) ✅ 2025-12-08
   - [x] System numeracji zleceń pokojowych `ZP-YYYY-NNNN` (np. `ZP-2025-0001`) dla `ProductionWorkOrder.workOrderNumber` ✅ 2025-12-08
 
-- [ ] **Faza 2: Panel operatora (MVP)**
+- [x] **Faza 2: Panel operatora (MVP)** ✅ 2025-12-10
   - [x] Widok panelu produkcji: lista zleceń, filtry, widoki kompaktowe/szczegółowe, podgląd produktów (modal ze zdjęciem z galerii) – `production.html`, `scripts/production.js`
   - [x] Endpoint `/api/production/orders/active` – zwraca aktywne zlecenia produkcyjne zgrupowane w ramach work orders
   - [x] Endpoint `/api/production/work-orders/:id/print` – generowanie PDF zlecenia produkcyjnego (work order)
-  - [ ] Endpointy akcji operatora dla operacji produkcyjnych: **start / pause / complete / cancel**
-  - [ ] Logika `ProductionLog`: zapisywanie historii akcji operatorów (czasy startu/pauzy/zakończenia, użytkownik)
-  - [ ] Trwałe śledzenie czasu trwania operacji po stronie serwera (sumaryczny czas, liczba przerw)
-  - [ ] Automatyczne przejścia statusów `ProductionWorkOrder` na podstawie statusów powiązanych operacji (np. wszystkie zakończone ⇒ work order = `DONE`)
-  - [ ] Endpoint statystyk operatora / sali produkcyjnej (`/api/production/operator/stats`) – podstawowe KPI do panelu
-  - [ ] Weryfikacja i dopięcie reguł uprawnień dla produkcji (role: `PRODUCTION`, `OPERATOR`, `ADMIN`)
+  - [x] Endpointy akcji operatora dla operacji produkcyjnych: **start / pause / complete / cancel / problem** ✅ 2025-12-09
+  - [x] Logika `ProductionLog`: zapisywanie historii akcji operatorów (czasy startu/pauzy/zakończenia, użytkownik) ✅ 2025-12-09
+  - [x] Trwałe śledzenie czasu trwania operacji po stronie serwera (sumaryczny czas `actualtime` w minutach) ✅ 2025-12-09
+  - [x] Automatyczne przejścia statusów `ProductionWorkOrder` na podstawie statusów powiązanych operacji (`updateWorkOrderStatusFromOperations`) ✅ 2025-12-09
+  - [x] Endpoint statystyk operatora / sali produkcyjnej (`/api/production/operator/stats`) – podstawowe KPI do panelu ✅ 2025-12-09
+  - [x] **Endpoint dashboardu KPI** (`/api/production/kpi/overview`) – zagregowane KPI produkcyjne ✅ 2025-12-10
+  - [x] **Dashboard KPI w UI** (`production.html`) – kafle, tabele pokojów i top produktów ✅ 2025-12-10
+  - [x] Weryfikacja i dopięcie reguł uprawnień dla produkcji (role: `PRODUCTION`, `OPERATOR`, `ADMIN`, `PRODUCTION_MANAGER`) ✅ 2025-12-09
+  - [x] Testy jednostkowe: `backend/production.test.js`, `backend/kpi.test.js` ✅ 2025-12-10
   - [ ] (po MVP) WebSocket / real‑time updates dla listy zleceń i statystyk
   - [ ] Podstawowy routing w panelu admina
 
@@ -130,6 +145,10 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
   - [x] **Widok zleceń pokojowych + podgląd grafik prosto z OrderItem.projectViewUrl** (dekodowanie nazw, poprawione proporcje modala) ✅ 2025-12-09
   - [ ] **Przyciski druku** dla swoich zleceń (ponowny druk)
   - [x] **System przypisań produktów do maszyn** (tabela `MachineProductAssignment`, RLS po `roomManagerUserId`, Kanban w panelu admina + link „Przypisania” w panelu produkcji) ✅ 2025-12-09
+  - [x] **Data wymagana w zamówieniu (`Order.deliveryDate`)** – pole „na kiedy potrzebne" w formularzu zamówień (handlowiec), z walidacją daty w przyszłości ✅ 2025-12-10
+  - [x] **Przekazanie `deliveryDate` do modułu produkcji** – rozszerzenie `/api/orders` i `/api/production/orders/active` o datę wymaganą ✅ 2025-12-10
+  - [x] **Auto-priorytet zamówień** na podstawie daty wymagalności i szacowanego czasu produkcji (`timeStatus`, `priority`) – zgodnie z `docs/SPEC_PRODUCTION_PANEL.md` §6.6 ✅ 2025-12-10
+  - [x] **Wizualizacja czasu do terminu** w panelu operatora (pozostały czas / przeterminowane, kolorystyka kart) ✅ 2025-12-10
 
 - [ ] **Faza 4: Podział zleceń w sprzedaży**
   - [ ] **Ekran podziału zamówienia na pokoje**:
@@ -214,6 +233,21 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 - Optymalizacje wydajności
 - Eksport/import danych
 
+#### Usprawnienia UX formularza zamówień (podstawowe, SPEC §6.10)
+
+- [ ] Pasek kroków / wskaźnik postępu w formularzu ("1. Produkt", "2. Szczegóły", "3. Klient", "4. Dostawa")
+- [ ] Usprawnione wybieranie produktów: ulubione, ostatnio zamawiane, filtry kategorii
+- [ ] Smart defaults dla terminu "Na kiedy potrzebne" na bazie presetów `OrderDeliveryPreset`
+- [ ] Walidacja formularza i blokada przycisku "Wyślij zamówienie" przy brakujących danych (klient, produkty, data)
+- [ ] Dalsza optymalizacja mobile: pasek akcji na dole, większe przyciski, lepszy układ sekcji klient + dostawa
+
+#### Rozszerzenia UX formularza zamówień (kandydaci do v1.x)
+
+- [ ] "Powtórz zamówienie" + szybka modyfikacja (frontend + opcjonalny endpoint pomocniczy)
+- [ ] Tryb "Szybkie zamówienie" (Quick Order) dla doświadczonych handlowców
+- [ ] Checklisty sprzedażowe (guided selling) dla wybranych kategorii produktów
+- [ ] Widok "Ryzyko dostawy" powiązany z obciążeniem produkcji (capacity check)
+
 ### v2.0.0 (Planowane) – Q2 2026
 - **Panel Produkcyjny** – kompletny system zarządzania produkcją
   - Kafelkowy interfejs operatora (wzorzec Prodio)
@@ -250,5 +284,5 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
 ---
 
-**Wersja dokumentu:** 3.3  
-**Data aktualizacji:** 2025-12-09
+**Wersja dokumentu:** 3.4  
+**Data aktualizacji:** 2025-12-10

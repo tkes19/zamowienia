@@ -239,8 +239,9 @@ header {
 .panel__header--customer {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .order-customer {
@@ -275,6 +276,39 @@ header {
   min-width: 220px;
 }
 
+/* Proporcje dla sekcji klienta i daty w nagłówku panelu */
+.panel__header--customer .order-customer__actions {
+  flex: 2 1 0;
+  min-width: 320px;
+}
+
+.panel__header--customer .order-delivery--inline {
+  flex: 1 1 0;
+  min-width: 300px;
+}
+
+/* W nagłówku: ogranicz szerokość pól Szukaj / Wybierz klienta,
+   żeby nie zjadały miejsca na blok daty po prawej */
+.panel__header--customer .order-customer__actions .field {
+  flex: 1 1 260px;
+  max-width: 360px;
+}
+
+.order-customer__select-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.order-customer__select-row select {
+  flex: 1 1 auto;
+}
+
+.order-customer__add-btn {
+  flex-shrink: 0;
+  padding-inline: 0.6rem;
+}
+
 .btn--sm {
   padding: 0.25rem 0.75rem;
   font-size: 0.85rem;
@@ -289,6 +323,29 @@ header {
 .field__input--sm {
   padding: 0.35rem 0.6rem;
   font-size: 0.85rem;
+}
+
+.order-delivery__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: none;
+  width: auto;
+  flex-wrap: wrap;
+}
+
+.order-delivery__row #order-delivery-date {
+  flex: 1 1 auto;
+}
+
+.order-delivery__submit-inline {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Przy polu daty przycisk nie powinien się rozciągać na całą szerokość */
+.order-delivery__submit-inline.btn {
+  width: auto;
 }
 
 /* Panel boczny wyboru klienta */
@@ -1095,6 +1152,12 @@ select:focus {
   color: var(--color-primary);
 }
 
+/* Nie pokazuj pustego komunikatu statusu koszyka w panelu klienta */
+#cart-status:empty {
+  display: none;
+  padding: 0;
+}
+
 .status--error {
   background: rgba(185, 28, 28, 0.12);
   color: var(--color-danger);
@@ -1420,6 +1483,11 @@ main.layout {
   .btn {
     width: 100%;
     justify-content: center;
+  }
+
+  /* wyjątek: przycisk wysyłki obok daty ma pozostać wąski */
+  .order-delivery__submit-inline.btn {
+    width: auto;
   }
 
   .table-wrapper {

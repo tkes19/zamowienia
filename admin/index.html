@@ -60,7 +60,7 @@
 <body class="bg-gray-100 text-gray-800 font-sans">
     <div class="flex h-screen overflow-hidden">
         <!-- Sidebar -->
-        <aside class="w-64 bg-white shadow-md flex flex-col">
+        <aside class="w-64 bg-white shadow-md flex flex-col overflow-y-auto">
             <div class="p-6 border-b">
                 <h1 class="text-2xl font-bold text-gray-800">Rezon Admin</h1>
                 <p class="text-sm text-gray-500">Panel zarządzania</p>
@@ -102,6 +102,11 @@
                     <i class="fas fa-building w-5"></i>
                     <span>Działy</span>
                 </a>
+
+                <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-colors" data-view="delivery-presets">
+                    <i class="fas fa-calendar-alt w-5"></i>
+                    <span>Presety terminów</span>
+                </a>
                 
                 <!-- Sekcja Produkcja -->
                 <div class="mt-4 pt-4 border-t border-gray-200">
@@ -109,6 +114,14 @@
                     <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-rooms">
                         <i class="fas fa-door-open w-5"></i>
                         <span>Pokoje</span>
+                    </a>
+                    <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-work-center-types">
+                        <i class="fas fa-tags w-5"></i>
+                        <span>Typy gniazd</span>
+                    </a>
+                    <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-operation-types">
+                        <i class="fas fa-tasks w-5"></i>
+                        <span>Typy operacji</span>
                     </a>
                     <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-work-centers">
                         <i class="fas fa-cogs w-5"></i>
@@ -150,56 +163,56 @@
         </aside>
 
         <!-- Main Content -->
-        <main class="flex-1 overflow-auto p-8">
+        <main class="flex-1 overflow-auto p-4">
             <!-- Widok: Produkty i Magazyn -->
             <div id="view-products" class="view-container">
             <!-- Header -->
-            <header class="flex justify-between items-center mb-8">
+            <header class="flex justify-between items-center mb-4">
                 <div>
-                    <h2 class="text-3xl font-bold text-gray-800">Produkty i Magazyn</h2>
-                    <p class="text-gray-600 mt-1">Zarządzanie stanami magazynowymi produktów</p>
+                    <h2 class="text-2xl font-bold text-gray-800">Produkty i Magazyn</h2>
+                    <p class="text-gray-600 mt-0.5 text-sm">Zarządzanie stanami magazynowymi produktów</p>
                 </div>
-                <div class="flex gap-3">
-                    <button id="new-product-btn" class="px-3 py-1.5 bg-green-600 text-white rounded-full hover:bg-green-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
+                <div class="flex gap-2">
+                    <button id="new-product-btn" class="px-2.5 py-1.5 bg-green-600 text-white rounded-full hover:bg-green-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
                         <i class="fas fa-plus"></i> Nowy produkt
                     </button>
-                    <button id="refresh-btn" class="px-3 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
+                    <button id="refresh-btn" class="px-2.5 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
                         <i class="fas fa-sync-alt"></i> Odśwież
                     </button>
-                    <button id="sync-btn" class="px-3 py-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
+                    <button id="sync-btn" class="px-2.5 py-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
                         <i class="fas fa-cloud-download-alt"></i> Pobierz z API
                     </button>
                 </div>
             </header>
 
             <!-- Stats Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Wszystkie produkty</div>
-                    <div class="text-3xl font-bold text-gray-800" id="stats-total">0</div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-xs font-medium uppercase tracking-wider mb-1">Wszystkie produkty</div>
+                    <div class="text-2xl font-bold text-gray-800" id="stats-total">0</div>
                 </div>
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Niski stan</div>
-                    <div class="text-3xl font-bold text-amber-600" id="stats-low">0</div>
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-xs font-medium uppercase tracking-wider mb-1">Niski stan</div>
+                    <div class="text-2xl font-bold text-amber-600" id="stats-low">0</div>
                 </div>
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Brak w magazynie</div>
-                    <div class="text-3xl font-bold text-red-600" id="stats-out">0</div>
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-xs font-medium uppercase tracking-wider mb-1">Brak w magazynie</div>
+                    <div class="text-2xl font-bold text-red-600" id="stats-out">0</div>
                 </div>
-                <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                    <div class="text-gray-500 text-sm font-medium uppercase tracking-wider mb-1">Wartość magazynu</div>
-                    <div class="text-3xl font-bold text-green-600" id="stats-value">-</div>
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                    <div class="text-gray-500 text-xs font-medium uppercase tracking-wider mb-1">Wartość magazynu</div>
+                    <div class="text-2xl font-bold text-green-600" id="stats-value">-</div>
                 </div>
             </div>
 
             <!-- Search & Filters -->
-            <div class="bg-white p-4 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-center shadow-sm">
+            <div class="bg-white p-3 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-3 justify-between items-center shadow-sm">
                 <div class="relative w-full sm:w-96">
                     <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                    <input type="text" id="search-input" placeholder="Szukaj po nazwie, indeksie lub ID..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    <input type="text" id="search-input" placeholder="Szukaj po nazwie, indeksie lub ID..." class="w-full pl-10 pr-4 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                 </div>
                 <div class="flex gap-2">
-                    <select id="category-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                    <select id="category-filter" class="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                         <option value="">Wszystkie kategorie</option>
                         <!-- Kategorie będą dynamiczne -->
                     </select>
@@ -212,20 +225,20 @@
                     <table class="w-full text-left border-collapse">
                         <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
                             <tr>
-                                <th class="p-4 w-16">Img</th>
-                                <th class="p-4">Identyfikator / Indeks</th>
-                                <th class="p-4">Kategoria</th>
-                                <th class="p-4 text-right">Cena</th>
-                                <th class="p-4 text-center">Stan</th>
-                                <th class="p-4 text-center">Rezerwacje</th>
-                                <th class="p-4 text-center">Dostępne</th>
-                                <th class="p-4 text-center">Status</th>
-                                <th class="p-4 text-right">Akcje</th>
+                                <th class="p-2 w-16">Img</th>
+                                <th class="p-2">Identyfikator / Indeks</th>
+                                <th class="p-2">Kategoria</th>
+                                <th class="p-2 text-right">Cena</th>
+                                <th class="p-2 text-center">Stan</th>
+                                <th class="p-2 text-center">Rezerwacje</th>
+                                <th class="p-2 text-center">Dostępne</th>
+                                <th class="p-2 text-center">Status</th>
+                                <th class="p-2 text-right">Akcje</th>
                             </tr>
                         </thead>
                         <tbody id="products-table-body" class="divide-y divide-gray-100 text-sm">
                             <tr>
-                                <td colspan="9" class="p-8 text-center text-gray-500">
+                                <td colspan="9" class="p-4 text-center text-gray-500">
                                     <div class="flex flex-col items-center gap-2">
                                         <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
                                         <span>Ładowanie danych...</span>
@@ -235,7 +248,7 @@
                         </tbody>
                     </table>
                 </div>
-                <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                <div class="p-3 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
                     <div class="text-sm text-gray-500" id="table-info">Pokazuje 0 z 0 produktów</div>
                     <div class="flex gap-2">
                         <button class="px-3 py-1 border border-gray-300 rounded bg-white text-gray-600 disabled:opacity-50" disabled>Poprzednia</button>
@@ -248,32 +261,32 @@
 
             <!-- Widok: Zamówienia -->
             <div id="view-orders" class="view-container hidden">
-                <header class="flex justify-between items-center mb-8">
+                <header class="flex justify-between items-center mb-4">
                     <div>
-                        <h2 class="text-3xl font-bold text-gray-800">Zamówienia</h2>
-                        <p class="text-gray-600 mt-1">Przegląd i zarządzanie zamówieniami</p>
+                        <h2 class="text-2xl font-bold text-gray-800">Zamówienia</h2>
+                        <p class="text-gray-600 mt-0.5 text-sm">Przegląd i zarządzanie zamówieniami</p>
                     </div>
-                    <div class="flex gap-3">
-                        <button id="bulk-delete-orders-btn" class="px-3 py-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 flex items-center gap-2 text-sm shadow-sm transition-colors hidden">
+                    <div class="flex gap-2">
+                        <button id="bulk-delete-orders-btn" class="px-2.5 py-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 flex items-center gap-2 text-sm shadow-sm transition-colors hidden">
                             <i class="fas fa-trash-alt"></i> Usuń zaznaczone (<span id="bulk-delete-count">0</span>)
                         </button>
-                        <button id="export-orders-csv-btn" class="px-3 py-1.5 bg-green-600 text-white rounded-full hover:bg-green-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
+                        <button id="export-orders-csv-btn" class="px-2.5 py-1.5 bg-green-600 text-white rounded-full hover:bg-green-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
                             <i class="fas fa-file-csv"></i> Eksport CSV
                         </button>
-                        <button id="refresh-orders-btn" class="px-3 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
+                        <button id="refresh-orders-btn" class="px-2.5 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
                             <i class="fas fa-sync-alt"></i> Odśwież
                         </button>
                     </div>
                 </header>
 
                 <!-- Filtry -->
-                <div class="bg-white p-4 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-center shadow-sm">
+                <div class="bg-white p-3 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-3 justify-between items-center shadow-sm">
                     <div class="relative w-full sm:w-96">
                         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                        <input type="text" id="orders-search-input" placeholder="Szukaj po numerze, kliencie..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <input type="text" id="orders-search-input" placeholder="Szukaj po numerze, kliencie..." class="w-full pl-10 pr-4 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     </div>
                     <div class="flex gap-2 items-center">
-                        <select id="orders-status-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                        <select id="orders-status-filter" class="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszystkie statusy</option>
                             <option value="PENDING">Oczekujące</option>
                             <option value="APPROVED">Zatwierdzone</option>
@@ -400,32 +413,32 @@
 
             <!-- Widok: Użytkownicy -->
             <div id="view-users" class="view-container hidden">
-                <header class="flex justify-between items-center mb-8">
+                <header class="flex justify-between items-center mb-4">
                     <div>
-                        <h2 class="text-3xl font-bold text-gray-800">Zarządzanie użytkownikami</h2>
-                        <p class="text-gray-600 mt-1">Przypisuj role i zarządzaj uprawnieniami użytkowników</p>
+                        <h2 class="text-2xl font-bold text-gray-800">Zarządzanie użytkownikami</h2>
+                        <p class="text-gray-600 mt-0.5 text-sm">Przypisuj role i zarządzaj uprawnieniami użytkowników</p>
                     </div>
-                    <div class="flex gap-3">
-                        <button id="new-user-btn" class="px-3 py-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
+                    <div class="flex gap-2">
+                        <button id="new-user-btn" class="px-2.5 py-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
                             <i class="fas fa-user-plus"></i> Dodaj użytkownika
                         </button>
-                        <button id="refresh-users-btn" class="px-3 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
+                        <button id="refresh-users-btn" class="px-2.5 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
                             <i class="fas fa-sync-alt"></i> Odśwież
                         </button>
                     </div>
                 </header>
 
                 <!-- Filtry -->
-                <div class="bg-white p-4 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-center shadow-sm">
+                <div class="bg-white p-3 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-3 justify-between items-center shadow-sm">
                     <div class="relative w-full sm:w-96">
                         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                        <input type="text" id="users-search-input" placeholder="Szukaj po nazwie lub emailu..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <input type="text" id="users-search-input" placeholder="Szukaj po nazwie lub emailu..." class="w-full pl-10 pr-4 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     </div>
                     <div class="flex gap-2">
-                        <select id="users-role-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                        <select id="users-role-filter" class="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszystkie role</option>
                         </select>
-                        <select id="users-department-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                        <select id="users-department-filter" class="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszystkie działy</option>
                         </select>
                     </div>
@@ -437,18 +450,18 @@
                         <table class="w-full text-left border-collapse">
                             <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
                                 <tr>
-                                    <th class="p-4">Imię i nazwisko</th>
-                                    <th class="p-4">Email</th>
-                                    <th class="p-4">Rola</th>
-                                    <th class="p-4">Dział</th>
-                                    <th class="p-4 text-center">Status</th>
-                                    <th class="p-4 text-center">Data utworzenia</th>
-                                    <th class="p-4 text-right">Akcje</th>
+                                    <th class="p-2">Imię i nazwisko</th>
+                                    <th class="p-2">Email</th>
+                                    <th class="p-2">Rola</th>
+                                    <th class="p-2">Dział</th>
+                                    <th class="p-2 text-center">Status</th>
+                                    <th class="p-2 text-center">Data utworzenia</th>
+                                    <th class="p-2 text-right">Akcje</th>
                                 </tr>
                             </thead>
                             <tbody id="users-table-body" class="divide-y divide-gray-100 text-sm">
                                 <tr>
-                                    <td colspan="7" class="p-8 text-center text-gray-500">
+                                    <td colspan="7" class="p-4 text-center text-gray-500">
                                         <div class="flex flex-col items-center gap-2">
                                             <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
                                             <span>Ładowanie danych...</span>
@@ -458,50 +471,50 @@
                             </tbody>
                         </table>
                     </div>
-                    <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                    <div class="p-3 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
                         <div class="text-sm text-gray-500" id="users-table-info">Pokazuje 0 z 0 użytkowników</div>
                     </div>
                 </div>
 
                 <!-- Informacje o rolach -->
-                <div class="mt-8 bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Informacje o rolach</h3>
-                    <p class="text-sm text-gray-600 mb-4">Opis uprawnień dla każdej roli w systemie:</p>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div class="border border-gray-200 rounded-lg p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <i class="fas fa-user-shield text-red-600"></i>
-                                <h4 class="font-semibold text-gray-800">Administrator</h4>
+                <div class="mt-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                    <h3 class="text-base font-semibold text-gray-800 mb-3">Informacje o rolach</h3>
+                    <p class="text-xs text-gray-600 mb-3">Opis uprawnień dla każdej roli w systemie:</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        <div class="border border-gray-200 rounded-lg p-3">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="fas fa-user-shield text-red-600 text-sm"></i>
+                                <h4 class="font-semibold text-gray-800 text-sm">Administrator</h4>
                             </div>
-                            <p class="text-sm text-gray-600">Pełny dostęp do wszystkich funkcji systemu, zarządzanie użytkownikami i produktami.</p>
+                            <p class="text-xs text-gray-600">Pełny dostęp do wszystkich funkcji systemu, zarządzanie użytkownikami i produktami.</p>
                         </div>
-                        <div class="border border-gray-200 rounded-lg p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <i class="fas fa-user-tie text-blue-600"></i>
-                                <h4 class="font-semibold text-gray-800">Handlowiec</h4>
+                        <div class="border border-gray-200 rounded-lg p-3">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="fas fa-user-tie text-blue-600 text-sm"></i>
+                                <h4 class="font-semibold text-gray-800 text-sm">Handlowiec</h4>
                             </div>
-                            <p class="text-sm text-gray-600">Składanie zamówień, zarządzanie swoimi klientami, przeglądanie katalog produktów.</p>
+                            <p class="text-xs text-gray-600">Składanie zamówień, zarządzanie swoimi klientami, przeglądanie katalog produktów.</p>
                         </div>
-                        <div class="border border-gray-200 rounded-lg p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <i class="fas fa-warehouse text-amber-600"></i>
-                                <h4 class="font-semibold text-gray-800">Magazyn</h4>
+                        <div class="border border-gray-200 rounded-lg p-3">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="fas fa-warehouse text-amber-600 text-sm"></i>
+                                <h4 class="font-semibold text-gray-800 text-sm">Magazyn</h4>
                             </div>
-                            <p class="text-sm text-gray-600">Zarządzanie stanami magazynowymi, aktualizacja statusów zamówień.</p>
+                            <p class="text-xs text-gray-600">Zarządzanie stanami magazynowymi, aktualizacja statusów zamówień.</p>
                         </div>
-                        <div class="border border-gray-200 rounded-lg p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <i class="fas fa-users text-green-600"></i>
-                                <h4 class="font-semibold text-gray-800">Dział Sprzedaży</h4>
+                        <div class="border border-gray-200 rounded-lg p-3">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="fas fa-users text-green-600 text-sm"></i>
+                                <h4 class="font-semibold text-gray-800 text-sm">Dział Sprzedaży</h4>
                             </div>
-                            <p class="text-sm text-gray-600">Nadzór nad procesem sprzedaży, dostęp do wszystkich zamówień i klientów.</p>
+                            <p class="text-xs text-gray-600">Nadzór nad procesem sprzedaży, dostęp do wszystkich zamówień i klientów.</p>
                         </div>
-                        <div class="border border-gray-200 rounded-lg p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <i class="fas fa-industry text-purple-600"></i>
-                                <h4 class="font-semibold text-gray-800">Produkcja</h4>
+                        <div class="border border-gray-200 rounded-lg p-3">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="fas fa-industry text-purple-600 text-sm"></i>
+                                <h4 class="font-semibold text-gray-800 text-sm">Produkcja</h4>
                             </div>
-                            <p class="text-sm text-gray-600">Dostęp do zleceń produkcyjnych, zarządzanie procesem produkcji.</p>
+                            <p class="text-xs text-gray-600">Dostęp do zleceń produkcyjnych, zarządzanie procesem produkcji.</p>
                         </div>
                         <div class="border border-gray-200 rounded-lg p-4">
                             <div class="flex items-center gap-2 mb-2">
@@ -517,6 +530,13 @@
                             </div>
                             <p class="text-sm text-gray-600">Ograniczony dostęp, wymaga aktywacji przez administratora.</p>
                         </div>
+                        <div class="border border-gray-200 rounded-lg p-3">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="fas fa-user text-gray-600 text-sm"></i>
+                                <h4 class="font-semibold text-gray-800 text-sm">Klient</h4>
+                            </div>
+                            <p class="text-xs text-gray-600">Przeglądanie swoich zamówień, składanie nowych zamówień.</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -524,69 +544,69 @@
 
             <!-- Widok: Foldery KI -->
             <div id="view-folder-access" class="view-container hidden">
-                <header class="flex justify-between items-center mb-8">
+                <header class="flex justify-between items-center mb-4">
                     <div>
-                        <h2 class="text-3xl font-bold text-gray-800">Przypisania folderów KI</h2>
-                        <p class="text-gray-600 mt-1">Zarządzaj dostępem handlowców do folderów klientów indywidualnych</p>
+                        <h2 class="text-2xl font-bold text-gray-800">Przypisania folderów KI</h2>
+                        <p class="text-gray-600 mt-0.5 text-sm">Zarządzaj dostępem handlowców do folderów klientów indywidualnych</p>
                     </div>
-                    <div class="flex gap-3">
-                        <button id="new-folder-access-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-sm transition-colors">
+                    <div class="flex gap-2">
+                        <button id="new-folder-access-btn" class="px-2.5 py-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
                             <i class="fas fa-plus"></i> Dodaj przypisanie
                         </button>
-                        <button id="refresh-folder-access-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                        <button id="refresh-folder-access-btn" class="px-2.5 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
                             <i class="fas fa-sync-alt"></i> Odśwież
                         </button>
                     </div>
                 </header>
 
                 <!-- Statystyki -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                         <div class="flex items-center gap-3">
                             <div class="p-2 bg-green-100 rounded-lg">
-                                <i class="fas fa-check-circle text-green-600"></i>
+                                <i class="fas fa-check-circle text-green-600 text-sm"></i>
                             </div>
                             <div>
-                                <div class="text-gray-500 text-sm font-medium">Aktywne przypisania</div>
-                                <div class="text-2xl font-bold text-green-600" id="folder-stats-active">0</div>
+                                <div class="text-gray-500 text-xs font-medium">Aktywne przypisania</div>
+                                <div class="text-xl font-bold text-green-600" id="folder-stats-active">0</div>
                             </div>
                         </div>
                     </div>
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                         <div class="flex items-center gap-3">
                             <div class="p-2 bg-blue-100 rounded-lg">
-                                <i class="fas fa-users text-blue-600"></i>
+                                <i class="fas fa-users text-blue-600 text-sm"></i>
                             </div>
                             <div>
-                                <div class="text-gray-500 text-sm font-medium">Użytkowników z dostępem</div>
-                                <div class="text-2xl font-bold text-blue-600" id="folder-stats-users">0</div>
+                                <div class="text-gray-500 text-xs font-medium">Użytkowników z dostępem</div>
+                                <div class="text-xl font-bold text-blue-600" id="folder-stats-users">0</div>
                             </div>
                         </div>
                     </div>
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                         <div class="flex items-center gap-3">
                             <div class="p-2 bg-purple-100 rounded-lg">
-                                <i class="fas fa-folder text-purple-600"></i>
+                                <i class="fas fa-folder text-purple-600 text-sm"></i>
                             </div>
                             <div>
-                                <div class="text-gray-500 text-sm font-medium">Unikalnych folderów</div>
-                                <div class="text-2xl font-bold text-purple-600" id="folder-stats-folders">0</div>
+                                <div class="text-gray-500 text-xs font-medium">Unikalnych folderów</div>
+                                <div class="text-xl font-bold text-purple-600" id="folder-stats-folders">0</div>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Filtry -->
-                <div class="bg-white p-4 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-center shadow-sm">
+                <div class="bg-white p-3 rounded-t-xl border-b border-gray-200 flex flex-col sm:flex-row gap-3 justify-between items-center shadow-sm">
                     <div class="relative w-full sm:w-96">
                         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                        <input type="text" id="folder-access-search" placeholder="Szukaj po użytkowniku lub folderze..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <input type="text" id="folder-access-search" placeholder="Szukaj po użytkowniku lub folderze..." class="w-full pl-10 pr-4 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                     </div>
                     <div class="flex gap-2">
-                        <select id="folder-access-user-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                        <select id="folder-access-user-filter" class="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszyscy użytkownicy</option>
                         </select>
-                        <select id="folder-access-status-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                        <select id="folder-access-status-filter" class="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
                             <option value="">Wszystkie statusy</option>
                             <option value="active">Aktywne</option>
                             <option value="inactive">Nieaktywne</option>
@@ -600,18 +620,18 @@
                         <table class="w-full text-left border-collapse">
                             <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
                                 <tr>
-                                    <th class="p-4">Użytkownik</th>
-                                    <th class="p-4">Folder KI</th>
-                                    <th class="p-4 text-center">Status</th>
-                                    <th class="p-4">Przypisał</th>
-                                    <th class="p-4">Data</th>
-                                    <th class="p-4">Notatki</th>
-                                    <th class="p-4 text-right">Akcje</th>
+                                    <th class="p-2">Użytkownik</th>
+                                    <th class="p-2">Folder KI</th>
+                                    <th class="p-2 text-center">Status</th>
+                                    <th class="p-2">Przypisał</th>
+                                    <th class="p-2">Data</th>
+                                    <th class="p-2">Notatki</th>
+                                    <th class="p-2 text-right">Akcje</th>
                                 </tr>
                             </thead>
                             <tbody id="folder-access-table-body" class="divide-y divide-gray-100 text-sm">
                                 <tr>
-                                    <td colspan="7" class="p-8 text-center text-gray-500">
+                                    <td colspan="7" class="p-4 text-center text-gray-500">
                                         <div class="flex flex-col items-center gap-2">
                                             <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
                                             <span>Ładowanie danych...</span>
@@ -621,17 +641,17 @@
                             </tbody>
                         </table>
                     </div>
-                    <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                    <div class="p-3 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
                         <div class="text-sm text-gray-500" id="folder-access-table-info">Pokazuje 0 przypisań</div>
                     </div>
                 </div>
 
                 <!-- Informacje -->
-                <div class="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-6">
-                    <h3 class="text-lg font-semibold text-blue-800 mb-2 flex items-center gap-2">
-                        <i class="fas fa-info-circle"></i> Jak działają przypisania folderów?
+                <div class="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <h3 class="text-sm font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                        <i class="fas fa-info-circle text-sm"></i> Jak działają przypisania folderów?
                     </h3>
-                    <ul class="text-sm text-blue-700 space-y-1 list-disc list-inside">
+                    <ul class="text-xs text-blue-700 space-y-1 list-disc list-inside">
                         <li>Handlowiec widzi w trybie KI tylko foldery, do których ma aktywne przypisanie</li>
                         <li>Administrator i Dział Sprzedaży widzą wszystkie foldery z QNAP</li>
                         <li>Dezaktywowane przypisanie można reaktywować bez utraty danych</li>
@@ -919,6 +939,193 @@
                 </div>
             </div>
             <!-- Koniec widoku: Mapowanie produktów -->
+            
+            <!-- Widok: Presety terminów dostawy -->
+            <div id="view-delivery-presets" class="view-container hidden">
+                <header class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Presety terminów dostawy</h2>
+                        <p class="text-gray-600 mt-0.5 text-sm">Konfigurowalne przyciski daty w formularzu zamówień (SLA produkcyjne)</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="new-delivery-preset-btn" class="px-2.5 py-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj preset
+                        </button>
+                        <button id="refresh-delivery-presets-btn" class="px-2.5 py-1.5 bg-white border border-gray-300 rounded-full text-gray-700 hover:bg-gray-50 flex items-center gap-2 text-sm shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Statystyki -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-blue-100 rounded-lg">
+                                <i class="fas fa-list text-blue-600 text-sm"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-xs font-medium">Wszystkie presety</div>
+                                <div class="text-xl font-bold text-blue-600" id="delivery-presets-total">0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-green-100 rounded-lg">
+                                <i class="fas fa-toggle-on text-green-600 text-sm"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-xs font-medium">Aktywne</div>
+                                <div class="text-xl font-bold text-green-600" id="delivery-presets-active">0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-amber-100 rounded-lg">
+                                <i class="fas fa-star text-amber-500 text-sm"></i>
+                            </div>
+                            <div>
+                                <div class="text-gray-500 text-xs font-medium">Domyślny preset</div>
+                                <div class="text-xs font-semibold text-amber-700" id="delivery-presets-default-label">Brak</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabela presetów -->
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
+                                <tr>
+                                    <th class="p-2">Nazwa</th>
+                                    <th class="p-2">Tryb</th>
+                                    <th class="p-2">Wartość</th>
+                                    <th class="p-2 text-center">Domyślny</th>
+                                    <th class="p-2 text-center">Aktywny</th>
+                                    <th class="p-2 text-center">Kolejność</th>
+                                    <th class="p-2 text-right">Akcje</th>
+                                </tr>
+                            </thead>
+                            <tbody id="delivery-presets-tbody" class="divide-y divide-gray-100 text-sm">
+                                <tr>
+                                    <td colspan="7" class="p-4 text-center text-gray-500">
+                                        <div class="flex flex-col items-center gap-2">
+                                            <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                                            <span>Ładowanie presetów terminów dostawy...</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Informacje -->
+                <div class="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <h3 class="text-sm font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                        <i class="fas fa-info-circle text-sm"></i> Jak działają presety terminów?
+                    </h3>
+                    <ul class="text-xs text-blue-700 space-y-1 list-disc list-inside">
+                        <li>Presety są używane jako przyciski pod polem daty "Na kiedy potrzebne" w formularzu zamówień.</li>
+                        <li>Tryb <strong>OFFSET</strong> ustawia datę na dzisiaj + X dni (np. Standard 5 dni).</li>
+                        <li>Tryb <strong>FIXED_DATE</strong> ustawia konkretną datę kalendarzową (np. "Na Sezon 1.04.2026").</li>
+                        <li>Możesz mieć wiele presetów, ale tylko jeden może być oznaczony jako domyślny.</li>
+                    </ul>
+                </div>
+            </div>
+            <!-- Koniec widoku: Presety terminów dostawy -->
+
+            <!-- Modal: Dodaj/Edytuj preset terminu dostawy -->
+            <div id="delivery-preset-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+                    <div class="bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-3">
+                        <div class="flex justify-between items-center">
+                            <h3 id="delivery-preset-modal-title" class="text-lg font-bold text-white flex items-center gap-2">
+                                <i class="fas fa-calendar-alt text-sm"></i> Nowy preset terminu
+                            </h3>
+                            <button id="delivery-preset-modal-close" class="text-white/80 hover:text-white transition-colors">
+                                <i class="fas fa-times text-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <form id="delivery-preset-form" class="p-4 space-y-4">
+                        <input type="hidden" name="id" value="">
+
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                Nazwa preset-u <span class="text-red-500">*</span>
+                            </label>
+                            <input type="text" name="label" required placeholder="np. Standard (5 dni), Na Sezon 1.04.2026" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">
+                                    Tryb <span class="text-red-500">*</span>
+                                </label>
+                                <select name="mode" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                                    <option value="OFFSET">OFFSET – dzisiaj + X dni</option>
+                                    <option value="FIXED_DATE">FIXED_DATE – konkretna data</option>
+                                </select>
+                                <p class="mt-1 text-xs text-gray-500">Wybierz czy preset liczy się jako +X dni czy do konkretnej daty.</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">
+                                    Kolejność
+                                </label>
+                                <input type="number" name="sortOrder" placeholder="np. 10" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                                <p class="mt-1 text-xs text-gray-500">Niższa wartość = wyżej na liście.</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">
+                                    Offset dni (tryb OFFSET)
+                                </label>
+                                <input type="number" name="offsetDays" placeholder="np. 5" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                                <p class="mt-1 text-xs text-gray-500">Używane gdy tryb = OFFSET. Wartość w dniach od dzisiaj.</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">
+                                    Stała data (tryb FIXED_DATE)
+                                </label>
+                                <input type="date" name="fixedDate" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                                <p class="mt-1 text-xs text-gray-500">Używane gdy tryb = FIXED_DATE, np. 2026-04-01.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-3">
+                            <label class="flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" name="isDefault" class="w-4 h-4 text-amber-500 border-gray-300 rounded focus:ring-amber-500">
+                                Domyślny preset dla formularza
+                            </label>
+                            <label class="flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" name="isActive" checked class="w-4 h-4 text-green-500 border-gray-300 rounded focus:ring-green-500">
+                                Preset aktywny (widoczny w formularzu)
+                            </label>
+                        </div>
+
+                        <div id="delivery-preset-form-error" class="hidden text-red-600 text-sm bg-red-50 p-2 rounded-lg">
+                            <i class="fas fa-exclamation-circle mr-2"></i>
+                            <span></span>
+                        </div>
+
+                        <div class="flex gap-2 pt-2">
+                            <button type="button" id="delivery-preset-form-cancel" class="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium">
+                                Anuluj
+                            </button>
+                            <button type="submit" class="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center gap-2">
+                                <i class="fas fa-save text-sm"></i>
+                                <span id="delivery-preset-submit-text">Utwórz preset</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
 
             <!-- Widok: Działy -->
             <div id="view-departments" class="view-container hidden">
@@ -1090,6 +1297,226 @@
             </div>
             <!-- Koniec widoku: Produkcja - Pokoje -->
 
+            <!-- Widok: Produkcja - Typy gniazd -->
+            <div id="view-production-work-center-types" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Typy gniazd produkcyjnych</h2>
+                        <p class="text-gray-600 mt-1">Słownik typów gniazd (Laser, Druk UV, CNC...)</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="new-work-center-type-btn" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj typ
+                        </button>
+                        <button id="refresh-work-center-types-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Tabela typów gniazd -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Kod</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Nazwa</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Opis</th>
+                                <th class="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Akcje</th>
+                            </tr>
+                        </thead>
+                        <tbody id="work-center-types-tbody" class="divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                                    <p class="text-lg">Ładowanie typów gniazd...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <!-- Koniec widoku: Produkcja - Typy gniazd -->
+
+            <!-- Widok: Produkcja - Typy operacji -->
+            <div id="view-production-operation-types" class="view-container hidden">
+                <header class="flex justify-between items-center mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Typy operacji</h2>
+                        <p class="text-gray-600 mt-1">Słownik typów operacji technologicznych (druk, laser, pakowanie...)</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="new-operation-type-btn" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center gap-2 shadow-sm transition-colors">
+                            <i class="fas fa-plus"></i> Dodaj typ
+                        </button>
+                        <button id="refresh-operation-types-btn" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2 shadow-sm">
+                            <i class="fas fa-sync-alt"></i> Odśwież
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Tabela typów operacji -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Kod</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Nazwa</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Opis</th>
+                                <th class="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Akcje</th>
+                            </tr>
+                        </thead>
+                        <tbody id="operation-types-tbody" class="divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                                    <p class="text-lg">Ładowanie typów operacji...</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <!-- Koniec widoku: Produkcja - Typy operacji -->
+
+            <!-- Modal: Dodaj/Edytuj Typ Gniazda -->
+            <div id="work-center-type-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+                    <div class="bg-gradient-to-r from-purple-500 to-purple-600 px-6 py-4">
+                        <div class="flex justify-between items-center">
+                            <h3 id="work-center-type-modal-title" class="text-xl font-bold text-white flex items-center gap-2">
+                                <i class="fas fa-tags"></i> Nowy typ gniazda
+                            </h3>
+                            <button id="work-center-type-modal-close" class="text-white/80 hover:text-white transition-colors">
+                                <i class="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <form id="work-center-type-form" class="p-6 space-y-5">
+                        <input type="hidden" name="id" value="">
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    Kod <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" name="code" required placeholder="np. laser_co2, uv_print..."
+                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all">
+                                <p class="mt-1 text-xs text-gray-500">Małe litery, bez spacji</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    Nazwa <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" name="name" required placeholder="np. Laser CO2, Druk UV..."
+                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all">
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                Opis
+                            </label>
+                            <textarea name="description" rows="2" placeholder="Opcjonalny opis typu gniazda..."
+                                class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all resize-none"></textarea>
+                        </div>
+                        
+                        <div class="flex items-center gap-3">
+                            <input type="checkbox" name="isActive" id="work-center-type-is-active" checked
+                                class="w-5 h-5 text-purple-600 border-gray-300 rounded focus:ring-purple-500">
+                            <label for="work-center-type-is-active" class="text-sm font-medium text-gray-700">
+                                Typ aktywny (dostępny do wyboru)
+                            </label>
+                        </div>
+                        
+                        <div id="work-center-type-form-error" class="hidden text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                            <i class="fas fa-exclamation-circle mr-2"></i>
+                            <span></span>
+                        </div>
+                        
+                        <div class="flex gap-3 pt-2">
+                            <button type="button" id="work-center-type-form-cancel" class="flex-1 px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors font-medium">
+                                Anuluj
+                            </button>
+                            <button type="submit" class="flex-1 px-4 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors font-medium flex items-center justify-center gap-2">
+                                <i class="fas fa-save"></i>
+                                <span id="work-center-type-submit-text">Utwórz typ</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Modal: Dodaj/Edytuj Typ Operacji -->
+            <div id="operation-type-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+                    <div class="bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-4">
+                        <div class="flex justify-between items-center">
+                            <h3 id="operation-type-modal-title" class="text-xl font-bold text-white flex items-center gap-2">
+                                <i class="fas fa-tasks"></i> Nowy typ operacji
+                            </h3>
+                            <button id="operation-type-modal-close" class="text-white/80 hover:text-white transition-colors">
+                                <i class="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <form id="operation-type-form" class="p-6 space-y-5">
+                        <input type="hidden" name="id" value="">
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    Kod <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" name="code" required placeholder="np. solvent, laser_co2..."
+                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all">
+                                <p class="mt-1 text-xs text-gray-500">Małe litery, bez spacji (używane w logice produkcji)</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    Nazwa <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" name="name" required placeholder="np. Druk UV, Grawerowanie..."
+                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                Opis
+                            </label>
+                            <textarea name="description" rows="2" placeholder="Opcjonalny opis typu operacji..."
+                                class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all resize-none"></textarea>
+                        </div>
+
+                        <div class="flex items-center gap-3">
+                            <input type="checkbox" name="isActive" id="operation-type-is-active" checked
+                                class="w-5 h-5 text-amber-600 border-gray-300 rounded focus:ring-amber-500">
+                            <label for="operation-type-is-active" class="text-sm font-medium text-gray-700">
+                                Typ aktywny (dostępny do wyboru w ścieżkach)
+                            </label>
+                        </div>
+
+                        <div id="operation-type-form-error" class="hidden text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                            <i class="fas fa-exclamation-circle mr-2"></i>
+                            <span></span>
+                        </div>
+
+                        <div class="flex gap-3 pt-2">
+                            <button type="button" id="operation-type-form-cancel" class="flex-1 px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors font-medium">
+                                Anuluj
+                            </button>
+                            <button type="submit" class="flex-1 px-4 py-3 bg-amber-600 text-white rounded-xl hover:bg-amber-700 transition-colors font-medium flex items-center justify-center gap-2">
+                                <i class="fas fa-save"></i>
+                                <span id="operation-type-submit-text">Utwórz typ</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
             <!-- Widok: Produkcja - Gniazda -->
             <div id="view-production-work-centers" class="view-container hidden">
                 <header class="flex justify-between items-center mb-8">
@@ -1198,12 +1625,12 @@
 
             <!-- Widok: Produkcja - Ścieżki -->
             <div id="view-production-paths" class="view-container hidden">
-                <header class="flex justify-between items-center mb-8">
+                <header class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
                     <div>
                         <h2 class="text-3xl font-bold text-gray-800">Ścieżki produkcyjne</h2>
                         <p class="text-gray-500 mt-1">Definiuj sekwencje operacji technologicznych</p>
                     </div>
-                    <div class="flex gap-3">
+                    <div class="flex flex-wrap gap-3">
                         <button id="new-production-path-btn" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center gap-2 shadow-sm transition-colors">
                             <i class="fas fa-plus"></i> Dodaj ścieżkę
                         </button>
@@ -1653,19 +2080,56 @@
                     <p class="mt-1 text-xs text-gray-500">Wypełnij tylko jeśli chcesz zmienić hasło użytkownika (min. 6 znaków).</p>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Rola *</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Rola główna *</label>
                     <select name="role" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <option value="">Wybierz rolę</option>
                         <option value="ADMIN">Administrator</option>
                         <option value="SALES_REP">Handlowiec</option>
                         <option value="WAREHOUSE">Magazyn</option>
                         <option value="SALES_DEPT">Dział Sprzedaży</option>
-                        <option value="PRODUCTION">Produkcja</option>
+                        <option value="PRODUCTION">Produkcja (Brygadzista)</option>
                         <option value="PRODUCTION_MANAGER">Produkcja (Manager)</option>
                         <option value="OPERATOR">Operator Produkcji</option>
-                        <option value="GRAPHICS">Graficy</option>
+                        <option value="GRAPHIC_DESIGNER">Grafik</option>
+                        <option value="GRAPHICS">Graficy (legacy)</option>
                         <option value="NEW_USER">Nowy Użytkownik</option>
                     </select>
+                    <p class="mt-1 text-xs text-gray-500">Rola główna określa domyślne uprawnienia po zalogowaniu.</p>
+                </div>
+                <!-- Sekcja wieloról (MES-compliant) -->
+                <div id="multi-roles-section" class="hidden border border-blue-200 rounded-lg p-3 bg-blue-50">
+                    <label class="block text-sm font-medium text-blue-800 mb-2">
+                        <i class="fas fa-user-tag mr-1"></i> Dodatkowe role (wielorole)
+                    </label>
+                    <div id="multi-roles-checkboxes" class="grid grid-cols-2 gap-2">
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="additionalRoles" value="OPERATOR" class="h-4 w-4 text-blue-600 rounded">
+                            <span>Operator</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="additionalRoles" value="GRAPHIC_DESIGNER" class="h-4 w-4 text-blue-600 rounded">
+                            <span>Grafik</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="additionalRoles" value="PRODUCTION" class="h-4 w-4 text-blue-600 rounded">
+                            <span>Produkcja</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="additionalRoles" value="PRODUCTION_MANAGER" class="h-4 w-4 text-blue-600 rounded">
+                            <span>Manager Prod.</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="additionalRoles" value="WAREHOUSE" class="h-4 w-4 text-blue-600 rounded">
+                            <span>Magazyn</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="additionalRoles" value="SALES_REP" class="h-4 w-4 text-blue-600 rounded">
+                            <span>Handlowiec</span>
+                        </label>
+                    </div>
+                    <p class="mt-2 text-xs text-blue-600">
+                        Użytkownik może przełączać się między rolami po zalogowaniu.
+                    </p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Dział</label>
@@ -1788,12 +2252,39 @@
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-2">
-                            Nadzorca
+                            Nadzorca (informacyjnie)
                         </label>
                         <select name="supervisorId" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all bg-white">
                             <option value="">Brak</option>
                         </select>
                     </div>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">
+                        <i class="fas fa-user-tie text-amber-600 mr-1"></i>
+                        Menedżer pokoju (MES)
+                    </label>
+                    <select name="roomManagerUserId" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all bg-white">
+                        <option value="">Brak (tylko ADMIN może zarządzać)</option>
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500">
+                        Menedżer może zarządzać przypisaniami produktów do maszyn w tym pokoju
+                    </p>
+                </div>
+                
+                <!-- Sekcja obsady pokoju (tylko w trybie edycji) -->
+                <div id="room-operators-section" class="hidden border-t pt-4 mt-4">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">
+                        <i class="fas fa-users text-amber-600 mr-1"></i>
+                        Operatorzy przypisani do pokoju
+                    </label>
+                    <div id="room-operators-list" class="bg-gray-50 rounded-xl p-3 max-h-32 overflow-y-auto">
+                        <p class="text-gray-500 text-sm italic">Brak przypisanych operatorów</p>
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500">
+                        Operatorów przypisujesz w formularzu użytkownika (pole "Pokój produkcyjny")
+                    </p>
                 </div>
                 
                 <div>
@@ -1852,16 +2343,9 @@
                         <label class="block text-sm font-semibold text-gray-700 mb-2">
                             Typ gniazda <span class="text-red-500">*</span>
                         </label>
-                        <select name="type" required class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white">
+                        <select name="workCenterTypeId" required class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white">
                             <option value="">Wybierz typ...</option>
-                            <option value="laser_co2">Laser CO2</option>
-                            <option value="laser_fiber">Laser Fiber</option>
-                            <option value="uv_print">Druk UV</option>
-                            <option value="cnc">CNC</option>
-                            <option value="cutting">Cięcie</option>
-                            <option value="assembly">Montaż</option>
-                            <option value="packaging">Pakowanie</option>
-                            <option value="other">Inne</option>
+                            <!-- Typy ładowane dynamicznie z API -->
                         </select>
                     </div>
                     <div>
@@ -1932,14 +2416,6 @@
                         </label>
                         <select name="type" required class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all bg-white">
                             <option value="">Wybierz typ...</option>
-                            <option value="laser_co2">Laser CO2</option>
-                            <option value="laser_fiber">Laser Fiber</option>
-                            <option value="uv_print">Druk UV</option>
-                            <option value="cnc">CNC</option>
-                            <option value="cutting">Cięcie</option>
-                            <option value="assembly">Montaż</option>
-                            <option value="packaging">Pakowanie</option>
-                            <option value="other">Inne</option>
                         </select>
                     </div>
                     <div>

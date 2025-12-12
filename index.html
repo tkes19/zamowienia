@@ -148,6 +148,63 @@
       .gallery-preview__frame {
         position: relative;
       }
+
+      /* UX pola daty "Na kiedy potrzebne" */
+      .order-delivery {
+        margin-top: 12px;
+      }
+
+      .order-delivery--inline {
+        margin-top: 0;
+      }
+
+      .order-delivery__control {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+      }
+
+      .order-delivery__hint {
+        display: block;
+        font-size: 11px;
+        color: #6b7280;
+        font-weight: 400;
+      }
+
+      .order-delivery__quick {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .order-delivery__quick-btn {
+        border: 1px solid #d1d5db;
+        background: #f9fafb;
+        color: #374151;
+        border-radius: 9999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+      }
+
+      .order-delivery__quick-btn:hover {
+        background: #e5e7eb;
+        border-color: #9ca3af;
+        transform: translateY(-1px);
+      }
+
+      .order-delivery__quick-btn:focus-visible {
+        outline: 2px solid #3b82f6;
+        outline-offset: 1px;
+      }
+
+      /* Podświetlenie błędnej daty */
+      .field__input--error {
+        border-color: #ef4444;
+        box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.3);
+      }
     </style>
   </head>
   <body class="hide-prices hide-guest">
@@ -543,11 +600,6 @@
         <h2>Klient zamówienia i wysyłka</h2>
         
         <div class="panel__header panel__header--customer">
-          <div class="order-customer">
-            <button id="order-add-customer-btn" class="btn btn--success btn--small" type="button">
-              <i class="fas fa-plus"></i> Dodaj klienta
-            </button>
-          </div>
           <div class="order-customer__actions">
             <label class="field field--inline">
               <span class="field__label">Szukaj</span>
@@ -555,16 +607,52 @@
             </label>
             <label class="field field--inline">
               <span class="field__label">Wybierz klienta</span>
-              <select id="order-customer-select" class="field__input field__input--sm" aria-label="Wybierz klienta">
-                <option value="">--- wybierz klienta ---</option>
-              </select>
+              <div class="order-customer__select-row">
+                <select id="order-customer-select" class="field__input field__input--sm" aria-label="Wybierz klienta">
+                  <option value="">--- wybierz klienta ---</option>
+                </select>
+                <button
+                  id="order-add-customer-btn"
+                  class="btn btn--success btn--small order-customer__add-btn"
+                  type="button"
+                  title="Dodaj nowego klienta"
+                  aria-label="Dodaj nowego klienta"
+                >
+                  <i class="fas fa-plus"></i>
+                  <span>Dodaj</span>
+                </button>
+              </div>
+            </label>
+          </div>
+          <div class="order-delivery order-delivery--inline">
+            <label class="field field--inline order-delivery__control">
+              <span class="field__label">
+                Na kiedy potrzebne
+                <span class="order-delivery__hint">Ustaw realny termin dla klienta – pomaga ustalić priorytet produkcji.</span>
+              </span>
+              <div class="order-delivery__row">
+                <input
+                  id="order-delivery-date"
+                  type="date"
+                  class="field__input field__input--sm"
+                />
+                <button
+                  id="submit-order-inline"
+                  type="button"
+                  class="btn btn--success btn--small order-delivery__submit-inline"
+                >
+                  <i class="fas fa-paper-plane"></i> Wyślij zamówienie
+                </button>
+                <div class="order-delivery__quick" aria-label="Szybki wybór daty">
+                  <button type="button" class="order-delivery__quick-btn" data-offset="2">Ekspres (2 dni)</button>
+                  <button type="button" class="order-delivery__quick-btn" data-offset="5">Standard (5 dni)</button>
+                  <button type="button" class="order-delivery__quick-btn" data-offset="10">Duże nakłady (10 dni)</button>
+                </div>
+              </div>
             </label>
           </div>
         </div>
         <div class="export-buttons">
-          <button id="submit-order" class="btn btn--success" type="button">
-            <i class="fas fa-paper-plane"></i> Wyślij zamówienie
-          </button>
           <p id="cart-status" class="status" aria-live="polite"></p>
         </div>
       </section>

@@ -10202,6 +10202,73 @@ app.get('/api/production/work-orders/:id/print', async (req, res) => {
 });
 
 /**
+ * GET /api/orders/:id/production-work-orders/print
+ * Generuje jeden połączony PDF ze wszystkimi zleceniami produkcyjnymi dla zamówienia
+ * Uprawnienia: ADMIN, SALES_DEPT, PRODUCTION_MANAGER, PRODUCTION, OPERATOR, WAREHOUSE, SALES_REP (własne zamówienia)
+ */
+app.get('/api/orders/:id/production-work-orders/print', async (req, res) => {
+    const tag = '[GET /api/orders/:id/production-work-orders/print]';
+    console.log(`${tag} start, id=${req.params.id}`);
+    
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const cookies = parseCookies(req);
+        const authId = cookies.auth_id;
+        const authRole = cookies.auth_role;
+        const orderId = req.params.id;
+
+        // Weryfikacja uprawnień
+        if (!authId || !authRole) {
+            return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+        }
+
+        // Sprawdź uprawnienia do zamówienia
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .select('id, userId, customerId, orderNumber')
+            .eq('id', orderId)
+            .single();
+
+        if (orderError || !order) {
+            return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+        }
+
+        // Sprawdź czy użytkownik ma dostęp
+        const hasAccess = authRole === 'ADMIN' || 
+                         authRole === 'SALES_DEPT' || 
+                         authRole === 'PRODUCTION_MANAGER' || 
+                         authRole === 'PRODUCTION' || 
+                         authRole === 'OPERATOR' || 
+                         authRole === 'WAREHOUSE' ||
+                         (authRole === 'SALES_REP' && order.userId === authId);
+
+        if (!hasAccess) {
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień' });
+        }
+
+        // Import funkcji do generowania połączonego PDF
+        const { createCombinedProductionWorkOrdersPDF } = require('./print_all_work_orders');
+        
+        // Wygeneruj połączony PDF
+        const pdfBuffer = await createCombinedProductionWorkOrdersPDF(orderId);
+        
+        // Zwróć PDF
+        res.setHeader('Content-Type', 'application/pdf');
+        // Usuń polskie znaki z nazwy pliku
+        const safeOrderNumber = order.orderNumber ? order.orderNumber.replace(/[^\x00-\x7F]/g, '') : orderId;
+        res.setHeader('Content-Disposition', `inline; filename="zlecenia-produkcyjne-${safeOrderNumber}.pdf"`);
+        res.send(pdfBuffer);
+
+    } catch (error) {
+        console.error(`${tag} Wyjątek:`, error);
+        return res.status(500).json({ status: 'error', message: 'Błąd generowania PDF' });
+    }
+});
+
+/**
  * GET /api/orders/:id/production-work-orders
  * Zwraca listę zleceń pokojowych (ProductionWorkOrder) powiązanych z zamówieniem
  * Uprawnienia: ADMIN, SALES_DEPT, PRODUCTION_MANAGER, PRODUCTION, OPERATOR, WAREHOUSE

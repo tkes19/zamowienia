@@ -143,7 +143,7 @@ CREATE TABLE public."ProductionOperation" (
   id serial PRIMARY KEY,
   "productionOrderId" integer REFERENCES "ProductionOrder"(id) ON DELETE CASCADE,
   "operationNumber" integer NOT NULL,
-  "operationType" varchar(50) NOT NULL, -- laser_engrave, uv_print, cutting, assembly
+  "operationType" varchar(50) NOT NULL, -- laser_engrave, uv_print, cutting, assembly (kod słownika OperationType)
   "workStationId" integer REFERENCES "WorkStation"(id) ON DELETE SET NULL,
   "operatorId" text REFERENCES "User"(id) ON DELETE SET NULL,
   status varchar(20) NOT NULL DEFAULT 'pending', -- pending, active, completed, failed
@@ -158,6 +158,17 @@ CREATE TABLE public."ProductionOperation" (
   "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP,
   UNIQUE ("productionOrderId", "operationNumber")
+);
+
+-- Słownik typów operacji technologicznych
+CREATE TABLE public."OperationType" (
+  id serial PRIMARY KEY,
+  code varchar(50) UNIQUE NOT NULL,
+  name varchar(100) NOT NULL,
+  description text,
+  "isActive" boolean NOT NULL DEFAULT true,
+  "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Audyt zmian produkcyjnych
@@ -206,6 +217,26 @@ CREATE TABLE public."UserRoleAssignment" (
   UNIQUE ("userId", role)
 );
 ```
+
+#### 2.1.1 Powiązanie OperationType ze ścieżkami
+
+- Pole `ProductionPath.operations[].operationType` przechowuje **kod** typu operacji (`OperationType.code`).
+- Pole `ProductionOperation.operationType` również jest tekstowym kodem ze słownika – brak FK z powodów
+  wydajności/kompatybilności, ale aplikacja opiera się na tym samym zestawie kodów.
+- Panel admina posiada widok **„Typy operacji”** (CRUD, aktywacja/dezaktywacja) bazujący na
+  endpointach `/api/production/operation-types`.
+
+#### 2.1.2 Kolejność operacji w ścieżce
+
+- Kolejność kroków w `ProductionPath.operations` jest determinowana pozycją w tablicy oraz polem `step`
+  nadawanym przez frontend w momencie zapisu.
+- Edytor ścieżki w panelu admina pozwala **przenosić operacje w górę / w dół** (przyciski z chevronami),
+  co skutkuje zmianą kolejności w DOM i ponownym nadaniem sekwencji `step` przy zapisie.
+- Zmiana kolejności ścieżki:
+  - wpływa na **nowo tworzone zlecenia produkcyjne** (operacje generowane są wg aktualnej wersji ścieżki),
+  - **nie modyfikuje istniejących** rekordów `ProductionOrder` / `ProductionOperation`.
+- Dzięki temu modyfikacja technologii w ścieżce jest bezpieczna z punktu widzenia danych historycznych –
+  wymaga jedynie świadomej decyzji po stronie administratora / technologa.
 
 ### 2.2 Uprawnienia
 
@@ -292,6 +323,53 @@ ON CONFLICT ("userId", role) DO NOTHING;
   - zmiana aktywnej roli aktualizuje dostęp do endpointów chronionych przez `requireRole`.
 
 > **Implementacja wieloról nie jest wymagana do startu Panelu Produkcyjnego**, ale jest rekomendowana przed uruchomieniem produkcji w pokojach, gdzie te same osoby pełnią funkcje grafika i operatora.
+
+### 2.2.3 Status implementacji wieloról (grudzień 2025)
+
+✅ **Zrealizowane:**
+- Tabela `UserRoleAssignment` z polami `isActive`, `assignedBy`, `assignedAt`
+- Endpointy CRUD: `GET/POST/DELETE /api/admin/user-role-assignments`
+- Endpoint synchronizacji: `PUT /api/admin/user-role-assignments/sync/:userId`
+- Endpoint przełączania roli: `POST /api/auth/active-role`
+- Endpoint listy ról: `GET /api/auth/roles`
+- UI Admin: sekcja wieloról w formularzu użytkownika (checkboxy)
+- Testy jednostkowe: `backend/roles-permissions.test.js`
+
+### 2.2.4 Helpery uprawnień produkcyjnych (MES-compliant)
+
+Backend używa następujących helperów do kontroli dostępu:
+
+```javascript
+// Poziomy dostępu do pokoju
+const RoomAccessLevel = {
+    NONE: 'none',      // Brak dostępu
+    VIEW: 'view',      // Tylko podgląd
+    OPERATE: 'operate', // Wykonywanie operacji
+    MANAGE: 'manage',   // Zarządzanie przypisaniami
+    FULL: 'full'       // Pełny dostęp (ADMIN)
+};
+
+// Główny helper - określa poziom dostępu użytkownika do pokoju
+function getRoomAccessLevel(userRole, userId, room) { ... }
+
+// Helpery pochodne
+function canManageRoomAssignments(userRole, userId, room) { ... }
+function canViewRoom(userRole, userId, room) { ... }
+function canOperateInRoom(userRole, userId, room) { ... }
+```
+
+**Hierarchia uprawnień:**
+| Rola | Poziom domyślny | Uwagi |
+|------|-----------------|-------|
+| ADMIN | FULL | Pełny dostęp do wszystkich pokojów |
+| PRODUCTION_MANAGER | MANAGE | Zarządzanie wszystkimi pokojami |
+| Room Manager | MANAGE | Tylko dla przypisanego pokoju (`roomManagerUserId`) |
+| Supervisor | MANAGE | Tylko dla przypisanego pokoju (`supervisorId`) |
+| PRODUCTION | OPERATE | Brygadzista - operowanie we wszystkich pokojach |
+| OPERATOR (przypisany) | OPERATE | Tylko w przypisanym pokoju |
+| OPERATOR (nieprzypisany) | VIEW | Podgląd innych pokojów |
+| GRAPHIC_DESIGNER | VIEW | Tylko podgląd |
+| SALES_* | NONE | Brak dostępu do produkcji |
 
 ### 2.3 Integracja z zamówieniami
 
@@ -444,6 +522,101 @@ app.post('/api/production/paths', async (req, res) => {
   }
 });
 ```
+
+#### 3.3.1 Przykład ścieżki: druk solventowy – gotowy projekt vs nowy projekt
+
+Dla druku solventowego wyróżniamy dwa typowe warianty przepływu:
+
+- **A. Gotowy projekt** – plik/projekt został przygotowany wcześniej, a handlowiec
+  wybiera go w formularzu zamówienia (ma numery projektów);
+- **B. Nowy projekt** – klient zamawia nowy projekt i nie podaje numerów projektów,
+  pozycja zamówienia trafia najpierw do modułu Grafiki (GraphicTask), a dopiero potem
+  na produkcję.
+
+Warianty te odwzorowujemy dwiema ścieżkami `ProductionPath` dla tego samego produktu.
+
+**Ścieżka A – Solvent (gotowy projekt)**
+
+Używana, gdy pozycja zamówienia ma przypisane istniejące projekty.
+
+```json
+[
+  {
+    "operation": 1,
+    "phase": "PREP",
+    "operationType": "prepress_layout",
+    "name": "Rozkład matryc / impozycja (Grafika)",
+    "description": "Ułożenie elementów na arkuszu do druku solventowego.",
+    "workCenterType": "graphic_prepress",
+    "estimatedTime": 10
+  },
+  {
+    "operation": 2,
+    "phase": "OP",
+    "operationType": "solvent",
+    "name": "Druk solventowy",
+    "workCenterType": "solvent",
+    "estimatedTime": 30
+  },
+  {
+    "operation": 3,
+    "phase": "PACK",
+    "operationType": "packing",
+    "name": "Pakowanie",
+    "estimatedTime": 10
+  }
+]
+```
+
+**Ścieżka B – Solvent (nowy projekt)**
+
+Używana, gdy w zamówieniu **nie podano numerów projektów** – pozycja trafia do działu
+Grafiki, który przygotowuje nowy projekt, a następnie wykonuje impozycję.
+
+```json
+[
+  {
+    "operation": 1,
+    "phase": "PREP",
+    "operationType": "graphic_design",
+    "name": "Przygotowanie plików projektu (Grafika)",
+    "description": "Projektowanie / obróbka plików na potrzeby produkcji.",
+    "workCenterType": "graphic_design",
+    "estimatedTime": 30
+  },
+  {
+    "operation": 2,
+    "phase": "PREP",
+    "operationType": "prepress_layout",
+    "name": "Rozkład matryc / impozycja (Grafika)",
+    "estimatedTime": 10
+  },
+  {
+    "operation": 3,
+    "phase": "OP",
+    "operationType": "solvent",
+    "name": "Druk solventowy",
+    "workCenterType": "solvent",
+    "estimatedTime": 30
+  },
+  {
+    "operation": 4,
+    "phase": "PACK",
+    "operationType": "packing",
+    "name": "Pakowanie",
+    "estimatedTime": 10
+  }
+]
+```
+
+Powiązanie z logiką zamówień:
+
+- jeśli handlowiec **poda numery projektów** w pozycji zamówienia → system używa
+  ścieżki A (pomijamy etap `graphic_design`, realizujemy tylko impozycję + druk);
+- jeśli **nie poda numerów projektów** → pozycja zamówienia trafia do modułu Grafika
+  jako zadanie (GraphicTask) i jest obsługiwana ścieżką B, w której pierwsza operacja
+  `graphic_design` jest wykonywana przez dział Grafika, a dopiero potem uruchamiane
+  są operacje `prepress_layout` i `solvent`.
 
 ### 3.4 Endpointy - Zlecenia Produkcyjne
 
@@ -1917,6 +2090,80 @@ class TimeImportExport {
   - może korzystać z gotowych szablonów czasów (np. „Laser CO2 – bambus”, „Druk UV – kubek ceramiczny”) albo nadpisać wartości ręcznie,
   - zapisane wartości są używane automatycznie przy generowaniu nowych zleceń produkcyjnych.
 
+### 6.6 Auto-priorytet zamówień produkcyjnych
+
+- **Cel:** zapewnienie spójnego, automatycznego priorytetyzowania zleceń na podstawie daty wymaganej przez klienta (`Order.deliveryDate`) oraz szacowanego czasu produkcji.
+
+#### 6.6.1 Wejścia algorytmu
+
+Dla każdego zlecenia produkcyjnego (i powiązanego zamówienia) backend wykorzystuje:
+
+- `now` – aktualny czas serwera (UTC),
+- `Order.deliveryDate` – data/godzina wymagana przez klienta (pole obowiązkowe w formularzu zamówienia, wprowadzane przez handlowca),
+- `ProductionOrder.estimatedTime` – całkowity szacowany czas produkcji w minutach (zasilany z `ProductionPath` / szablonów czasów, patrz §6),
+- (opcjonalnie w przyszłości) `serviceLevel` – tryb obsługi (`STANDARD`, `EXPRESS`, `VIP`).
+
+Na tej podstawie obliczane są pomocnicze wartości czasowe:
+
+- `timeToDeadlineMinutes = deliveryDate - now` (w minutach; może być ujemne),
+- `slackMinutes = timeToDeadlineMinutes - estimatedProductionTimeMinutes` (zapas czasu względem szacowanego czasu produkcji).
+
+#### 6.6.2 Status czasowy `timeStatus`
+
+Pole `timeStatus` przyjmuje jedną z wartości:
+
+- `ON_TIME` – zlecenie na razie bezpieczne czasowo,
+- `AT_RISK` – zlecenie zagrożone (mały margines czasowy),
+- `OVERDUE` – zlecenie po terminie.
+
+Proponowany algorytm:
+
+- jeśli `timeToDeadlineMinutes < 0` → `timeStatus = OVERDUE`,
+- w przeciwnym razie, jeśli `timeToDeadlineMinutes <= 24 * 60` **lub** `slackMinutes <= 0` → `timeStatus = AT_RISK`,
+- w przeciwnym razie → `timeStatus = ON_TIME`.
+
+Próg 24h powinien być konfigurowalny (np. zmienna środowiskowa lub wpis w tabeli ustawień).
+
+#### 6.6.3 Priorytet `priority` (1–4)
+
+Priorytet w tabelach produkcyjnych (`ProductionOrder.priority`, `ProductionWorkOrder.priority`) korzysta ze skali:
+
+- `1` – urgent (najwyższy priorytet),
+- `2` – high,
+- `3` – normal (domyślny),
+- `4` – low.
+
+Algorytm auto-priorytetu:
+
+- jeśli `timeStatus = OVERDUE` → `priority = 1` (urgent),
+- w przeciwnym razie, jeśli `timeStatus = AT_RISK` **i** (`timeToDeadlineMinutes <= 4 * 60` **lub** `slackMinutes <= 60`) → `priority = 2` (high),
+- w przeciwnym razie, jeśli `timeStatus = ON_TIME` **i** `timeToDeadlineMinutes > 72 * 60` **i** `slackMinutes > 2 * estimatedProductionTimeMinutes` → `priority = 4` (low),
+- we wszystkich pozostałych przypadkach → `priority = 3` (normal).
+
+Progi czasowe (4h, 72h, dodatkowy mnożnik 2×) również powinny być konfigurowalne.
+
+#### 6.6.4 Zastosowanie w API i UI
+
+- Obliczenia wykonywane są w warstwie backendu (np. helper `computeOrderTimePriority(order, productionOrders)` wywoływany w endpointach pobierających zlecenia).
+- Endpointy produkcyjne (`/api/production/orders/active`, `/api/production/kpi/overview`) powinny zwracać dla każdego zlecenia przynajmniej:
+  - `deliveryDate`,
+  - `timeToDeadlineMinutes`,
+  - `timeStatus`,
+  - `priority`.
+- Panel operatora wykorzystuje te pola do:
+  - domyślnego sortowania (najpierw po `deliveryDate`, następnie po `priority`),
+  - kolorowania kart zleceń (zielony / żółty / czerwony) w oparciu o `timeStatus`,
+  - wyświetlania tekstów typu „Pozostało: X dni/godzin” lub „Przeterminowane: X godzin”.
+- Widok sprzedaży (lista zamówień) pokazuje `deliveryDate` razem z uproszczonym statusem czasowym („na czas / zagrożone / po terminie”).
+
+#### 6.6.5 Ręczne nadpisywanie priorytetu (przyszłość)
+
+W ramach **Fazy 6: Admin produkcji** możliwe jest dodanie opcji ręcznego nadpisania priorytetu przez `PRODUCTION_MANAGER`:
+
+- pole `manualPriority` w `ProductionOrder` i/lub `ProductionWorkOrder`,
+- jeśli `manualPriority` jest ustawione, UI pokazuje je zamiast auto‑wyliczonego `priority`,
+- logowanie wszystkich zmian priorytetu w `ProductionLog` (kto, kiedy, z jakiej wartości na jaką).
+
 ---
 
 ## 7. Implementacja Notes
@@ -1975,6 +2222,90 @@ class TimeImportExport {
 - Optimistic updates w UI z rollback przy błędzie
 - Lazy loading dla ścieżek produkcyjnych
 - WebSocket zamiast polling dla real-time updates
+
+### 6.5 Plan implementacji daty wymagalności i auto-priorytetu
+
+Ten plan opisuje **kolejność wdrażania** pola daty wymagalności (`Order.deliveryDate`) oraz algorytmu auto-priorytetu (`timeStatus`, `priority`) tak, aby zachować spójność z UX handlowca i operatorem.
+
+#### 6.5.1 Faza 1 – Model danych i migracje (DB + SPEC)
+
+- Zweryfikować w Supabase, że tabela `Order` posiada kolumny:
+  - `deliveryDate timestamptz` – data/godzina „na kiedy potrzebne”,
+  - `priority integer NOT NULL DEFAULT 3` – wewnętrzny priorytet MES (1–4).
+- W razie braków dodać migracje SQL w `backend/migrations/...` (`ALTER TABLE "Order" ...`).
+- Utrzymać spójność z `docs/SPEC.md` (sekcja 5.2) i `docs/SPEC_PRODUCTION_PANEL.md` (§6.6).
+
+#### 6.5.2 Faza 2 – Formularz zamówień (frontend sprzedaż)
+
+- **UI (`index.html`)**:
+  - dodać w formularzu pole `input type="date"` z etykietą „Na kiedy potrzebne”,
+  - ustawić domyślną wartość (np. dziś + 2 dni),
+  - dać czytelny opis, że jest to data wymagana przez klienta.
+- **Logika JS (`scripts/app.js`)**:
+  - przy wysyłce `POST /api/orders` odczytać wartość `deliveryDate`,
+  - walidować, że data nie jest w przeszłości (front blokuje wysłanie),
+  - wysłać `deliveryDate` w body (np. `YYYY-MM-DD`, backend konwertuje na koniec dnia).
+- (Opcjonalnie) w widoku edycji zamówienia umożliwić zmianę daty zgodnie z regułami ról i statusów.
+
+#### 6.5.3 Faza 3 – Backend zamówień (API)
+
+- **`POST /api/orders`**:
+  - wymaga pola `deliveryDate`,
+  - waliduje datę (≥ dziś),
+  - zapisuje `deliveryDate` w `Order`,
+  - ustawia `priority = 3` (normal), jeśli nie przekazano innej wartości.
+- **`PATCH /api/orders/:id`**:
+  - umożliwia zmianę `deliveryDate` z kontrolą ról i statusów (np. `PENDING`/`APPROVED` – sprzedaż, dalej tylko `PRODUCTION_MANAGER`/`ADMIN`),
+  - opcjonalnie loguje zmiany daty w historii.
+- **`GET /api/orders`, `GET /api/orders/:id`**:
+  - zwracają `deliveryDate` i `priority` w strukturze zamówienia.
+
+#### 6.5.4 Faza 4 – Backend produkcji: auto-priorytet
+
+- Zaimplementować helper (np. `computeOrderTimePriority(order, productionOrders)`), który:
+  - wczytuje `Order.deliveryDate` i `ProductionOrder.estimatedTime`,
+  - liczy `timeToDeadlineMinutes`, `slackMinutes`,
+  - wyznacza `timeStatus` i `priority` wg §6.6.
+- Wpiąć helper do:
+  - `GET /api/production/orders/active` – każda pozycja powinna zwracać `deliveryDate`, `timeToDeadlineMinutes`, `timeStatus`, `priority`,
+  - `GET /api/production/kpi/overview` – wykorzystanie `timeStatus`/`priority` w KPI (np. licznik zleceń zagrożonych/po terminie).
+- W przypadku braku `estimatedTime` traktować je jako `0` (priorytet liczony wyłącznie z daty); takie przypadki można oznaczać do kalibracji w przyszłości.
+
+#### 6.5.5 Faza 5 – Panel operatora (production.html, scripts/production.js)
+
+- **Wyświetlanie daty i czasu do terminu**:
+  - w komponentach karty zlecenia wykorzystać dane `deliveryDate`, `timeToDeadlineMinutes`, `timeStatus`,
+  - pokazywać teksty typu „Data: 2025-12-15” oraz „Pozostało: 2 dni” / „Przeterminowane: 3h”,
+  - formatowanie czasu wykonać w helperze JS (dni/godziny, bez sekund).
+- **Sortowanie i kolorystyka**:
+  - domyślne sortowanie: najpierw po `deliveryDate` (rosnąco), następnie po `priority` (1–4),
+  - mapować `timeStatus` na klasy kolorów kart (zielony = `ON_TIME`, żółty = `AT_RISK`, czerwony = `OVERDUE`),
+  - wykorzystać istniejącą paletę statusów z `production.html`.
+- **Filtry**:
+  - filtr „PILNE” oprzeć na `priority <= 2` lub `timeStatus != ON_TIME`,
+  - opcjonalnie dodać filtr „tylko po terminie”.
+
+#### 6.5.6 Faza 6 – Widok sprzedaży (lista zamówień)
+
+- W `orders.html` i powiązanym JS:
+  - dodać kolumnę „Data potrzebna” (`deliveryDate`),
+  - dodać uproszczony status czasu („na czas / zagrożone / po terminie”),
+  - umożliwić filtrowanie zamówień zagrożonych/po terminie.
+
+#### 6.5.7 Faza 7 – Testy i rollout
+
+- Testy backendowe:
+  - tworzenie zamówienia z prawidłową datą → 200 + zapis `deliveryDate`,
+  - tworzenie z datą w przeszłości → 400,
+  - scenariusze ON_TIME / AT_RISK / OVERDUE dla helpera auto-priorytetu.
+- Testy frontendu (manualne/E2E):
+  - formularz nie akceptuje dat w przeszłości,
+  - panel operatora poprawnie sortuje i koloruje zlecenia,
+  - lista zamówień sprzedaży pokazuje daty i statusy czasu.
+- Rollout:
+  - najpierw włączyć pole `deliveryDate` i jego zapis,
+  - następnie auto-priorytet w backendzie,
+  - na końcu pełną wizualizację i sortowanie po czasie w panelu operatora.
 
 ---
 
@@ -2571,7 +2902,7 @@ async function createPackingListPDF(orderId) {
 | PRODUCTION / OPERATOR | ✅ Tylko ponowny druk zleceń swojego pokoju | ❌ | ❌ | Kopie zapasowe na hali |
 | GRAPHICS / GRAPHIC_DESIGNER | ❌ | ✅ Druk swoich zadań | ❌ | Zlecenia na projekty |
 | WAREHOUSE | ❌ | ❌ | ✅ Druk list kompletacyjnych | Pakowanie |
-| SALES_REP | ❌ | ❌ | ❌ | Tylko zamówienia |
+| SALES_REP | ✅ Druk ZP wyłącznie dla własnych zamówień (po utworzeniu zleceń) | ❌ | ❌ | Tylko zamówienia + własne ZP |
 
 > Uwaga: `PRODUCTION_MANAGER` jest rolą dodatkową. System nie wymaga, aby ktoś miał tę rolę – uprawnienia do druku pozostają dostępne z innych ról zgodnie z powyższą tabelą.
 
@@ -2712,8 +3043,241 @@ Każdy dokument zawiera kod QR z:
 > wymagana do podstawowego uruchomienia Panelu Produkcyjnego. Specyfikacja
 > powyżej pełni rolę dokumentu „na później” dla wersji v2.x systemu.
 
+## 11. Plan wdrożenia modułu akcji operatora i dashboardu KPI (v2.0.0)
+
+### 11.1 Zakres modułu
+
+Moduł akcji operatora i dashboardu KPI obejmuje trzy główne obszary:
+
+1. **Akcje operatora na operacjach produkcyjnych** – spójne API do zmiany
+   statusów `ProductionOperation` (`start`, `pause`, `complete`, `cancel`,
+   `problem`) wraz z aktualizacją `ProductionOrder`, `ProductionWorkOrder`
+   i `WorkStation`.
+2. **ProductionLog + śledzenie czasu** – audyt wszystkich akcji operatorów
+   na zleceniach, z możliwością odtworzenia osi czasu pracy i analizy
+   problemów.
+3. **Prosty dashboard KPI produkcyjnych** – zagregowane wskaźniki dla
+   pokoi i operatorów (ilości, czasy, braki, problemy) dostępne dla
+   ról `PRODUCTION_MANAGER`, `PRODUCTION` i `ADMIN`.
+
+### 11.2 Stany i reguły przejść
+
+**Statusy `ProductionOperation.status`:**
+
+- `pending` – operacja oczekuje na start,
+- `active` – operacja w toku,
+- `paused` – operacja wstrzymana,
+- `completed` – zakończona sukcesem,
+- `cancelled` – anulowana,
+- `error` – zakończona z błędem (np. po zgłoszeniu problemu).
+
+**Statusy `ProductionOrder.status`:**
+
+- `planned`, `approved`, `in_progress`, `completed`, `cancelled`.
+
+**Statusy `ProductionWorkOrder.status`:**
+
+- `planned`, `approved`, `in_progress`, `completed`, `cancelled`.
+
+Reguły:
+
+- `start` – dozwolone z `pending` lub `paused`; po pierwszym starcie dowolnej
+  operacji z danego `ProductionOrder` status zlecenia przechodzi na
+  `in_progress` (i ustawiane jest `actualStartDate`).
+- `pause` – dozwolone **tylko** z `active`.
+- `complete` – dozwolone z `active` lub `paused`; wymaga podania
+  `outputQuantity` i `wasteQuantity`, ustawia `endTime` oraz `actualTime`.
+- `cancel` – dozwolone z dowolnego statusu oprócz `completed`; tylko role
+  `ADMIN`, `PRODUCTION_MANAGER` (opcjonalnie `PRODUCTION`).
+- `problem` – zgłoszenie problemu; co najmniej wpis do `ProductionLog`
+  z typem problemu i opisem, opcjonalnie zmiana statusu na `error`.
+
+Dla każdego `ProductionWorkOrder` helper
+`updateWorkOrderStatusFromOperations(workOrderId)` oblicza status nagłówka
+na podstawie statusów powiązanych `ProductionOrder` / `ProductionOperation`:
+
+- jeśli wszystkie operacje są `completed` → work order = `completed`,
+- jeśli istnieje co najmniej jedna `active` → work order = `in_progress`,
+- jeśli wszystkie są `cancelled` → work order = `cancelled`,
+- w pozostałych przypadkach – `approved` lub `planned` zgodnie z bieżącą
+  implementacją.
+
+### 11.3 API akcji operatora (szkic)
+
+Endpointy operują na pojedynczych rekordach `ProductionOperation` i zakładają
+autoryzację ciasteczkami (`auth_id`, `auth_role`) oraz helperami
+`requireRole([...])` i `canOperateInRoom(...)`.
+
+```javascript
+// POST /api/production/operations/:id/start
+// Body: { operatorId?: string, workStationId?: number }
+// Efekt:
+// - ProductionOperation: status = 'active', operatorId, workStationId,
+//   jeśli startTime null → startTime = now()
+// - ProductionOrder: jeśli status != 'in_progress' →
+//   status = 'in_progress', actualStartDate = now()
+// - WorkStation: status = 'in_use', currentOperatorId = operatorId
+// - ProductionLog: wpis action = 'operation_started'
+
+// POST /api/production/operations/:id/pause
+// Body: { operatorId?: string, reason?: string }
+// Efekt:
+// - ProductionOperation: status = 'paused'
+// - opcjonalnie WorkStation: status = 'available'
+// - ProductionLog: action = 'operation_paused', notes = reason
+
+// POST /api/production/operations/:id/complete
+// Body: { operatorId?: string, outputQuantity: number, wasteQuantity: number, notes?: string }
+// Efekt:
+// - ProductionOperation: status = 'completed', endTime = now(),
+//   actualTime = ceil((endTime - startTime) / 60000),
+//   outputQuantity, wasteQuantity
+// - ProductionOrder: completedQuantity += outputQuantity;
+//   jeśli completedQuantity >= quantity → status = 'completed',
+//   actualEndDate = now()
+// - ProductionWorkOrder: helper updateWorkOrderStatusFromOperations(...)
+// - WorkStation: status = 'available', currentOperatorId = null
+// - ProductionLog: action = 'operation_completed'
+
+// POST /api/production/operations/:id/cancel
+// Body: { operatorId?: string, reason: string }
+// Efekt:
+// - tylko role: ADMIN, PRODUCTION_MANAGER (ew. PRODUCTION)
+// - ProductionOperation: status = 'cancelled', endTime = now()
+// - ProductionOrder / ProductionWorkOrder: aktualizacja statusów
+// - ProductionLog: action = 'operation_cancelled', notes = reason
+
+// POST /api/production/operations/:id/problem
+// Body: { problemType: string, description: string, severity?: 'LOW'|'MEDIUM'|'HIGH' }
+// Efekt:
+// - ProductionLog: action = 'problem_reported', notes = JSON(body)
+// - opcjonalnie ProductionOperation: status = 'error'
+```
+
+### 11.4 ProductionLog i śledzenie czasu
+
+Tabela `ProductionLog` pozostaje główną tabelą audytową. Zalecane jest
+rozszerzenie o pola techniczne powiązane z operacjami i stanowiskami:
+
+```sql
+ALTER TABLE "ProductionLog"
+  ADD COLUMN IF NOT EXISTS "operationId" integer REFERENCES "ProductionOperation"(id),
+  ADD COLUMN IF NOT EXISTS "workStationId" integer REFERENCES "WorkStation"(id);
+```
+
+Minimalny zestaw pól logicznych przy insercie logów:
+
+- `productionOrderId` – powiązane zlecenie produkcyjne,
+- `operationId` – id operacji (jeśli dotyczy),
+- `workStationId` – stanowisko robocze (jeśli dotyczy),
+- `action` – `operation_started`, `operation_paused`, `operation_completed`,
+  `operation_cancelled`, `problem_reported`,
+- `previousStatus`, `newStatus` – status operacji / zlecenia przed i po akcji,
+- `userId` – operator / użytkownik wykonujący akcję,
+- `notes` – uwagi biznesowe lub serializowany JSON z dodatkowymi danymi,
+- `createdAt` – timestamp akcji (domyślnie `now()`).
+
+Na podstawie logów i pól `startTime` / `endTime` w `ProductionOperation`
+obliczany jest `actualTime` w minutach. Na poziomie MVP wystarczy:
+
+```text
+actualTime = ceil( (endTime - startTime) / 60000 )
+```
+
+W przyszłości można doprecyzować ewidencję pauz (np. osobna tabela lub
+logi `pause`/`resume` z agregacją czasu przestojów).
+
+### 11.5 Dashboard KPI – API i UI (MVP)
+
+#### 11.5.1 Endpoint ogólny KPI
+
+```javascript
+// GET /api/production/kpi/overview
+// Query (opcjonalnie): ?dateFrom=ISO&dateTo=ISO&roomId=number
+// Uprawnienia: PRODUCTION_MANAGER, ADMIN, PRODUCTION
+// Zwraca zagregowane dane do dashboardu:
+// {
+//   status: 'success',
+//   data: {
+//     summary: {
+//       completedOperations: number,
+//       producedQuantity: number,
+//       wasteQuantity: number,
+//       problemsReported: number
+//     },
+//     byRoom: [
+//       { roomId, roomName, completedWorkOrders, inProgressWorkOrders, avgLeadTimeMinutes }
+//     ],
+//     topProducts: [
+//       { productId, name, producedQuantity, wasteQuantity }
+//     ]
+//   }
+// }
+```
+
+#### 11.5.2 Statystyki operatorów
+
+```javascript
+// GET /api/production/operator/stats
+// Query (opcjonalnie): ?dateFrom=ISO&dateTo=ISO&roomId=number
+// Uprawnienia: PRODUCTION_MANAGER, ADMIN, PRODUCTION, OPERATOR (tylko własne)
+// Zwraca listę operatorów z KPI, np.:
+// [
+//   {
+//     operatorId,
+//     operatorName,
+//     completedOperations,
+//     producedQuantity,
+//     wasteQuantity,
+//     avgOperationTimeMinutes,
+//     onTimeRatio
+//   }
+// ]
+```
+
+#### 11.5.3 Wymagania dla UI (wysoki poziom)
+
+- **Panel operatora (production.html)**
+  - przyciski `Start`, `Pauza`, `Zakończ`, `Problem` na kafelkach operacji,
+  - minimalnie 2–3 kliknięcia do wykonania typowej akcji,
+  - po akcji odświeżenie tylko zmienionego kafelka (bez pełnego reloadu).
+- **Dashboard KPI (nowa sekcja)**
+  - trzy kafle podsumowujące: liczba zakończonych operacji, ilość wyprodukowana,
+    ilość braków w wybranym zakresie dat,
+  - tabela operatorów z KPI (sortowalna po wybranych kolumnach),
+  - tabela pokoi z liczbą aktywnych / zakończonych zleceń i średnim czasem
+    realizacji ZP.
+
+### 11.6 Status implementacji (2025-12-10)
+
+✅ **Zrealizowane:**
+
+- **Backend:**
+  - Endpoint `GET /api/production/kpi/overview` w `backend/server.js`
+  - Agregacje: `completedOperations`, `producedQuantity`, `wasteQuantity`, `problemsReported`, `avgOperationTimeMinutes`
+  - Statystyki per pokój (`byRoom`) i top 5 produktów (`topProducts`)
+  - Filtrowanie po zakresie dat (`dateFrom`, `dateTo`) i pokoju (`roomId`)
+  - Uprawnienia: `ADMIN`, `PRODUCTION_MANAGER`, `PRODUCTION`
+
+- **Frontend:**
+  - Sekcja dashboardu KPI w `production.html` (style CSS + HTML)
+  - Funkcje JavaScript w `scripts/production.js`:
+    - `initKpiDashboard()` – inicjalizacja z kontrolą uprawnień
+    - `loadKpiData()` – pobieranie danych z API
+    - `renderKpiData()` – renderowanie kafli i tabel
+    - `toggleKpiDashboard()` – zwijanie/rozwijanie dashboardu
+  - Zapisywanie stanu widoczności w `localStorage`
+
+- **Testy:**
+  - Plik `backend/kpi.test.js` z testami jednostkowymi:
+    - `calculateSummary()` – obliczanie podsumowania
+    - `aggregateProductStats()` – agregacja statystyk produktów
+    - `aggregateRoomStats()` – agregacja statystyk pokojów
+    - Walidacja zakresu dat i uprawnień
+
 ---
 
-**Wersja dokumentu:** 1.0  
+**Wersja dokumentu:** 1.1  
 **Data utworzenia:** 2025-12-01  
+**Data aktualizacji:** 2025-12-10  
 **Autor:** System ZAMÓWIENIA Development Team

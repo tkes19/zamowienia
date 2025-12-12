@@ -38,6 +38,12 @@ System zamówień służy do obsługi sprzedaży pamiątek i gadżetów w firmie
 - Widok zamówień – lista i szczegóły zamówień
 - Panel administratora
 
+> Uwaga: Formularz zamówień jest stale rozwijany. W kolejnych wersjach planowane są m.in.:
+> prostszy widok kroków (etapy zamówienia), szybsze wybieranie produktów (ulubione / ostatnio
+> zamawiane), automatyczne podpowiadanie terminu "Na kiedy potrzebne", lepsze komunikaty
+> o błędach oraz funkcje "Powtórz zamówienie" i tryb "Szybkie zamówienie". Szczegóły techniczne:
+> `docs/SPEC.md` §6.10–6.11.
+
 ---
 
 ## 2. Role i uprawnienia
@@ -369,6 +375,39 @@ Po zapisaniu:
 Usunięcie przypisania **nie kasuje produktu ani projektu**, jedynie zrywa ich powiązanie
 dla potrzeb galerii i formularza zamówień.
 
+### 8.5. Typy operacji i ścieżki produkcyjne
+
+Jako administrator możesz konfigurować **słownik typów operacji** oraz kolejność kroków na ścieżkach
+produkcyjnych w jednym miejscu – w panelu admina, sekcja **Produkcja**.
+
+#### Widok „Typy operacji”
+
+1. Wejdź do panelu admina → sekcja **Produkcja** → **„Typy operacji”**.
+2. Zobaczysz tabelę z kolumnami: Kod, Nazwa, Opis, Status.
+3. Możesz:
+   - dodawać nowe typy (np. `prepress_layout`, `uv_print`, `packing`),
+   - edytować nazwę/opis istniejących typów,
+   - aktywować / dezaktywować typy (przycisk z ikoną ✔ / 🚫).
+
+> Uwaga: kod typu operacji (`code`) jest używany wewnętrznie w ścieżkach produkcyjnych i zleceniach –
+> po utworzeniu nie powinien być zmieniany, zmieniaj tylko nazwę/opis.
+
+#### Edytor ścieżek produkcyjnych – kolejność operacji
+
+1. Wejdź do panelu admina → sekcja **Produkcja** → **„Ścieżki produkcyjne”**.
+2. Kliknij **„Dodaj ścieżkę”** lub ikonę edycji przy istniejącej ścieżce.
+3. W edytorze ścieżki każda operacja ma:
+   - numer kroku w kółku (1, 2, 3, ...),
+   - wybór **Fazy** (Przygotowanie / Operacja / Pakowanie),
+   - wybór **Typu operacji** z dynamicznego słownika (aktywnych `OperationType`),
+   - pole **Czas (min)**,
+   - przyciski: **strzałka w górę**, **strzałka w dół**, **kosz**.
+4. Przyciski strzałek pozwalają **zmienić kolejność kroków** na ścieżce – po zapisaniu nowa
+   kolejność będzie używana przy tworzeniu zleceń produkcyjnych.
+
+> Istniejące zlecenia produkcyjne zachowują starą kolejność operacji – zmiana dotyczy tylko
+> nowych zleceń, które powstaną na podstawie zmodyfikowanej ścieżki.
+
 ---
 
 ## 9. Workflow zamówień
@@ -454,7 +493,16 @@ Z punktu widzenia działu sprzedaży:
 
 ### 9.4. Wydruk zlecenia produkcyjnego dla pokoju produkcyjnego
 
-Po utworzeniu zleceń produkcyjnych dla zamówienia możesz wydrukować **kartę zlecenia produkcyjnego dla pokoju produkcyjnego** (PDF) z poziomu panelu produkcyjnego.
+Po utworzeniu zleceń produkcyjnych dla zamówienia możesz wydrukować **kartę zlecenia produkcyjnego dla pokoju produkcyjnego** (PDF):
+
+- z poziomu **panelu produkcyjnego** (widok ZP),
+- z poziomu **panelu zamówień** – przycisk **„Zlecenia produkcyjne (PDF)”** w szczegółach zamówienia (dostępny dla ról z uprawnieniami, m.in. SALES_DEPT, ADMIN, PRODUCTION, OPERATOR oraz handlowca `SALES_REP` dla **własnych** zamówień).
+
+Jeśli po kliknięciu „Zlecenia produkcyjne (PDF)” zobaczysz komunikat:
+
+> To zamówienie nie ma jeszcze zleceń produkcyjnych (ZP). Zamówienie nie zostało jeszcze przekazane na produkcję przez dział sprzedaży.
+
+oznacza to, że zamówienie nie ma jeszcze wygenerowanych zleceń produkcyjnych i najpierw musi zostać formalnie przekazane na produkcję.
 
 Na wydruku:
 

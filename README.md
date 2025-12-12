@@ -41,10 +41,29 @@ Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
 - ✅ uprawnienia dla ról `PRODUCTION`, `OPERATOR`, `PRODUCTION_MANAGER`, `ADMIN`;
 - ✅ testy jednostkowe logiki statusów (`backend/production.test.js`).
 
+**Zaimplementowane (Dashboard KPI) – 2025-12-10:**
+- ✅ endpoint dashboardu KPI: `/api/production/kpi/overview` (agregacje: operacje, ilości, braki, problemy);
+- ✅ statystyki per pokój produkcyjny (`byRoom`) i top 5 produktów (`topProducts`);
+- ✅ filtrowanie po zakresie dat (`dateFrom`, `dateTo`) i pokoju (`roomId`);
+- ✅ dashboard KPI w UI (`production.html`) – kafle, tabele pokojów i produktów;
+- ✅ testy jednostkowe modułu KPI (`backend/kpi.test.js`).
+
+**Zaimplementowane (Słownik typów gniazd) – 2025-12-11:**
+- ✅ tabela `WorkCenterType` jako słownik typów gniazd produkcyjnych (laser_co2, uv_print, cnc, assembly...);
+- ✅ API CRUD: `GET/POST/PATCH /api/production/work-center-types`;
+- ✅ formularz gniazda w panelu admina ładuje typy dynamicznie z API;
+- ✅ widok "Typy gniazd" w panelu admina (tabela + modal dodawania/edycji);
+- ✅ testy jednostkowe walidacji i kontroli dostępu (`backend/work-center-type.test.js`).
+
+**Zaimplementowane (druk zleceń produkcyjnych – ZP) – 2025-12-11:**
+- ✅ endpoint `/api/production/work-orders/:id/print` generuje pojedynczy PDF karty zlecenia produkcyjnego (ZP) dla danego pokoju;
+- ✅ nowy endpoint `/api/orders/:id/production-work-orders/print` generuje **jeden, wielostronicowy PDF** ze wszystkimi ZP powiązanymi z zamówieniem (jedna strona = jedno ZP);
+- ✅ przycisk **„Zlecenia produkcyjne (PDF)”** w szczegółach zamówienia korzysta z nowego endpointu i otwiera jeden plik zamiast wielu wyskakujących okienek (brak problemu z blokadą popupów);
+- ✅ na każdej stronie PDF drukowane są: uwagi do pozycji zamówienia (w tabeli pozycji) oraz wspólna uwaga do całego zamówienia (sekcja „Uwagi do zlecenia”).
+
 **Co jest jeszcze do zrobienia (po MVP):**
 - rozważyć dodanie aktualizacji w czasie rzeczywistym (WebSocket) dla listy zleceń i statystyk;
-- dodać przyciski druku dla operatora (ponowny druk zlecenia);
-- rozbudować panel admina o zakładkę "Produkcja" (zarządzanie pokojami, gniazdami, stanowiskami).
+- dodać przyciski druku dla operatora (ponowny druk zlecenia).
 
 ---
 
@@ -392,3 +411,11 @@ W każdej opcji pamiętaj o ustawieniu zmiennych środowiskowych (`PORT`, `SMTP_
   - Dodano nowy moduł w panelu admina do zarządzania przypisaniem miejscowości do handlowców.
   - Ulepszono wyświetlanie informacji o miejscowościach w szczegółach zamówień.
   - Naprawiono błąd związany z dostępem do szczegółów zamówień dla użytkowników z rolą `SALES_REP`.
+
+
+
+
+
+
+Własne teksty
+Od razu wszystko przeprojektój bez pół środków. Zaprojektój plan , wdróż go krok o kroku. Wykonaj testy jednostkowe, uzupełnij dokumentcję. 

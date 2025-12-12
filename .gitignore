@@ -9,3 +9,5 @@ Thumbs.db
 # Pliki środowiskowe
 .env
 .env.*
+ 
+LOCAL_NOTES/

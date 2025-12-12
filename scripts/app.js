@@ -49,6 +49,7 @@ const cartTotal = document.querySelector('#cart-total');
 const clearCartBtn = document.getElementById('clear-cart');
 const exportBtn = document.getElementById('export-json');
 const submitOrderBtn = document.getElementById('submit-order');
+const submitOrderInlineBtn = document.getElementById('submit-order-inline');
 const statusMessage = document.getElementById('status-message');
 const cartStatus = document.getElementById('cart-status');
 const downloadLink = document.getElementById('download-link');
@@ -68,6 +69,7 @@ const orderCustomerNameEl = document.getElementById('order-customer-name');
 const orderCustomerSearchInput = document.getElementById('order-customer-search');
 const orderCustomerSelectEl = document.getElementById('order-customer-select');
 const orderAddCustomerBtn = document.getElementById('order-add-customer-btn');
+const orderDeliveryDateInput = document.getElementById('order-delivery-date');
 const sortNewFirstCheckbox = document.getElementById('sort-new-first');
 const sortAvailableFirstCheckbox = document.getElementById('sort-available-first');
 
@@ -1629,6 +1631,34 @@ async function submitOrder() {
       return;
     }
 
+    const deliveryInput = orderDeliveryDateInput || document.getElementById('order-delivery-date');
+    if (deliveryInput) {
+      deliveryInput.classList.remove('field__input--error');
+    }
+    const rawDeliveryDate = deliveryInput && typeof deliveryInput.value === 'string' ? deliveryInput.value.trim() : '';
+
+    if (!rawDeliveryDate) {
+      if (deliveryInput) {
+        deliveryInput.classList.add('field__input--error');
+      }
+      setStatus('Ustaw datę "Na kiedy potrzebne" przed wysłaniem zamówienia.', 'error', 'cart');
+      return;
+    }
+
+    const now = new Date();
+    const nowYear = now.getFullYear();
+    const nowMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const nowDay = String(now.getDate()).padStart(2, '0');
+    const todayStr = `${nowYear}-${nowMonth}-${nowDay}`;
+
+    if (rawDeliveryDate < todayStr) {
+      if (deliveryInput) {
+        deliveryInput.classList.add('field__input--error');
+      }
+      setStatus('Data "Na kiedy potrzebne" nie może być z przeszłości.', 'error', 'cart');
+      return;
+    }
+
     // Budowanie listy items
     const items = [];
     for (const [key, item] of cart.entries()) {
@@ -1690,7 +1720,8 @@ async function submitOrder() {
 
     const payload = {
       customerId: currentCustomer.id,
-      notes: orderGeneralNotes || null,  // Uwagi ogólne do zamówienia
+      deliveryDate: rawDeliveryDate,
+      notes: orderGeneralNotes || null,
       items,
     };
 
@@ -3648,6 +3679,152 @@ function initialize() {
     searchForm.addEventListener('submit', searchProducts);
   }
 
+  if (orderDeliveryDateInput) {
+    try {
+      const now = new Date();
+      const todayYear = now.getFullYear();
+      const todayMonth = String(now.getMonth() + 1).padStart(2, '0');
+      const todayDay = String(now.getDate()).padStart(2, '0');
+      const todayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+
+      const defaultDate = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
+      const defYear = defaultDate.getFullYear();
+      const defMonth = String(defaultDate.getMonth() + 1).padStart(2, '0');
+      const defDay = String(defaultDate.getDate());
+      const defDayPadded = String(defDay).padStart(2, '0');
+      const defaultStr = `${defYear}-${defMonth}-${defDayPadded}`;
+
+      orderDeliveryDateInput.min = todayStr;
+      if (!orderDeliveryDateInput.value) {
+        orderDeliveryDateInput.value = defaultStr;
+      }
+
+      const quickButtons = document.querySelectorAll('.order-delivery__quick-btn');
+      if (quickButtons && quickButtons.length) {
+        quickButtons.forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const offsetDays = parseInt(btn.dataset.offset, 10) || 0;
+            const base = new Date();
+            base.setHours(0, 0, 0, 0);
+            base.setDate(base.getDate() + offsetDays);
+            const year = base.getFullYear();
+            const month = String(base.getMonth() + 1).padStart(2, '0');
+            const day = String(base.getDate()).padStart(2, '0');
+            let value = `${year}-${month}-${day}`;
+
+            const min = orderDeliveryDateInput.min;
+            if (min && value < min) {
+              value = min;
+            }
+
+            orderDeliveryDateInput.value = value;
+            orderDeliveryDateInput.classList.remove('field__input--error');
+          });
+        });
+      }
+
+      // Próba pobrania konfigurowalnych presetów z backendu
+      try {
+        fetch('/api/config/order-delivery-presets', { credentials: 'include' })
+          .then((response) => {
+            if (!response || !response.ok) return null;
+            return response.json().catch(() => null);
+          })
+          .then((json) => {
+            if (!json || json.status !== 'success' || !Array.isArray(json.data) || !json.data.length) {
+              return;
+            }
+
+            const presets = json.data;
+            const quickContainer = document.querySelector('.order-delivery__quick');
+            if (!quickContainer) return;
+
+            // Przebuduj przyciski na podstawie presetów z bazy
+            quickContainer.innerHTML = '';
+
+            const computeDateFromPreset = (preset) => {
+              if (!preset) return null;
+
+              const mode = (typeof preset.mode === 'string' ? preset.mode : 'OFFSET').toUpperCase();
+
+              // FIXED_DATE: używamy konkretnej daty z bazy
+              if (mode === 'FIXED_DATE' && typeof preset.fixedDate === 'string' && preset.fixedDate) {
+                let value = preset.fixedDate;
+                // Przytnij do dzisiaj, jeśli data jest w przeszłości
+                const min = orderDeliveryDateInput.min || todayStr;
+                if (min && value < min) {
+                  value = min;
+                }
+                return value;
+              }
+
+              // OFFSET (domyślny)
+              const offset = Number(preset.offsetDays);
+              if (!Number.isFinite(offset)) return null;
+
+              const base = new Date();
+              base.setHours(0, 0, 0, 0);
+              base.setDate(base.getDate() + offset);
+              const year = base.getFullYear();
+              const month = String(base.getMonth() + 1).padStart(2, '0');
+              const day = String(base.getDate()).padStart(2, '0');
+              let value = `${year}-${month}-${day}`;
+
+              const min = orderDeliveryDateInput.min || todayStr;
+              if (min && value < min) {
+                value = min;
+              }
+
+              return value;
+            };
+
+            const attachHandler = (btnEl, preset) => {
+              btnEl.addEventListener('click', () => {
+                const value = computeDateFromPreset(preset);
+                if (!value) return;
+
+                orderDeliveryDateInput.value = value;
+                orderDeliveryDateInput.classList.remove('field__input--error');
+              });
+            };
+
+            presets.forEach((preset) => {
+              if (!preset) return;
+
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'order-delivery__quick-btn';
+              btn.dataset.mode = (preset.mode || 'OFFSET');
+              if (typeof preset.offsetDays === 'number') {
+                btn.dataset.offset = String(preset.offsetDays);
+              }
+              btn.textContent = preset.label || (typeof preset.offsetDays === 'number' ? `${preset.offsetDays} dni` : 'Preset');
+
+              quickContainer.appendChild(btn);
+              attachHandler(btn, preset);
+            });
+
+            // Ustaw domyślny preset, jeśli jest zdefiniowany
+            const defaultPreset = json.defaultPreset || presets.find((p) => p && p.isDefault) || null;
+            if (defaultPreset) {
+              const defaultValue = computeDateFromPreset(defaultPreset);
+              if (defaultValue && (!orderDeliveryDateInput.value || orderDeliveryDateInput.value === defaultStr)) {
+                orderDeliveryDateInput.value = defaultValue;
+              }
+            }
+          })
+          .catch(() => {
+            // Ciche pominięcie błędu – w razie problemu zostają statyczne presety
+          });
+      } catch (e) {
+        // W razie problemu z fetch po prostu zostawiamy statyczne presety
+        console.warn('Nie udało się pobrać presetów terminów dostawy z API:', e);
+      }
+    } catch (e) {
+      console.warn('Nie udało się ustawić domyślnej daty dostawy:', e);
+    }
+  }
+
   if (clearCartBtn) {
     clearCartBtn.addEventListener('click', clearCart);
   }
@@ -3659,6 +3836,10 @@ function initialize() {
 
   if (submitOrderBtn) {
     submitOrderBtn.addEventListener('click', submitOrder);
+  }
+
+  if (submitOrderInlineBtn) {
+    submitOrderInlineBtn.addEventListener('click', submitOrder);
   }
 
   if (exportPdfBtn) {
@@ -4055,7 +4236,7 @@ function initOrderCustomerControls() {
 
   if (orderAddCustomerBtn) {
     orderAddCustomerBtn.addEventListener('click', () => {
-      window.open('/clients?new=1', '_blank');
+      window.location.href = '/clients?new=1';
     });
   }
 

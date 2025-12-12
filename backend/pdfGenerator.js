@@ -999,7 +999,7 @@ function createPackingListPDF(packingData) {
                .fillColor('#9ca3af')
                .text(
                    `Wygenerowano: ${new Date().toLocaleString('pl-PL')} | ` +
-                   `Zamówienie: ${packingData.orderNumber}`,
+                   `Zlecenie: ${workOrderData.workOrderNumber}`,
                    40, 800, { align: 'center', width: 515 }
                );
 

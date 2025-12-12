@@ -50,14 +50,48 @@ Ten dokument definiuje jednolite słownictwo używane w Panelu Produkcyjnym syst
 
 ---
 
-## 👥 Role i Użytkownicy Produkcyjni
+## 👥 Role i Użytkownicy Produkcyjni (MES-compliant)
 
-| Rola | Zakres odpowiedzialności | Kluczowe uprawnienia |
-|------|-------------------------|----------------------|
-| **Operator produkcyjny** | Wykonywanie operacji na stanowisku | Rozpoczęcie/zakończenie zadań, zgłaszanie problemów |
-| **Kierownik produkcji** | Planowanie i nadzór produkcji | Tworzenie zleceń, harmonogramowanie, raporty |
-| **Mistrz produkcji** | Bezpośredni nadzór operacyjny | Przydział zadań, kontrola jakości |
-| **Technik utrzymania ruchu** | Konserwacja stanowisk | Statusy stanowisk, planowanie przeglądów |
+### Role systemowe produkcji
+
+| Rola (enum) | Nazwa polska | Zakres odpowiedzialności | Poziom dostępu |
+|-------------|--------------|--------------------------|----------------|
+| **ADMIN** | Administrator | Pełna kontrola systemu | FULL |
+| **PRODUCTION_MANAGER** | Manager Produkcji | Zarządzanie wszystkimi pokojami, planowanie | MANAGE |
+| **PRODUCTION** | Brygadzista | Nadzór operacyjny, przydział zadań | OPERATE |
+| **OPERATOR** | Operator Produkcji | Wykonywanie operacji na stanowisku | OPERATE (tylko przypisany pokój) |
+| **GRAPHIC_DESIGNER** | Grafik | Przygotowanie projektów graficznych | VIEW |
+
+### Poziomy dostępu do pokoju (RoomAccessLevel)
+
+| Poziom | Opis | Uprawnienia |
+|--------|------|-------------|
+| **FULL** | Pełny dostęp | Wszystkie operacje + konfiguracja systemu |
+| **MANAGE** | Zarządzanie | Przypisania maszyn, operatorów, edycja pokoju |
+| **OPERATE** | Operowanie | Rozpoczęcie/zakończenie operacji, zgłaszanie problemów |
+| **VIEW** | Podgląd | Tylko odczyt danych pokoju |
+| **NONE** | Brak dostępu | Brak dostępu do pokoju |
+
+### Specjalne role w pokoju
+
+| Rola | Pole w bazie | Uprawnienia |
+|------|--------------|-------------|
+| **Room Manager** | `ProductionRoom.roomManagerUserId` | MANAGE dla danego pokoju |
+| **Supervisor** | `ProductionRoom.supervisorId` | MANAGE dla danego pokoju |
+| **Przypisany Operator** | `UserRoleAssignment` + `productionRoomId` | OPERATE dla przypisanego pokoju |
+
+### Wielorole (Multi-role)
+
+System wspiera przypisanie wielu ról do jednego użytkownika:
+- Użytkownik może mieć **rolę główną** (`User.role`) i **role dodatkowe** (`UserRoleAssignment`)
+- Przełączanie aktywnej roli przez endpoint `POST /api/auth/active-role`
+- Przykład: Brygadzista (PRODUCTION) może mieć też rolę GRAPHIC_DESIGNER
+
+### Legacy roles
+
+| Rola | Status | Migracja |
+|------|--------|----------|
+| **GRAPHICS** | Deprecated | → GRAPHIC_DESIGNER |
 
 ---
 
@@ -85,7 +119,8 @@ Ten dokument definiuje jednolite słownictwo używane w Panelu Produkcyjnym syst
 | **Wykończenie** | Polerowanie | Wygładzanie powierzchni | Polerka, Szlifierka |
 | | Montaż | Składanie elementów | Stanowisko montażowe |
 | | Pakowanie | Finalne przygotowanie | Stanowisko pakowania |
-| **Przygotowanie** | Przygotowanie matryc | Tworzenie form do produkcji | Stanowisko przygotowania |
+| **Przygotowanie** | Przygotowanie matryc | Tworzenie form do produkcji / impozycja | Stanowisko przygotowania / dział Grafika |
+| | Przygotowanie plików projektu (Grafika) | Projektowanie / obróbka plików przed produkcją; wykonywane w dziale Grafika, gdy w zamówieniu nie podano numerów projektów | Moduł Grafika (GraphicTask), krok PREP w ścieżce produkcyjnej |
 | | Przygotowanie materiałów | Cięcie surowców | Ploter tnący, Gilotyna |
 
 ---
@@ -108,7 +143,8 @@ Ten dokument definiuje jednolite słownictwo używane w Panelu Produkcyjnym syst
 ### **Tabele bazodanowe:**
 ```sql
 ProductionRoom      -- Pokój produkcyjny
-WorkCenter         -- Gniazdo produkcyjne  
+WorkCenterType     -- Typ gniazda produkcyjnego (słownik: laser_co2, uv_print, cnc...)
+WorkCenter         -- Gniazdo produkcyjne (powiązane z WorkCenterType przez workCenterTypeId)
 WorkStation        -- Stanowisko robocze
 ProductionPath     -- Ścieżka produkcyjna
 ProductionOrder    -- Pozycja zlecenia produkcyjnego (rekord dla pojedynczej pozycji zamówienia)
@@ -121,18 +157,19 @@ GraphicTask        -- Zadanie graficzne
 
 ### **Endpointy API:**
 ```javascript
-/api/production/rooms           -- Zarządzanie pokojami
-/api/production/work-centers    -- Zarządzanie gniazdami
-/api/production/work-stations   -- Zarządzanie stanowiskami
-/api/production/paths           -- Ścieżki produkcyjne
-/api/production/orders          -- Zlecenia produkcyjne
-/api/production/operations      -- Operacje technologiczne
+/api/production/rooms              -- Zarządzanie pokojami
+/api/production/work-center-types  -- Słownik typów gniazd (CRUD)
+/api/production/work-centers       -- Zarządzanie gniazdami
+/api/production/work-stations      -- Zarządzanie stanowiskami
+/api/production/paths              -- Ścieżki produkcyjne
+/api/production/orders             -- Zlecenia produkcyjne
+/api/production/operations         -- Operacje technologiczne
 ```
 
 ### **Interfejs użytkownika:**
 - **Panel operatora:** "Moje zadania", "Aktualna operacja"
 - **Panel kierownika:** "Harmonogram produkcji", "Ścieżki produktów"
-- **Panel admina:** "Zarządzanie gniazdami", "Konfiguracja stanowisk"
+- **Panel admina:** "Typy gniazd", "Zarządzanie gniazdami", "Konfiguracja stanowisk"
 
 ### **Komunikaty systemowe:**
 - "Rozpocznij operację: Grawerowanie laserowe"
@@ -178,8 +215,13 @@ GraphicTask        -- Zadanie graficzne
 
 ---
 
-**Wersja dokumentu:** 1.0  
+**Wersja dokumentu:** 1.2  
 **Data utworzenia:** 2025-12-01  
+**Data aktualizacji:** 2025-12-11  
 **Autor:** System ZAMÓWIENIA Development Team
+
+*Aktualizacja 1.2: Dodano tabelę `WorkCenterType` jako słownik typów gniazd produkcyjnych, endpoint API `/api/production/work-center-types` oraz widok "Typy gniazd" w panelu admina.*
+
+*Aktualizacja 1.1: Dodano szczegółowy opis ról produkcyjnych MES-compliant, poziomów dostępu do pokojów i systemu wieloról.*
 
 *Ten słownik stanowi oficjalne źródło terminologii dla Panelu Produkcyjnego i powinien być konsultowany przy wszystkich zmianach w kodzie, dokumentacji i interfejsie użytkownika.*

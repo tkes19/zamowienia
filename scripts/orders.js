@@ -1143,6 +1143,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const isEditMode = ordersInEditMode.has(order.id);
             const canEdit = canEditOrder(fullOrder);
             const canDeleteItems = ['SALES_DEPT', 'ADMIN'].includes(currentUserRole) && ['PENDING', 'APPROVED'].includes(fullOrder.status);
+            const canPrintZP = ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER', 'PRODUCTION', 'OPERATOR']
+                .includes(currentUserRole) || (currentUserRole === 'SALES_REP' && fullOrder.userId === currentUserId);
             
             const itemsHtml = orderItems.map(item => {
                 const identifier = item.Product?.identifier || '-';
@@ -1367,10 +1369,12 @@ document.addEventListener('DOMContentLoaded', () => {
                                             <i class="fas fa-file-invoice text-blue-600 mr-2"></i>
                                             Zamówienie (z cenami)
                                         </button>
+                                        ${canPrintZP ? `
                                         <button onclick="printProductionWorkOrders('${fullOrder.id}')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
                                             <i class="fas fa-industry text-orange-600 mr-2"></i>
                                             Zlecenia produkcyjne (PDF)
                                         </button>
+                                        ` : ''}
                                         <button onclick="printPackingList('${fullOrder.id}')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 flex items-center">
                                             <i class="fas fa-box-open text-green-600 mr-2"></i>
                                             Lista kompletacyjna (PDF)
@@ -1591,9 +1595,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 credentials: 'include'
             });
 
+            const isSalesRep = currentUserRole === 'SALES_REP';
+
             if (!response.ok) {
                 console.error('Błąd pobierania zleceń produkcyjnych:', response.status, response.statusText);
-                showToast('Nie udało się pobrać zleceń produkcyjnych dla tego zamówienia', 'error');
+                const message = isSalesRep
+                    ? 'Nie udało się pobrać zleceń produkcyjnych (ZP). Spróbuj ponownie za chwilę.'
+                    : 'Nie udało się pobrać zleceń produkcyjnych (ZP). Odśwież widok i spróbuj ponownie.';
+                showToast(message, 'error');
                 return;
             }
 
@@ -1601,7 +1610,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const workOrders = Array.isArray(result.data) ? result.data : [];
 
             if (workOrders.length === 0) {
-                showToast('Brak zleceń produkcyjnych dla tego zamówienia', 'warning');
+                const message = isSalesRep
+                    ? 'To zamówienie nie ma jeszcze zleceń produkcyjnych (ZP). Skontaktuj się z działem sprzedaży w biurze, aby przekazać je na produkcję.'
+                    : 'Brak zleceń produkcyjnych (ZP) dla tego zamówienia. Prawdopodobnie nie zostało jeszcze przekazane na produkcję.';
+                showToast(message, 'warning');
                 return;
             }
 
@@ -1612,16 +1624,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Więcej niż jedno zlecenie - otwórz wszystkie w osobnych kartach
-            workOrders.forEach(w => {
-                const url = `/api/production/work-orders/${w.id}/print`;
-                window.open(url, '_blank');
-            });
+            // Więcej niż jedno zlecenie - użyj połączonego PDF
+            console.log(`[printProductionWorkOrders] Generowanie połączonego PDF dla ${workOrders.length} zleceń produkcyjnych`);
+            
+            const url = `/api/orders/${orderId}/production-work-orders/print`;
+            window.open(url, '_blank');
 
             showToast(`Otworzono ${workOrders.length} zleceń produkcyjnych do druku`, 'success');
         } catch (error) {
             console.error('Błąd druku zleceń produkcyjnych:', error);
-            showToast('Błąd druku zleceń produkcyjnych', 'error');
+            const isSalesRep = currentUserRole === 'SALES_REP';
+            const message = isSalesRep
+                ? 'Wystąpił błąd podczas generowania zleceń produkcyjnych (ZP). Spróbuj ponownie za chwilę.'
+                : 'Wystąpił błąd podczas generowania zleceń produkcyjnych (ZP). Jeśli problem się powtarza, zgłoś to do administratora.';
+            showToast(message, 'error');
         }
     }
 

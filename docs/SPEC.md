@@ -113,7 +113,7 @@ UserFavorites (id, userId, type, itemId, displayName, metadata, createdAt)
 
 ```sql
 -- Zamówienia
-Order (id, orderNumber, customerId, userId, status, total, notes, createdAt, updatedAt)
+Order (id, orderNumber, customerId, userId, status, total, deliveryDate, priority, notes, createdAt, updatedAt)
 
 -- Pozycje zamówienia
 OrderItem (
@@ -329,6 +329,24 @@ Powód:
 | `/api/orders/:id/status` | PATCH | Zmiana statusu | Zależne od roli |
 | `/api/orders/:id/history` | GET | Historia zmian | Wszystkie |
 
+#### 6.2.1. POST `/api/orders` – pola związane z terminem dostawy
+
+Endpoint tworzenia zamówienia przyjmuje dodatkowe pole:
+
+- `deliveryDate` – **wymagane** pole daty w formacie `YYYY-MM-DD`, odpowiadające polu formularza „Na kiedy potrzebne”.
+
+Zasady walidacji:
+
+- jeśli `deliveryDate` jest puste lub brak pola → `400` z komunikatem `deliveryDate jest wymagane (data "Na kiedy potrzebne")`,
+- jeśli `deliveryDate` nie da się sparsować jako poprawnej daty → `400` z komunikatem o nieprawidłowym formacie,
+- jeśli `deliveryDate` < **dzisiaj** (porównanie po dacie, bez czasu) → `400` z komunikatem `deliveryDate nie może być datą z przeszłości`.
+
+Zapis w bazie:
+
+- kolumna `Order.deliveryDate` (TIMESTAMPTZ) przechowuje termin wymagany,
+- kolumna `Order.priority` (INT, domyślnie `3`) może zostać w przyszłości nadpisana przez moduł auto‑priorytetu produkcyjnego,
+- historyczne zamówienia utworzone przed dodaniem pola mogą mieć `deliveryDate = NULL` – w module produkcji są traktowane jako `timeStatus = 'UNKNOWN'`.
+
 ### 6.3. Galeria (proxy do QNAP)
 
 | Endpoint | Metoda | Opis |
@@ -391,32 +409,276 @@ oraz w przyszłości przez panel produkcyjny.
   opartą o `identifier` (Identyfikator) oraz dopiskiem nazwy projektu. Produkty bez mapowania nadal są
   dostępne na liście na podstawie danych z galerii.
 
+### 6.9. Presety terminów dostawy (OrderDeliveryPreset)
 
-### 6.7. Stan formularza zamówień w localStorage
+Presety terminów dostawy są używane w formularzu zamówień jako przyciski pod polem daty „Na kiedy potrzebne”.
+Są konfigurowane w panelu admina i wykorzystywane przez frontend do szybkiego ustawiania `deliveryDate`.
 
-- **Zakres:** dotyczy wyłącznie frontendu (przeglądarka użytkownika). Dane nie są synchronizowane z backendem.
-- **Klucze:**
-  - `rezonCartV1` – serializowany stan koszyka (pozycje, ilości, uwagi). Zapisywany przy każdej zmianie koszyka
-    (dodanie/edycja/usunięcie pozycji, wczytanie szablonu). Czyści się przy ręcznym „Wyczyść koszyk” oraz po
-    poprawnym wysłaniu zamówienia.
-  - `rezonGalleryStateV1` – ostatnio użyte ustawienia galerii:
-    - tryb PM: `pmCity`, `pmProductSlug`,
-    - tryb KI: `kiSalesperson`, `kiObject`, `kiProductSlug`.
-- **Odtwarzanie stanu:** przy starcie formularza odczytywany jest zapisany stan. Zapisany produkt
-  jest ustawiany tylko wtedy, gdy nadal istnieje w danych zwróconych przez API
-  (`/api/gallery/products/:city` lub `/api/gallery/products-object`). W przeciwnym razie select produktu
-  pozostaje pusty.
+Model danych:
 
-### 6.8. Logika ilości i numerów projektów (frontend)
+- tabela `OrderDeliveryPreset`:
+  - `id` – klucz główny,
+  - `label` – etykieta widoczna w UI (np. `Standard (5 dni)`, `Na Sezon 1.04.2026`),
+  - `mode` – tryb obliczania daty: `OFFSET` lub `FIXED_DATE`,
+  - `offsetDays` – liczba dni od dzisiaj (dla trybu `OFFSET`),
+  - `fixedDate` – konkretna data kalendarzowa (dla trybu `FIXED_DATE`),
+  - `isDefault` – czy preset jest domyślnym wyborem w formularzu,
+  - `isActive` – czy preset jest widoczny w UI,
+  - `sortOrder` – kolejność wyświetlania.
 
-Formularz zamówień i koszyk używają jednej spójnej logiki rozkładu ilości na projekty (`computePerProjectQuantities`).
-Użytkownik może podać:
-- łączną ilość (`Ilość`), albo
-- ilości na projekty (`Ilości na proj.`: "po X" lub lista liczb).
+Endpointy backendu:
 
-Źródło prawdy oznaczane jest w pozycji koszyka polem `quantitySource` (`total` lub `perProject`). Numery projektów i
-ilości są po stronie frontendu zawsze oczyszczane (usuwanie zbędnych przecinków, spacji), a drobne błędy formatu są
-naprawiane bez wyświetlania komunikatów błędu użytkownikowi.
+| Endpoint | Metoda | Opis | Role |
+|----------|--------|------|------|
+| `/api/config/order-delivery-presets` | GET | Publiczna lista aktywnych presetów do formularza zamówień (dla frontendu) | Zalogowani / publiczne UI |
+| `/api/admin/order-delivery-presets` | GET | Lista wszystkich presetów (z polami administracyjnymi) | ADMIN |
+| `/api/admin/order-delivery-presets` | POST | Utworzenie nowego preset-u | ADMIN |
+| `/api/admin/order-delivery-presets/:id` | PATCH | Aktualizacja istniejącego preset-u | ADMIN |
+| `/api/admin/order-delivery-presets/:id` | DELETE | Usunięcie preset-u | ADMIN |
+
+ - Zasady:
+   - w danym momencie co najwyżej jeden rekord może mieć `isDefault = true` (backend po POST/PATCH czyści flagę na innych rekordach),
+   - frontend formularza zawsze ma statyczne presety fallback (`Ekspres 2 dni`, `Standard 5 dni`, `Duże nakłady 10 dni`) –
+     jeśli `/api/config/order-delivery-presets` działa poprawnie, dynamiczne presety z bazy nadpisują te wartości,
+   - dla `mode = 'FIXED_DATE'` frontend pilnuje, aby ustawiona data nie była wcześniejsza niż dzisiejsza (`min = today`).
+
+### 6.10. Plan wdrożenia ulepszeń UX formularza zamówień
+
+Plan opisuje kolejne iteracje poprawiające użyteczność formularza zamówień dla handlowców
+i nowych użytkowników. Implementacja powinna być wykonywana etapami, bez
+przerywania istniejącego workflow zamówień i produkcji.
+
+#### 6.10.1. Wskaźnik postępu ("kroki" formularza)
+
+**Cel:** Pokazać użytkownikowi, na jakim etapie procesu zamówienia się znajduje i
+jakie elementy musi jeszcze uzupełnić.
+
+- Widoczne kroki (propozycja):
+  - `1. Produkt` – wybór miasta/obiektu i produktu (galeria),
+  - `2. Szczegóły` – parametry produktu i koszyk,
+  - `3. Klient` – wybór klienta,
+  - `4. Dostawa` – "Na kiedy potrzebne" + opcje wysyłki.
+- Pliki:
+  - `index.html` – pasek kroków nad głównymi panelami, klasy np. `order-steps`, `order-step--active`.
+  - `assets/styles.css` – stylowanie paska kroków (flex, kolory, responsywność).
+  - `scripts/app.js` – logika `currentStep`, `goToStep(step)`, `updateStepIndicator()`.
+- Zdarzenia zmieniające krok:
+  - dodanie pierwszej pozycji do koszyka → krok "Szczegóły"/"Klient",
+  - ustawienie klienta → krok "Dostawa",
+  - uzupełnienie daty dostawy → wszystkie kroki oznaczone jako kompletne.
+- Kryteria akceptacji:
+  - nowy użytkownik rozumie z samego UI, że proces ma 3–4 kroki,
+  - na każdym etapie widzi, które elementy są jeszcze wymagane (np. krok wyszarzony / czerwony, gdy brakuje danych).
+
+#### 6.10.2. Usprawnione wybieranie produktów (ulubione, ostatnio zamawiane, kategorie)
+
+**Cel:** Zmniejszyć czas wyszukiwania produktów, szczególnie dla handlowców, którzy
+często zamawiają powtarzalne pozycje.
+
+- Wykorzystywane dane:
+  - historia zamówień z tabel `Order`/`OrderItem` (ostatnio zamawiane produkty),
+  - tabela `UserFavorites` (`type = 'product'` lub analogiczny) – ulubione produkty,
+  - `Product.category` – kategorie produktów (już zdefiniowane w modelu danych).
+- Backend:
+  - ewentualny endpoint pomocniczy, np. `/api/orders/recent-products?customerId=...`
+    albo `/api/orders/recent-products?userScope=me` (ostatnie N produktów).
+- Frontend:
+  - `index.html` – sekcje:
+    - "Ulubione produkty" (lista przycisków / chipów nad selektorem produktu),
+    - "Ostatnio zamawiane" (dla danego klienta lub handlowca),
+    - filtr kategorii (dropdown lub lista chipów obok wyboru produktu).
+  - `scripts/app.js`:
+    - funkcje ładujące ulubione: wykorzystanie istniejącego `/api/favorites`,
+    - funkcje ładujące "ostatnio zamawiane" z nowego endpointu,
+    - integracja z istniejącym wyborem produktu (wybór z ulubionych/ostatnich
+      ustawia bieżący produkt i przełącza krok formularza).
+- Kryteria akceptacji:
+  - handlowiec może utworzyć typowe zamówienie wybierając produkt z "Ulubionych"
+    lub "Ostatnio zamawianych" bez ręcznego filtrowania całej listy.
+
+#### 6.10.3. Smart defaults i auto‑podpowiedzi (termin dostawy i parametry)
+
+**Cel:** Ograniczyć ręczne wpisywanie powtarzalnych danych i ryzyko wyboru
+nierealnych terminów dostawy.
+
+- Wykorzystywane dane:
+  - `OrderDeliveryPreset` (patrz §6.9) – dynamiczne presety terminów,
+  - zawartość koszyka (ilości, typy produktów),
+  - historia zamówień (opcjonalnie) – do heurystyk jak "typowy" termin dla klienta.
+- Frontend (`scripts/app.js`):
+  - funkcja `getSuggestedDeliveryDate(cart, presets)`:
+    - pobiera aktywne presety z `/api/config/order-delivery-presets`,
+    - wybiera preset oznaczony `isDefault = true` albo fallback "Standard (5 dni)",
+    - wyznacza datę wg `mode` (`OFFSET` lub `FIXED_DATE`),
+    - zwraca datę w formacie `YYYY-MM-DD`.
+  - przy pierwszym dodaniu produktu do koszyka:
+    - jeśli pole "Na kiedy potrzebne" jest puste → wstaw datę z `getSuggestedDeliveryDate(...)`.
+- HTML/CSS:
+  - `index.html` – przyciski terminów bazują na danych z API (nie na sztywno),
+    generowane dynamicznie przez JS.
+- Kryteria akceptacji:
+  - w typowym scenariuszu handlowiec akceptuje domyślną datę bez ręcznej zmiany,
+  - daty z presetów zawsze spełniają walidację z §6.2.1 (nie są w przeszłości).
+
+#### 6.10.4. Prewencja błędów i walidacja formularza (frontend)
+
+**Cel:** Zminimalizować liczbę niekompletnych lub błędnych zamówień wysyłanych do
+backendu oraz ryzyko późniejszych problemów w produkcji.
+
+- Zależne od:
+  - reguł walidacji z §6.2.1 (deliveryDate),
+  - wymagań biznesowych: co najmniej 1 pozycja w koszyku, wybrany klient.
+- Frontend:
+  - `scripts/app.js`:
+    - funkcja `validateOrderForm()` zwracająca obiekt z polami błędów,
+    - funkcja `updateSubmitButtonState()`:
+      - blokuje / odblokowuje przycisk "Wyślij zamówienie"
+        (`#submit-order-inline`) w zależności od tego, czy:
+        - koszyk nie jest pusty,
+        - wybrano klienta (`currentCustomer`),
+        - ustawiono poprawną datę dostawy,
+    - obsługa komunikatów błędów:
+      - lekkie komunikaty inline pod polami,
+      - toast z listą błędów przy próbie wysyłki niekompletnego formularza.
+  - `assets/styles.css`:
+    - klasy typu `.field--error`, `.field__error-message` z prostą, spójną
+      kolorystyką błędów.
+- Kryteria akceptacji:
+  - nie ma możliwości kliknięcia "Wyślij zamówienie", jeśli brakuje klienta,
+    daty lub produktów,
+  - błędy są komunikowane wprost, w języku użytkownika (bez technicznych komunikatów).
+
+#### 6.10.5. Optymalizacje mobilne (mobile‑first)
+
+**Cel:** Ułatwić pracę handlowcom w terenie, którzy korzystają głównie z telefonu.
+
+- Frontend – layout:
+  - `index.html`:
+    - opcjonalny pasek akcji na dole ekranu mobilnego (`order-footer-mobile`)
+      z datą "Na kiedy potrzebne" i przyciskiem "Wyślij zamówienie".
+  - `assets/styles.css`:
+    - w `@media (max-width: 768px)`:
+      - stały pasek (`position: fixed; bottom: 0; left: 0; right: 0;`),
+      - większe przyciski (min. 44px wysokości),
+      - kolumnowy układ sekcji klient + dostawa (czytelne bloki jeden pod drugim).
+    - powiększone pola dotykowe dla przycisków szybkich terminów (pełna szerokość
+      w 1–2 rzędach).
+- Kryteria akceptacji:
+  - na urządzeniach mobilnych przycisk "Wyślij zamówienie" oraz data dostawy
+    są zawsze łatwo dostępne (bez przewijania całej strony),
+  - interfejs spełnia minimalne standardy dostępności dotykowej (rozmiar pól).
+
+### 6.11. Rozszerzone scenariusze UX formularza zamówień (przyszłość)
+
+Ta sekcja opisuje **pomysły na kolejne iteracje UX**, które nie są jeszcze
+zaplanowane do natychmiastowego wdrożenia, ale powinny być brane pod uwagę przy
+rozwoju wersji v1.x systemu (warstwa sprzedażowa, formularz zamówień).
+
+#### 6.11.1. Powtórz zamówienie + szybka modyfikacja
+
+**Cel:** Pozwolić handlowcowi w kilka kliknięć odtworzyć typowe zamówienie
+na podstawie wcześniejszego.
+
+- Koncepcja:
+  - przy każdym zamówieniu w widoku `orders.html` widoczny przycisk
+    "Powtórz zamówienie",
+  - nowy koszyk tworzony jest na podstawie `Order` + `OrderItem[]` z wybranego
+    zamówienia,
+  - formularz uzupełnia domyślną datę dostawy (wg logiki smart defaults z §6.10),
+    a użytkownik modyfikuje głównie ilości, datę oraz notatki.
+- Backend – warianty:
+  - **A. Frontend‑only:**
+    - `orders.html` pobiera szczegóły zamówienia z `/api/orders/:id`,
+    - dane pozycji są przekazywane do formularza `/` przez parametr URL
+      (np. `?repeatOrderId=...`) lub `localStorage`,
+    - `scripts/app.js` odtwarza koszyk po stronie przeglądarki.
+  - **B. Endpoint pomocniczy (opcjonalnie):** `POST /api/orders/:id/repeat`
+    - backend tworzy nowy szkic zamówienia (np. w `order_drafts`),
+    - frontend przekierowuje użytkownika do formularza z ID szkicu.
+- Frontend:
+  - `orders.html` / `scripts/orders.js` – przycisk "Powtórz" oraz obsługa
+    akcji (wywołanie API lub zapis do `localStorage`),
+  - `index.html` / `scripts/app.js` – logika odtwarzania koszyka na podstawie
+    przekazanych danych oraz ustawienia nowej daty dostawy.
+- Kryteria akceptacji:
+  - powtórzenie typowego zamówienia wymaga maksymalnie kilku kliknięć
+    (bez ręcznego dodawania każdej pozycji od zera).
+
+#### 6.11.2. Tryb „Szybkie zamówienie” (Quick Order)
+
+**Cel:** Umożliwić doświadczonym handlowcom bardzo szybkie dodawanie pozycji
+na podstawie indeksów / identyfikatorów produktów, bez przechodzenia przez galerię.
+
+- Koncepcja UI:
+  - dedykowany widok (np. `/quick-order`) lub zakładka/tryb w `index.html`,
+  - tabela z kolumnami: `Index/Identyfikator`, `Nazwa`, `Ilość`, `Uwagi`,
+  - pole do wklejenia listy z Excela (np. `INDEX;ILOŚĆ` w nowych liniach).
+- Wykorzystywane dane:
+  - tabela `Product` (kolumny `identifier`, `index`, `name`),
+  - opcjonalnie `UserFavorites` – do podpowiedzi/autouzupełniania.
+- Backend:
+  - brak nowych tabel,
+  - możliwość wykorzystania istniejącego endpointu listy produktów lub dodanie
+    prostego endpointu wyszukującego po `identifier` / `index`.
+- Frontend:
+  - nowy moduł JS (`scripts/quick-order.js` lub sekcja w `scripts/app.js`),
+  - walidacja indeksów (oznaczanie wierszy z błędnymi kodami),
+  - po zatwierdzeniu – konwersja wierszy na pozycje koszyka zgodne z logiką
+    z §6.8 i §6.10.
+- Kryteria akceptacji:
+  - handlowiec znający indeksy produktów może wprowadzić kompletne zamówienie
+    głównie z klawiatury (minimalne użycie myszy / galerii).
+
+#### 6.11.3. Checklisty sprzedażowe (Guided Selling) dla wybranych produktów
+
+**Cel:** Zmniejszyć liczbę błędów i „niedomówień” między sprzedażą a produkcją
+przy bardziej złożonych produktach (np. z hasłami, personalizacją, grafiką).
+
+- Koncepcja:
+  - dla wybranych kategorii produktów (`Product.category`) wyświetlana jest
+    dodatkowa sekcja "Sprawdź przed wysłaniem" z listą punktów do odhaczenia,
+  - przykładowe pozycje checklisty:
+    - "Hasło do nadruku zostało zaakceptowane przez klienta",
+    - "Logo/plik graficzny został dostarczony w wymaganym formacie",
+    - "Uzgodniono kolorystykę / wariant produktu".
+- Możliwe źródła konfiguracji:
+  - prosty słownik po stronie frontendu (pierwsza iteracja),
+  - docelowo tabela konfiguracyjna (np. `ProductChecklistTemplate`) z listą
+    punktów na kategorię / typ produktu.
+- Frontend:
+  - `index.html` / `scripts/app.js` – logika wyświetlania odpowiedniej checklisty
+    w zależności od zawartości koszyka,
+  - stan checklisty może być przechowywany lokalnie (frontend) albo podsumowany
+    tekstowo w `Order.productionNotes` / `OrderItem.productionNotes`.
+- Kryteria akceptacji:
+  - dla produktów wymagających dodatkowych ustaleń użytkownik zawsze widzi
+    jasną listę rzeczy do sprawdzenia **przed wysłaniem** zamówienia.
+
+#### 6.11.4. Widok „Ryzyko dostawy” (powiązanie sprzedaży z obciążeniem produkcji)
+
+**Cel:** Dostarczyć handlowcowi prostą informację zwrotną, czy wybrany termin
+"Na kiedy potrzebne" jest realny przy aktualnym obciążeniu produkcji.
+
+- Koncepcja:
+  - mały panel pod sekcją terminu dostawy, pokazujący status typu:
+    - "Bezpieczny" (zielony),
+    - "Napięty" (żółty),
+    - "Ryzykowny" (czerwony),
+  - status obliczany na podstawie daty `deliveryDate`, łącznej ilości / złożoności
+    zamówienia i uproszczonych danych o obciążeniu produkcji.
+- Backend (docelowo):
+  - endpoint np. `/api/production/capacity-check` przyjmujący dane zamówienia
+    (lub jego podsumowanie) i `deliveryDate`, zwracający status + krótkie uzasadnienie.
+  - w MVP możliwe użycie prostych heurystyk bazujących wyłącznie na dacie
+    i typach produktów (bez pełnego modelu obciążenia).
+- Frontend:
+  - `scripts/app.js` – wywołanie endpointu przy zmianie daty lub istotnych
+    parametrów koszyka,
+  - wizualizacja statusu w formularzu (ikona/kolor + krótki tekst typu
+    "Termin bardzo krótki – skonsultuj z produkcją").
+- Kryteria akceptacji:
+  - handlowiec przed wysłaniem zamówienia widzi jednoznaczny sygnał, czy
+    deklarowany termin mieści się w typowych możliwościach produkcji.
 
 ---
 

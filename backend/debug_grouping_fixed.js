@@ -67,45 +67,45 @@ async function debugGrouping() {
             .eq('id', testOrder.id)
             .single();
     
-    if (order) {
-        console.log(`Zamówienie ID: ${order.id}`);
-        
-        // Pobierz pozycje zamówienia
-        const { data: items } = await supabase
-            .from('OrderItem')
-            .select(`
-                id, quantity,
-                Product(id, name, productionPath)
-            `)
-            .eq('orderId', order.id);
-        
-        console.log(`\nPozycje zamówienia (${items?.length || 0}):`);
-        items?.forEach((item, i) => {
-            console.log(`  ${i+1}. ${item.Product?.name || 'BRAK'}, ilość: ${item.quantity}, ścieżka: ${item.Product?.productionPath || 'BRAK'}`);
-        });
-        
-        // Pobierz zlecenia produkcyjne dla tego zamówienia
-        const { data: prodOrders } = await supabase
-            .from('ProductionOrder')
-            .select('id, workOrderId, quantity, productionpathexpression')
-            .eq('sourceorderid', order.id);
-        
-        console.log(`\nZlecenia produkcyjne (${prodOrders?.length || 0}):`);
-        prodOrders?.forEach((po, i) => {
-            console.log(`  ${i+1}. ID: ${po.id}, workOrderId: ${po.workOrderId}, ilość: ${po.quantity}, ścieżka: ${po.productionpathexpression}`);
-        });
-        
-        // Pobierz ProductionWorkOrder dla tego zamówienia
-        const { data: workOrdersForOrder } = await supabase
-            .from('ProductionWorkOrder')
-            .select('id, workOrderNumber, roomName, status')
-            .eq('sourceOrderId', order.id)
-            .order('workOrderNumber');
-        
-        console.log(`\nProductionWorkOrder dla zamówienia (${workOrdersForOrder?.length || 0}):`);
-        workOrdersForOrder?.forEach((wo, i) => {
-            console.log(`  ${i+1}. ID: ${wo.id}, numer: ${wo.workOrderNumber}, pokój: ${wo.roomName}, status: ${wo.status}`);
-        });
+        if (order) {
+            console.log(`Zamówienie ID: ${order.id}`);
+            
+            // Pobierz pozycje zamówienia
+            const { data: items } = await supabase
+                .from('OrderItem')
+                .select(`
+                    id, quantity,
+                    Product(id, name, productionPath)
+                `)
+                .eq('orderId', order.id);
+            
+            console.log(`\nPozycje zamówienia (${items?.length || 0}):`);
+            items?.forEach((item, i) => {
+                console.log(`  ${i+1}. ${item.Product?.name || 'BRAK'}, ilość: ${item.quantity}, ścieżka: ${item.Product?.productionPath || 'BRAK'}`);
+            });
+            
+            // Pobierz zlecenia produkcyjne dla tego zamówienia
+            const { data: prodOrders } = await supabase
+                .from('ProductionOrder')
+                .select('id, workOrderId, quantity, productionpathexpression')
+                .eq('sourceorderid', order.id);
+            
+            console.log(`\nZlecenia produkcyjne (${prodOrders?.length || 0}):`);
+            prodOrders?.forEach((po, i) => {
+                console.log(`  ${i+1}. ID: ${po.id}, workOrderId: ${po.workOrderId}, ilość: ${po.quantity}, ścieżka: ${po.productionpathexpression}`);
+            });
+            
+            // Pobierz ProductionWorkOrder dla tego zamówienia
+            const { data: workOrdersForOrder } = await supabase
+                .from('ProductionWorkOrder')
+                .select('id, workOrderNumber, roomName, status')
+                .eq('sourceOrderId', order.id)
+                .order('workOrderNumber');
+            
+            console.log(`\nProductionWorkOrder dla zamówienia (${workOrdersForOrder?.length || 0}):`);
+            workOrdersForOrder?.forEach((wo, i) => {
+                console.log(`  ${i+1}. ID: ${wo.id}, numer: ${wo.workOrderNumber}, pokój: ${wo.roomName}, status: ${wo.status}`);
+            });
         }
     }
 }

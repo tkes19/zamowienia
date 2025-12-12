@@ -67,6 +67,46 @@ function isOverdue(dateStr) {
     return dueDate < today;
 }
 
+/**
+ * Formatuje czas do terminu w czytelny sposób
+ * @param {number} minutes - Czas w minutach (może być ujemny)
+ * @returns {string} - np. "2 dni", "5h", "Przeterminowane: 3h"
+ */
+function formatTimeToDeadline(minutes) {
+    if (minutes === null || minutes === undefined) return '';
+    
+    const absMinutes = Math.abs(minutes);
+    const isOverdue = minutes < 0;
+    
+    let text;
+    if (absMinutes < 60) {
+        text = `${absMinutes} min`;
+    } else if (absMinutes < 24 * 60) {
+        const hours = Math.floor(absMinutes / 60);
+        text = `${hours}h`;
+    } else {
+        const days = Math.floor(absMinutes / (24 * 60));
+        const remainingHours = Math.floor((absMinutes % (24 * 60)) / 60);
+        text = remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days} dni`;
+    }
+    
+    return isOverdue ? `Przeterminowane: ${text}` : `Pozostało: ${text}`;
+}
+
+/**
+ * Zwraca klasę CSS dla timeStatus
+ * @param {string} timeStatus - ON_TIME, AT_RISK, OVERDUE, UNKNOWN
+ * @returns {string} - Klasa CSS
+ */
+function getTimeStatusClass(timeStatus) {
+    switch (timeStatus) {
+        case 'OVERDUE': return 'time-status-overdue';
+        case 'AT_RISK': return 'time-status-at-risk';
+        case 'ON_TIME': return 'time-status-on-time';
+        default: return 'time-status-unknown';
+    }
+}
+
 // Formatuj czas trwania (sekundy -> MM:SS lub HH:MM:SS)
 function formatDuration(seconds) {
     const hrs = Math.floor(seconds / 3600);
@@ -215,6 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAuth();
     initViewSettings();
     setupProductImageModal();
+    initKpiDashboard(); // Inicjalizacja dashboardu KPI
     loadOrders();
     loadStats();
     initViewSettings();
@@ -1176,8 +1217,12 @@ function renderOrderCard(order) {
     const projectQuantities = orderItem.projectQuantities || '';
     const productionNotes = orderItem.productionNotes || order.productionnotes || '';
     const quantitySource = orderItem.source || 'MIEJSCOWOSCI';
-    // dueDate - na razie nie używamy, bo kolumna nie istnieje w Order
-    const dueDate = null;
+    
+    // Dane czasowe z auto-priorytetu (z backendu)
+    const deliveryDate = order.deliveryDate || sourceOrder.deliveryDate || null;
+    const timeStatus = order.timeStatus || 'UNKNOWN';
+    const timeToDeadlineMinutes = order.timeToDeadlineMinutes;
+    const computedPriority = order.computedPriority || order.priority || 3;
     
     // Szacowany czas (prosty algorytm: ~30 sek na sztukę dla lasera)
     const estimatedMinutes = Math.ceil((order.quantity || 0) * 0.5); // 30 sek/szt
@@ -1186,7 +1231,8 @@ function renderOrderCard(order) {
         : `~${Math.floor(estimatedMinutes/60)}h ${estimatedMinutes%60}min`;
     
     const statusClass = order.status.replace('_', '-');
-    const priorityClass = `p${order.priority || 3}`;
+    const priorityClass = `p${computedPriority}`;
+    const timeStatusClass = getTimeStatusClass(timeStatus);
     
     const statusLabels = {
         'planned': 'Zaplanowane',
@@ -1217,7 +1263,7 @@ function renderOrderCard(order) {
                 </div>
                 <div class="prod-order-status">
                     <span class="prod-status-badge ${order.status}">${statusLabels[order.status] || order.status}</span>
-                    <span class="prod-priority-badge ${priorityClass}">${order.priority || 3}</span>
+                    <span class="prod-priority-badge ${priorityClass}" title="Priorytet: ${computedPriority} (${timeStatus})">${computedPriority}</span>
                 </div>
             </div>
             
@@ -1266,11 +1312,11 @@ function renderOrderCard(order) {
                     ` : ''}
                 </div>
                 
-                ${dueDate ? `
-                    <div class="prod-due-date ${isOverdue(dueDate) ? 'overdue' : ''}">
+                ${deliveryDate ? `
+                    <div class="prod-due-date ${getTimeStatusClass(timeStatus)}">
                         <i class="fas fa-calendar-alt"></i>
-                        <span>Termin: ${formatDate(dueDate)}</span>
-                        ${isOverdue(dueDate) ? '<span class="overdue-badge">PRZETERMINOWANE</span>' : ''}
+                        <span>Termin: ${formatDate(deliveryDate)}</span>
+                        <span class="prod-time-remaining">${formatTimeToDeadline(timeToDeadlineMinutes)}</span>
                     </div>
                 ` : ''}
                 
@@ -1750,6 +1796,196 @@ function printWorkOrder(workOrderId) {
 
 // Export print function
 window.printWorkOrder = printWorkOrder;
+
+// ============================================
+// DASHBOARD KPI
+// ============================================
+
+// Stan dashboardu KPI
+let kpiVisible = localStorage.getItem('kpiDashboardVisible') !== 'false';
+let kpiData = null;
+
+/**
+ * Inicjalizacja dashboardu KPI
+ * Wywoływana przy starcie aplikacji
+ */
+async function initKpiDashboard() {
+    const kpiDashboard = document.getElementById('kpiDashboard');
+    if (!kpiDashboard) return;
+
+    let userRole = null;
+
+    try {
+        const response = await fetch('/api/auth/me', { credentials: 'include' });
+
+        if (!response.ok) {
+            kpiDashboard.style.display = 'none';
+            return;
+        }
+
+        const data = await response.json();
+
+        if (!data || data.status !== 'success') {
+            kpiDashboard.style.display = 'none';
+            return;
+        }
+
+        userRole = data.role;
+    } catch (error) {
+        console.error('[KPI] Błąd pobierania danych użytkownika:', error);
+        kpiDashboard.style.display = 'none';
+        return;
+    }
+
+    const allowedRoles = ['ADMIN', 'PRODUCTION_MANAGER', 'PRODUCTION'];
+    
+    // Pokaż dashboard tylko dla uprawnionych ról
+    if (!allowedRoles.includes(userRole)) {
+        kpiDashboard.style.display = 'none';
+        return;
+    }
+
+    // Ustaw domyślne daty (dzisiaj)
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('kpiDateFrom').value = today;
+    document.getElementById('kpiDateTo').value = today;
+    
+    // Pokaż/ukryj dashboard na podstawie zapisanego stanu
+    if (kpiVisible) {
+        kpiDashboard.classList.add('visible');
+        loadKpiData();
+    }
+    
+    updateKpiToggleButton();
+}
+
+/**
+ * Przełącz widoczność dashboardu KPI
+ */
+function toggleKpiDashboard() {
+    const kpiDashboard = document.getElementById('kpiDashboard');
+    if (!kpiDashboard) return;
+    
+    kpiVisible = !kpiVisible;
+    localStorage.setItem('kpiDashboardVisible', kpiVisible);
+    
+    if (kpiVisible) {
+        kpiDashboard.classList.add('visible');
+        loadKpiData();
+    } else {
+        kpiDashboard.classList.remove('visible');
+    }
+    
+    updateKpiToggleButton();
+}
+
+/**
+ * Aktualizuj przycisk toggle
+ */
+function updateKpiToggleButton() {
+    const btn = document.getElementById('kpiToggleBtn');
+    if (!btn) return;
+    
+    if (kpiVisible) {
+        btn.innerHTML = '<i class="fas fa-chevron-up"></i> Zwiń';
+        btn.classList.add('active');
+    } else {
+        btn.innerHTML = '<i class="fas fa-chart-line"></i> KPI';
+        btn.classList.remove('active');
+    }
+}
+
+/**
+ * Pobierz dane KPI z API
+ */
+async function loadKpiData() {
+    const dateFrom = document.getElementById('kpiDateFrom')?.value;
+    const dateTo = document.getElementById('kpiDateTo')?.value;
+    
+    if (!dateFrom || !dateTo) return;
+    
+    try {
+        // Buduj URL z parametrami
+        const params = new URLSearchParams();
+        params.append('dateFrom', new Date(dateFrom).toISOString());
+        params.append('dateTo', new Date(dateTo + 'T23:59:59').toISOString());
+        
+        const response = await fetch(`/api/production/kpi/overview?${params}`, {
+            credentials: 'include'
+        });
+        
+        if (!response.ok) {
+            if (response.status === 403) {
+                console.log('[KPI] Brak uprawnień do dashboardu KPI');
+                return;
+            }
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            kpiData = result.data;
+            renderKpiData(kpiData);
+        } else {
+            console.error('[KPI] Błąd:', result.message);
+        }
+    } catch (error) {
+        console.error('[KPI] Błąd pobierania danych:', error);
+    }
+}
+
+/**
+ * Renderuj dane KPI w UI
+ */
+function renderKpiData(data) {
+    if (!data) return;
+    
+    // Summary cards
+    document.getElementById('kpiCompletedOps').textContent = data.summary?.completedOperations || 0;
+    document.getElementById('kpiProduced').textContent = data.summary?.producedQuantity || 0;
+    document.getElementById('kpiWaste').textContent = data.summary?.wasteQuantity || 0;
+    document.getElementById('kpiProblems').textContent = data.summary?.problemsReported || 0;
+    document.getElementById('kpiAvgTime').textContent = data.summary?.avgOperationTimeMinutes || 0;
+    
+    // Rooms table
+    const roomsTable = document.getElementById('kpiRoomsTable');
+    if (roomsTable && data.byRoom) {
+        if (data.byRoom.length === 0) {
+            roomsTable.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--prod-text-muted);">Brak danych</td></tr>';
+        } else {
+            roomsTable.innerHTML = data.byRoom.map(room => `
+                <tr>
+                    <td>${escapeHtml(room.roomName)}</td>
+                    <td class="num">${room.totalWorkOrders}</td>
+                    <td class="num">${room.inProgressWorkOrders}</td>
+                    <td class="num">${room.completedWorkOrders}</td>
+                </tr>
+            `).join('');
+        }
+    }
+    
+    // Products table
+    const productsTable = document.getElementById('kpiProductsTable');
+    if (productsTable && data.topProducts) {
+        if (data.topProducts.length === 0) {
+            productsTable.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--prod-text-muted);">Brak danych</td></tr>';
+        } else {
+            productsTable.innerHTML = data.topProducts.map(product => `
+                <tr>
+                    <td title="${escapeHtml(product.identifier || '')}">${escapeHtml(product.name)}</td>
+                    <td class="num">${product.producedQuantity}</td>
+                    <td class="num">${product.wasteQuantity}</td>
+                </tr>
+            `).join('');
+        }
+    }
+}
+
+// Export KPI functions
+window.loadKpiData = loadKpiData;
+window.toggleKpiDashboard = toggleKpiDashboard;
+window.initKpiDashboard = initKpiDashboard;
 
 // ============================================
 // CLEANUP

@@ -72,10 +72,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const refreshFolderAccessBtn = document.getElementById('refresh-folder-access-btn');
     const folderAccessCancelBtn = document.getElementById('folder-access-cancel-btn');
 
+    // Delivery presets module elements
+    const deliveryPresetsTbody = document.getElementById('delivery-presets-tbody');
+    const deliveryPresetsTotal = document.getElementById('delivery-presets-total');
+    const deliveryPresetsActive = document.getElementById('delivery-presets-active');
+    const deliveryPresetsDefaultLabel = document.getElementById('delivery-presets-default-label');
+    const newDeliveryPresetBtn = document.getElementById('new-delivery-preset-btn');
+    const refreshDeliveryPresetsBtn = document.getElementById('refresh-delivery-presets-btn');
+    const deliveryPresetModal = document.getElementById('delivery-preset-modal');
+    const deliveryPresetModalTitle = document.getElementById('delivery-preset-modal-title');
+    const deliveryPresetModalClose = document.getElementById('delivery-preset-modal-close');
+    const deliveryPresetForm = document.getElementById('delivery-preset-form');
+    const deliveryPresetFormCancel = document.getElementById('delivery-preset-form-cancel');
+    const deliveryPresetFormError = document.getElementById('delivery-preset-form-error');
+    const deliveryPresetSubmitText = document.getElementById('delivery-preset-submit-text');
+
     let allProducts = [];
     let filteredProducts = [];
     let currentEditingProductId = null;
     let currentInventoryProductId = null;
+    let deliveryPresets = [];
+    let editingDeliveryPreset = null;
 
     // Konfiguracja
     const LOW_STOCK_THRESHOLD = 5;
@@ -103,6 +120,33 @@ document.addEventListener('DOMContentLoaded', () => {
     categoryFilter.addEventListener('change', (e) => {
         filterProducts(searchInput.value, e.target.value);
     });
+
+    if (newDeliveryPresetBtn) {
+        newDeliveryPresetBtn.addEventListener('click', () => openDeliveryPresetModal());
+    }
+
+    if (refreshDeliveryPresetsBtn) {
+        refreshDeliveryPresetsBtn.addEventListener('click', () => loadDeliveryPresets());
+    }
+
+    if (deliveryPresetModalClose) {
+        deliveryPresetModalClose.addEventListener('click', closeDeliveryPresetModal);
+    }
+
+    if (deliveryPresetFormCancel) {
+        deliveryPresetFormCancel.addEventListener('click', (e) => {
+            e.preventDefault();
+            closeDeliveryPresetModal();
+        });
+    }
+
+    if (deliveryPresetForm) {
+        deliveryPresetForm.addEventListener('submit', handleDeliveryPresetSubmit);
+    }
+
+    if (deliveryPresetsTbody) {
+        deliveryPresetsTbody.addEventListener('click', handleDeliveryPresetsTableClick);
+    }
 
     async function handleSync() {
         if (!confirm('Czy na pewno chcesz pobrać produkty z zewnętrznego API? To może potrwać chwilę.')) return;
@@ -653,6 +697,291 @@ document.addEventListener('DOMContentLoaded', () => {
         window.requestAnimationFrame(step);
     }
 
+    // ============================================
+    // MODUŁ: PRESETY TERMINÓW DOSTAWY
+    // ============================================
+
+    async function loadDeliveryPresets() {
+        if (!deliveryPresetsTbody) return;
+
+        deliveryPresetsTbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="p-8 text-center text-gray-500">
+                    <div class="flex flex-col items-center gap-2">
+                        <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
+                        <span>Ładowanie presetów terminów dostawy...</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+
+        try {
+            const response = await fetch('/api/admin/order-delivery-presets');
+            const result = await response.json();
+
+            if (response.ok && result.status === 'success') {
+                deliveryPresets = result.data || [];
+                renderDeliveryPresetsTable();
+                updateDeliveryPresetsStats();
+            } else {
+                throw new Error(result.message || 'Nie udało się pobrać presetów');
+            }
+        } catch (error) {
+            console.error('Błąd ładowania presetów terminów:', error);
+            deliveryPresetsTbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-8 text-center text-red-500">
+                        <div class="flex flex-col items-center gap-2">
+                            <i class="fas fa-exclamation-triangle text-2xl"></i>
+                            <span>${escapeHtml(error.message || 'Błąd połączenia z serwerem')}</span>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
+    function renderDeliveryPresetsTable() {
+        if (!deliveryPresetsTbody) return;
+
+        if (!deliveryPresets.length) {
+            deliveryPresetsTbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-8 text-center text-gray-500">
+                        <div class="flex flex-col items-center gap-2">
+                            <i class="fas fa-calendar-times text-3xl text-gray-300"></i>
+                            <span>Brak skonfigurowanych presetów terminów dostawy</span>
+                            <button class="text-blue-600 hover:underline text-sm" id="delivery-presets-empty-add-btn">
+                                Dodaj pierwszy preset
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            const emptyBtn = document.getElementById('delivery-presets-empty-add-btn');
+            if (emptyBtn) {
+                emptyBtn.addEventListener('click', () => openDeliveryPresetModal());
+            }
+            return;
+        }
+
+        deliveryPresetsTbody.innerHTML = deliveryPresets
+            .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+            .map(preset => {
+                const isDefault = preset.isDefault;
+                const isActive = preset.isActive;
+                const modeLabel = preset.mode === 'FIXED_DATE' ? 'Stała data' : 'Offset dni';
+                const valueLabel = preset.mode === 'FIXED_DATE'
+                    ? (preset.fixedDate ? new Date(preset.fixedDate).toLocaleDateString('pl-PL') : '—')
+                    : `${preset.offsetDays ?? '—'} dni`;
+
+                return `
+                    <tr class="hover:bg-gray-50 transition-colors ${!isActive ? 'opacity-60' : ''}">
+                        <td class="p-4">
+                            <div class="font-semibold text-gray-900">${escapeHtml(preset.label || 'Bez nazwy')}</div>
+                        </td>
+                        <td class="p-4 text-sm">
+                            <span class="px-2 py-1 rounded-full text-xs font-medium ${preset.mode === 'FIXED_DATE' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}">
+                                ${modeLabel}
+                            </span>
+                        </td>
+                        <td class="p-4 text-sm text-gray-700">${escapeHtml(valueLabel)}</td>
+                        <td class="p-4 text-center">
+                            ${isDefault
+                                ? '<span class="px-2 py-1 text-xs rounded-full bg-amber-100 text-amber-700 font-semibold">Domyślny</span>'
+                                : '<span class="text-gray-400">—</span>'}
+                        </td>
+                        <td class="p-4 text-center">
+                            ${isActive
+                                ? '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-700 font-semibold">Aktywny</span>'
+                                : '<span class="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-500">Nieaktywny</span>'}
+                        </td>
+                        <td class="p-4 text-center text-sm font-mono text-gray-600">${preset.sortOrder ?? '—'}</td>
+                        <td class="p-4">
+                            <div class="flex justify-end gap-2 text-sm">
+                                <button class="delivery-preset-edit-btn px-2 py-1 text-blue-600 hover:text-blue-800" data-id="${preset.id}" title="Edytuj">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="delivery-preset-delete-btn px-2 py-1 text-red-600 hover:text-red-800" data-id="${preset.id}" title="Usuń">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+    }
+
+    function updateDeliveryPresetsStats() {
+        if (deliveryPresetsTotal) deliveryPresetsTotal.textContent = deliveryPresets.length;
+        if (deliveryPresetsActive) deliveryPresetsActive.textContent = deliveryPresets.filter(p => p.isActive).length;
+
+        if (deliveryPresetsDefaultLabel) {
+            const defaultPreset = deliveryPresets.find(p => p.isDefault);
+            deliveryPresetsDefaultLabel.textContent = defaultPreset?.label || 'Brak';
+        }
+    }
+
+    function openDeliveryPresetModal(preset = null) {
+        if (!deliveryPresetModal || !deliveryPresetForm) return;
+
+        editingDeliveryPreset = preset;
+        deliveryPresetForm.reset();
+        hideDeliveryPresetError();
+
+        deliveryPresetForm.elements['id'].value = preset?.id || '';
+        deliveryPresetForm.elements['label'].value = preset?.label || '';
+        deliveryPresetForm.elements['mode'].value = preset?.mode || 'OFFSET';
+        deliveryPresetForm.elements['offsetDays'].value = preset?.offsetDays ?? '';
+        deliveryPresetForm.elements['fixedDate'].value = preset?.fixedDate ? preset.fixedDate.split('T')[0] : '';
+        deliveryPresetForm.elements['sortOrder'].value = preset?.sortOrder ?? '';
+        deliveryPresetForm.elements['isDefault'].checked = preset?.isDefault ?? false;
+        deliveryPresetForm.elements['isActive'].checked = preset?.isActive ?? true;
+
+        if (deliveryPresetModalTitle) {
+            deliveryPresetModalTitle.textContent = preset ? 'Edytuj preset terminu' : 'Nowy preset terminu';
+        }
+        if (deliveryPresetSubmitText) {
+            deliveryPresetSubmitText.textContent = preset ? 'Zapisz zmiany' : 'Utwórz preset';
+        }
+
+        deliveryPresetModal.classList.remove('hidden');
+    }
+
+    function closeDeliveryPresetModal() {
+        if (deliveryPresetModal) {
+            deliveryPresetModal.classList.add('hidden');
+        }
+        editingDeliveryPreset = null;
+        hideDeliveryPresetError();
+    }
+
+    function hideDeliveryPresetError() {
+        if (deliveryPresetFormError) {
+            deliveryPresetFormError.classList.add('hidden');
+            const span = deliveryPresetFormError.querySelector('span');
+            if (span) span.textContent = '';
+        }
+    }
+
+    function showDeliveryPresetError(message) {
+        if (!deliveryPresetFormError) return;
+        const span = deliveryPresetFormError.querySelector('span');
+        if (span) span.textContent = message;
+        deliveryPresetFormError.classList.remove('hidden');
+    }
+
+    async function handleDeliveryPresetSubmit(e) {
+        e.preventDefault();
+        if (!deliveryPresetForm) return;
+        hideDeliveryPresetError();
+
+        const formData = new FormData(deliveryPresetForm);
+        const id = formData.get('id');
+        const mode = formData.get('mode') || 'OFFSET';
+
+        const payload = {
+            label: formData.get('label')?.trim(),
+            mode,
+            offsetDays: formData.get('offsetDays') ? Number(formData.get('offsetDays')) : null,
+            fixedDate: formData.get('fixedDate') || null,
+            sortOrder: formData.get('sortOrder') ? Number(formData.get('sortOrder')) : null,
+            isDefault: deliveryPresetForm.elements['isDefault'].checked,
+            isActive: deliveryPresetForm.elements['isActive'].checked,
+        };
+
+        if (!payload.label) {
+            showDeliveryPresetError('Podaj nazwę preset-u');
+            return;
+        }
+
+        if (mode === 'OFFSET' && (payload.offsetDays === null || Number.isNaN(payload.offsetDays))) {
+            showDeliveryPresetError('Podaj liczbę dni dla trybu OFFSET');
+            return;
+        }
+
+        if (mode === 'FIXED_DATE' && !payload.fixedDate) {
+            showDeliveryPresetError('Wybierz datę dla trybu FIXED_DATE');
+            return;
+        }
+
+        if (payload.fixedDate) {
+            payload.fixedDate = new Date(payload.fixedDate).toISOString();
+        }
+
+        setDeliveryPresetFormLoading(true);
+
+        try {
+            const url = id ? `/api/admin/order-delivery-presets/${id}` : '/api/admin/order-delivery-presets';
+            const method = id ? 'PATCH' : 'POST';
+
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const result = await response.json();
+
+            if (response.ok && result.status === 'success') {
+                closeDeliveryPresetModal();
+                await loadDeliveryPresets();
+            } else {
+                throw new Error(result.message || 'Nie udało się zapisać preset-u');
+            }
+        } catch (error) {
+            console.error('Błąd zapisu preset-u:', error);
+            showDeliveryPresetError(error.message || 'Błąd połączenia z serwerem');
+        } finally {
+            setDeliveryPresetFormLoading(false);
+        }
+    }
+
+    function setDeliveryPresetFormLoading(isLoading) {
+        const submitBtn = deliveryPresetForm?.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = isLoading;
+        if (deliveryPresetSubmitText) {
+            deliveryPresetSubmitText.textContent = isLoading
+                ? 'Zapisywanie...'
+                : (editingDeliveryPreset ? 'Zapisz zmiany' : 'Utwórz preset');
+        }
+    }
+
+    async function handleDeliveryPresetsTableClick(e) {
+        const editBtn = e.target.closest('.delivery-preset-edit-btn');
+        const deleteBtn = e.target.closest('.delivery-preset-delete-btn');
+
+        if (editBtn) {
+            const presetId = editBtn.dataset.id;
+            const preset = deliveryPresets.find(p => p.id == presetId);
+            if (preset) {
+                openDeliveryPresetModal(preset);
+            }
+            return;
+        }
+
+        if (deleteBtn) {
+            const presetId = deleteBtn.dataset.id;
+            if (!confirm('Czy na pewno chcesz usunąć ten preset terminu?')) return;
+            await deleteDeliveryPreset(presetId);
+        }
+    }
+
+    async function deleteDeliveryPreset(id) {
+        try {
+            const response = await fetch(`/api/admin/order-delivery-presets/${id}`, { method: 'DELETE' });
+            const result = await response.json();
+
+            if (response.ok && result.status === 'success') {
+                await loadDeliveryPresets();
+            } else {
+                throw new Error(result.message || 'Nie udało się usunąć preset-u');
+            }
+        } catch (error) {
+            console.error('Błąd usuwania preset-u:', error);
+            showAdminToast(error.message || 'Błąd usuwania preset-u', 'error');
+        }
+    }
+
     // ========================================
     // ZARZĄDZANIE UŻYTKOWNIKAMI
     // ========================================
@@ -1006,25 +1335,74 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleRoleChange() {
         const roleSelect = userForm.querySelector('[name="role"]');
         const roomField = document.getElementById('production-room-field');
+        const multiRolesSection = document.getElementById('multi-roles-section');
         const role = roleSelect.value;
         
-        if (['PRODUCTION', 'OPERATOR'].includes(role)) {
+        // Pokaż/ukryj pole pokoju produkcyjnego
+        if (['PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER'].includes(role)) {
             roomField.classList.remove('hidden');
         } else {
             roomField.classList.add('hidden');
             userForm.querySelector('[name="productionRoomId"]').value = '';
         }
+        
+        // Pokaż/ukryj sekcję wieloról (tylko w trybie edycji i dla ról nie-ADMIN)
+        if (currentEditingUserId && role !== 'ADMIN' && role !== 'NEW_USER') {
+            multiRolesSection?.classList.remove('hidden');
+            // Zaznacz checkbox głównej roli w wielorolach
+            const mainRoleCheckbox = multiRolesSection?.querySelector(`input[value="${role}"]`);
+            if (mainRoleCheckbox) {
+                mainRoleCheckbox.checked = true;
+                mainRoleCheckbox.disabled = true;
+            }
+            // Włącz pozostałe checkboxy
+            multiRolesSection?.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                if (cb.value !== role) {
+                    cb.disabled = false;
+                }
+            });
+            // Załaduj wielorole użytkownika
+            loadUserMultiRoles(currentEditingUserId);
+        } else {
+            multiRolesSection?.classList.add('hidden');
+        }
+    }
+    
+    /**
+     * Ładuje wielorole użytkownika z API i zaznacza odpowiednie checkboxy
+     */
+    async function loadUserMultiRoles(userId) {
+        const multiRolesSection = document.getElementById('multi-roles-section');
+        if (!multiRolesSection || !userId) return;
+        
+        try {
+            const response = await fetch(`/api/admin/user-role-assignments?userId=${userId}`, {
+                credentials: 'include'
+            });
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                const activeRoles = (result.data.assignments || [])
+                    .filter(a => a.isActive)
+                    .map(a => a.role);
+                
+                // Zaznacz checkboxy dla aktywnych ról
+                multiRolesSection.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.checked = activeRoles.includes(cb.value);
+                });
+            }
+        } catch (error) {
+            console.error('Błąd ładowania wieloról:', error);
+        }
     }
 
     async function populateProductionRoomSelect() {
         const select = userForm.querySelector('[name="productionRoomId"]');
-        // Zachowaj obecną wartość jeśli jest
         const currentVal = select.value;
         
         select.innerHTML = '<option value="">Brak przypisanego pokoju</option>';
         
         try {
-            // Jeśli pokoje nie są załadowane w zmiennej globalnej, pobierz je
             if (!productionRooms || productionRooms.length === 0) {
                 const response = await fetch('/api/production/rooms', { credentials: 'include' });
                 const result = await response.json();
@@ -1116,6 +1494,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const json = await res.json();
 
             if (json.status === 'success') {
+                // Zapisz wielorole jeśli są zaznaczone
+                if (currentEditingUserId) {
+                    await saveUserMultiRoles(currentEditingUserId);
+                }
                 closeUserForm();
                 fetchUsers();
             } else {
@@ -1126,6 +1508,30 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Błąd podczas zapisu użytkownika:', err);
             userFormError.textContent = 'Błąd połączenia z serwerem';
             userFormError.classList.remove('hidden');
+        }
+    }
+
+    /**
+     * Zapisuje wielorole użytkownika do API (synchronizacja)
+     */
+    async function saveUserMultiRoles(userId) {
+        const multiRolesSection = document.getElementById('multi-roles-section');
+        if (!multiRolesSection || multiRolesSection.classList.contains('hidden')) return;
+        
+        const selectedRoles = [];
+        multiRolesSection.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+            selectedRoles.push(cb.value);
+        });
+        
+        try {
+            await fetch(`/api/admin/user-role-assignments/sync/${userId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ roles: selectedRoles })
+            });
+        } catch (error) {
+            console.error('Błąd zapisywania wieloról:', error);
         }
     }
 
@@ -2316,8 +2722,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadCityAccess();
             } else if (viewName === 'product-mapping') {
                 loadProductMappingProjects();
+            } else if (viewName === 'delivery-presets') {
+                loadDeliveryPresets();
             } else if (viewName === 'production-rooms') {
                 loadProductionRooms();
+            } else if (viewName === 'production-work-center-types') {
+                loadWorkCenterTypesView();
+            } else if (viewName === 'production-operation-types') {
+                loadOperationTypesView();
             } else if (viewName === 'production-work-centers') {
                 loadWorkCenters();
             } else if (viewName === 'production-work-stations') {
@@ -2330,29 +2742,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // ============================================
-    // MODUŁ: PRZYPISANIA FOLDERÓW KI
-    // ============================================
-    
-    let allFolderAccess = [];
-    let allQnapFolders = [];
-    let folderAccessUsers = [];
-    
-    
-    // Event listenery dla folderów KI
-    if (newFolderAccessBtn) newFolderAccessBtn.addEventListener('click', () => openFolderAccessModal());
-    if (refreshFolderAccessBtn) refreshFolderAccessBtn.addEventListener('click', loadFolderAccess);
-    if (folderAccessModalClose) folderAccessModalClose.addEventListener('click', closeFolderAccessModal);
-    if (folderAccessCancelBtn) folderAccessCancelBtn.addEventListener('click', closeFolderAccessModal);
-    if (folderAccessForm) folderAccessForm.addEventListener('submit', handleFolderAccessSubmit);
-    if (folderAccessSearch) folderAccessSearch.addEventListener('input', filterFolderAccess);
-    if (folderAccessUserFilter) folderAccessUserFilter.addEventListener('change', filterFolderAccess);
-    if (folderAccessStatusFilter) folderAccessStatusFilter.addEventListener('change', filterFolderAccess);
-    if (folderAccessTableBody) folderAccessTableBody.addEventListener('click', handleFolderAccessTableClick);
-    
     async function loadFolderAccess() {
         if (!folderAccessTableBody) return;
-        
+
         folderAccessTableBody.innerHTML = `
             <tr>
                 <td colspan="7" class="p-8 text-center text-gray-500">
@@ -2363,28 +2755,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 </td>
             </tr>
         `;
-        
+
         try {
             // Pobierz przypisania
             const accessResponse = await fetch('/api/admin/user-folder-access');
             const accessResult = await accessResponse.json();
-            
+
             if (accessResult.status === 'success') {
                 allFolderAccess = accessResult.data || [];
             } else {
                 throw new Error(accessResult.message || 'Błąd pobierania przypisań');
             }
-            
+
             // Pobierz użytkowników (do filtra i selecta)
             const usersResponse = await fetch('/api/admin/users');
             const usersResult = await usersResponse.json();
-            
+
             if (usersResult.status === 'success') {
                 folderAccessUsers = usersResult.data || [];
                 populateFolderAccessUserFilter();
                 populateFolderAccessUserSelect();
             }
-            
+
             // Pobierz foldery z QNAP (do autouzupełniania)
             try {
                 const foldersResponse = await fetch('/api/gallery/salespeople');
@@ -2396,10 +2788,10 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (e) {
                 console.warn('Nie udało się pobrać folderów z QNAP:', e);
             }
-            
+
             filterFolderAccess();
             updateFolderAccessStats();
-            
+
         } catch (error) {
             console.error('Błąd ładowania przypisań folderów:', error);
             const safeMessage = escapeHtml(error.message || 'Nieznany błąd');
@@ -2415,7 +2807,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
     }
-    
+
     function populateFolderAccessUserFilter() {
         if (!folderAccessUserFilter) return;
         
@@ -4912,6 +5304,13 @@ async function checkUserPermissionsAndAdaptUI() {
 // MODUŁ: PANEL PRODUKCYJNY
 // ============================================
 
+// Typy gniazd ładowane dynamicznie z API
+let workCenterTypes = [];
+
+// Typy operacji ładowane dynamicznie z API
+let operationTypes = [];
+
+// Fallback dla starych danych (jeśli typ nie jest w słowniku)
 const WORK_CENTER_TYPE_LABELS = {
     'laser_co2': 'Laser CO2',
     'laser_fiber': 'Laser Fiber',
@@ -4922,6 +5321,55 @@ const WORK_CENTER_TYPE_LABELS = {
     'packaging': 'Pakowanie',
     'other': 'Inne'
 };
+
+// Funkcja pobierająca nazwę typu (najpierw ze słownika, potem fallback)
+function getWorkCenterTypeName(typeCode) {
+    const fromApi = workCenterTypes.find(t => t.code === typeCode);
+    if (fromApi) return fromApi.name;
+    return WORK_CENTER_TYPE_LABELS[typeCode] || typeCode || 'Nieznany';
+}
+
+// Funkcja pobierająca nazwę typu operacji (API -> fallback do stałej)
+function getOperationTypeName(typeCode) {
+    if (!typeCode) return 'Nieznany';
+
+    const fromApi = operationTypes.find(t => t.code === typeCode);
+    if (fromApi) return fromApi.name;
+
+    if (OPERATION_TYPES && Object.prototype.hasOwnProperty.call(OPERATION_TYPES, typeCode)) {
+        return OPERATION_TYPES[typeCode];
+    }
+
+    return typeCode || 'Nieznany';
+}
+
+// Ładowanie typów gniazd z API
+async function loadWorkCenterTypes() {
+    try {
+        const response = await fetch('/api/production/work-center-types?isActive=true', { credentials: 'include' });
+        const result = await response.json();
+        if (result.status === 'success') {
+            workCenterTypes = result.data || [];
+        }
+    } catch (error) {
+        console.error('Błąd ładowania typów gniazd:', error);
+    }
+    return workCenterTypes;
+}
+
+// Ładowanie typów operacji z API (do formularzy i widoku słownika)
+async function loadOperationTypes() {
+    try {
+        const response = await fetch('/api/production/operation-types?isActive=true', { credentials: 'include' });
+        const result = await response.json();
+        if (result.status === 'success') {
+            operationTypes = result.data || [];
+        }
+    } catch (error) {
+        console.error('Błąd ładowania typów operacji:', error);
+    }
+    return operationTypes;
+}
 
 const WORK_STATION_STATUS_LABELS = {
     'available': { label: 'Dostępna', color: 'green', icon: 'check-circle' },
@@ -4934,8 +5382,466 @@ let productionRooms = [];
 let workCenters = [];
 let workStations = [];
 
+// ============================================
+// MODUŁ: TYPY GNIAZD (WorkCenterType)
+// ============================================
+
+const workCenterTypesTbody = document.getElementById('work-center-types-tbody');
+const workCenterTypeModal = document.getElementById('work-center-type-modal');
+const workCenterTypeForm = document.getElementById('work-center-type-form');
+const workCenterTypeModalTitle = document.getElementById('work-center-type-modal-title');
+const workCenterTypeSubmitText = document.getElementById('work-center-type-submit-text');
+const workCenterTypeFormError = document.getElementById('work-center-type-form-error');
+
+// Event listenery dla typów gniazd
+document.getElementById('new-work-center-type-btn')?.addEventListener('click', () => openWorkCenterTypeModal());
+document.getElementById('refresh-work-center-types-btn')?.addEventListener('click', loadWorkCenterTypesView);
+document.getElementById('work-center-type-modal-close')?.addEventListener('click', closeWorkCenterTypeModal);
+document.getElementById('work-center-type-form-cancel')?.addEventListener('click', closeWorkCenterTypeModal);
+workCenterTypeForm?.addEventListener('submit', handleWorkCenterTypeSubmit);
+workCenterTypeModal?.addEventListener('click', (e) => { if (e.target === workCenterTypeModal) closeWorkCenterTypeModal(); });
+
+async function loadWorkCenterTypesView() {
+    if (!workCenterTypesTbody) return;
+    
+    workCenterTypesTbody.innerHTML = `
+        <tr>
+            <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p class="text-lg">Ładowanie typów gniazd...</p>
+            </td>
+        </tr>
+    `;
+    
+    try {
+        const response = await fetch('/api/production/work-center-types', { credentials: 'include' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            workCenterTypes = result.data || [];
+            renderWorkCenterTypes();
+        } else {
+            workCenterTypesTbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="px-6 py-12 text-center text-red-500">
+                        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                        <p>${escapeHtml(result.message || 'Błąd ładowania')}</p>
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (error) {
+        console.error('Błąd ładowania typów gniazd:', error);
+        workCenterTypesTbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-6 py-12 text-center text-red-500">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                    <p>Błąd połączenia z serwerem</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function renderWorkCenterTypes() {
+    if (!workCenterTypesTbody) return;
+    
+    if (workCenterTypes.length === 0) {
+        workCenterTypesTbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                    <i class="fas fa-tags text-4xl mb-4"></i>
+                    <p class="text-lg">Brak typów gniazd</p>
+                    <p class="text-sm mt-2">Kliknij "Dodaj typ" aby utworzyć pierwszy</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    workCenterTypesTbody.innerHTML = workCenterTypes.map(type => `
+        <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4">
+                <span class="font-mono text-sm bg-gray-100 px-2 py-1 rounded">${escapeHtml(type.code)}</span>
+            </td>
+            <td class="px-6 py-4 font-medium text-gray-900">${escapeHtml(type.name)}</td>
+            <td class="px-6 py-4 text-gray-600 text-sm">${escapeHtml(type.description || '-')}</td>
+            <td class="px-6 py-4 text-center">
+                ${type.isActive 
+                    ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Aktywny</span>'
+                    : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">Nieaktywny</span>'
+                }
+            </td>
+            <td class="px-6 py-4 text-right">
+                <div class="flex items-center justify-end gap-2">
+                    <button onclick="editWorkCenterType(${type.id})" class="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Edytuj">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="toggleWorkCenterTypeActive(${type.id}, ${type.isActive})" class="p-2 ${type.isActive ? 'text-amber-600 hover:bg-amber-50' : 'text-green-600 hover:bg-green-50'} rounded-lg transition-colors" title="${type.isActive ? 'Dezaktywuj' : 'Aktywuj'}">
+                        <i class="fas fa-${type.isActive ? 'ban' : 'check'}"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openWorkCenterTypeModal(type = null) {
+    if (!workCenterTypeModal || !workCenterTypeForm) return;
+    
+    workCenterTypeForm.reset();
+    workCenterTypeFormError?.classList.add('hidden');
+    
+    const codeInput = workCenterTypeForm.querySelector('[name="code"]');
+    
+    if (type) {
+        workCenterTypeModalTitle.innerHTML = '<i class="fas fa-tags"></i> Edytuj typ gniazda';
+        workCenterTypeSubmitText.textContent = 'Zapisz zmiany';
+        workCenterTypeForm.querySelector('[name="id"]').value = type.id;
+        codeInput.value = type.code || '';
+        codeInput.readOnly = true; // Kod nie może być zmieniany
+        codeInput.classList.add('bg-gray-100');
+        workCenterTypeForm.querySelector('[name="name"]').value = type.name || '';
+        workCenterTypeForm.querySelector('[name="description"]').value = type.description || '';
+        workCenterTypeForm.querySelector('[name="isActive"]').checked = type.isActive !== false;
+    } else {
+        workCenterTypeModalTitle.innerHTML = '<i class="fas fa-tags"></i> Nowy typ gniazda';
+        workCenterTypeSubmitText.textContent = 'Utwórz typ';
+        workCenterTypeForm.querySelector('[name="id"]').value = '';
+        codeInput.readOnly = false;
+        codeInput.classList.remove('bg-gray-100');
+        workCenterTypeForm.querySelector('[name="isActive"]').checked = true;
+    }
+    
+    workCenterTypeModal.classList.remove('hidden');
+    (type ? workCenterTypeForm.querySelector('[name="name"]') : codeInput).focus();
+}
+
+function closeWorkCenterTypeModal() {
+    workCenterTypeModal?.classList.add('hidden');
+}
+
+async function handleWorkCenterTypeSubmit(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(workCenterTypeForm);
+    const id = formData.get('id');
+    const code = formData.get('code')?.trim().toLowerCase();
+    const name = formData.get('name')?.trim();
+    const description = formData.get('description')?.trim();
+    const isActive = formData.get('isActive') === 'on';
+    
+    if (!code || !name) {
+        showWorkCenterTypeError('Kod i nazwa są wymagane');
+        return;
+    }
+    
+    if (!/^[a-z0-9_]+$/.test(code)) {
+        showWorkCenterTypeError('Kod może zawierać tylko małe litery, cyfry i podkreślenia');
+        return;
+    }
+    
+    workCenterTypeFormError?.classList.add('hidden');
+    
+    const data = { name, description: description || null, isActive };
+    if (!id) data.code = code; // Kod tylko przy tworzeniu
+    
+    try {
+        const url = id ? `/api/production/work-center-types/${id}` : '/api/production/work-center-types';
+        const method = id ? 'PATCH' : 'POST';
+        
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast(id ? 'Typ gniazda zaktualizowany' : 'Typ gniazda utworzony', 'success');
+            closeWorkCenterTypeModal();
+            loadWorkCenterTypesView();
+        } else {
+            showWorkCenterTypeError(result.message || 'Błąd zapisu');
+        }
+    } catch (error) {
+        console.error('Błąd zapisu typu gniazda:', error);
+        showWorkCenterTypeError('Błąd połączenia z serwerem');
+    }
+}
+
+function showWorkCenterTypeError(message) {
+    if (workCenterTypeFormError) {
+        workCenterTypeFormError.querySelector('span').textContent = message;
+        workCenterTypeFormError.classList.remove('hidden');
+    }
+}
+
+window.editWorkCenterType = function(id) {
+    const type = workCenterTypes.find(t => t.id === id);
+    if (type) openWorkCenterTypeModal(type);
+};
+
+window.toggleWorkCenterTypeActive = async function(id, currentActive) {
+    const action = currentActive ? 'dezaktywować' : 'aktywować';
+    if (!confirm(`Czy na pewno chcesz ${action} ten typ gniazda?`)) return;
+    
+    try {
+        const response = await fetch(`/api/production/work-center-types/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ isActive: !currentActive })
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showAdminToast(`Typ gniazda ${currentActive ? 'dezaktywowany' : 'aktywowany'}`, 'success');
+            loadWorkCenterTypesView();
+        } else {
+            showAdminToast(result.message || 'Błąd zmiany statusu', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd zmiany statusu typu:', error);
+        showAdminToast('Błąd połączenia z serwerem', 'error');
+    }
+};
+
+// ============================================
+// MODUŁ: TYPY OPERACJI (OperationType)
+// ============================================
+
+const operationTypesTbody = document.getElementById('operation-types-tbody');
+const operationTypeModal = document.getElementById('operation-type-modal');
+const operationTypeForm = document.getElementById('operation-type-form');
+const operationTypeModalTitle = document.getElementById('operation-type-modal-title');
+const operationTypeSubmitText = document.getElementById('operation-type-submit-text');
+const operationTypeFormError = document.getElementById('operation-type-form-error');
+
+// Event listenery dla typów operacji
+document.getElementById('new-operation-type-btn')?.addEventListener('click', () => openOperationTypeModal());
+document.getElementById('refresh-operation-types-btn')?.addEventListener('click', loadOperationTypesView);
+document.getElementById('operation-type-modal-close')?.addEventListener('click', closeOperationTypeModal);
+document.getElementById('operation-type-form-cancel')?.addEventListener('click', closeOperationTypeModal);
+operationTypeForm?.addEventListener('submit', handleOperationTypeSubmit);
+operationTypeModal?.addEventListener('click', (e) => { if (e.target === operationTypeModal) closeOperationTypeModal(); });
+
+async function loadOperationTypesView() {
+    if (!operationTypesTbody) return;
+
+    operationTypesTbody.innerHTML = `
+        <tr>
+            <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p class="text-lg">Ładowanie typów operacji...</p>
+            </td>
+        </tr>
+    `;
+
+    try {
+        const response = await fetch('/api/production/operation-types', { credentials: 'include' });
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            operationTypes = result.data || [];
+            renderOperationTypes();
+        } else {
+            operationTypesTbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="px-6 py-12 text-center text-red-500">
+                        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                        <p>${escapeHtml(result.message || 'Błąd ładowania')}</p>
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (error) {
+        console.error('Błąd ładowania typów operacji:', error);
+        operationTypesTbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-6 py-12 text-center text-red-500">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                    <p>Błąd połączenia z serwerem</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function renderOperationTypes() {
+    if (!operationTypesTbody) return;
+
+    if (!operationTypes || operationTypes.length === 0) {
+        operationTypesTbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                    <i class="fas fa-tasks text-4xl mb-4"></i>
+                    <p class="text-lg">Brak typów operacji</p>
+                    <p class="text-sm mt-2">Kliknij "Dodaj typ" aby utworzyć pierwszy</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    operationTypesTbody.innerHTML = operationTypes.map(type => `
+        <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4">
+                <span class="font-mono text-sm bg-gray-100 px-2 py-1 rounded">${escapeHtml(type.code)}</span>
+            </td>
+            <td class="px-6 py-4 font-medium text-gray-900">${escapeHtml(type.name)}</td>
+            <td class="px-6 py-4 text-gray-600 text-sm">${escapeHtml(type.description || '-')}</td>
+            <td class="px-6 py-4 text-center">
+                ${type.isActive
+                    ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Aktywny</span>'
+                    : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">Nieaktywny</span>'
+                }
+            </td>
+            <td class="px-6 py-4 text-right">
+                <div class="flex items-center justify-end gap-2">
+                    <button onclick="editOperationType(${type.id})" class="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Edytuj">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="toggleOperationTypeActive(${type.id}, ${type.isActive})" class="p-2 ${type.isActive ? 'text-amber-600 hover:bg-amber-50' : 'text-green-600 hover:bg-green-50'} rounded-lg transition-colors" title="${type.isActive ? 'Dezaktywuj' : 'Aktywuj'}">
+                        <i class="fas fa-${type.isActive ? 'ban' : 'check'}"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openOperationTypeModal(type = null) {
+    if (!operationTypeModal || !operationTypeForm) return;
+
+    operationTypeForm.reset();
+    operationTypeFormError?.classList.add('hidden');
+
+    const codeInput = operationTypeForm.querySelector('[name="code"]');
+
+    if (type) {
+        operationTypeModalTitle.innerHTML = '<i class="fas fa-tasks"></i> Edytuj typ operacji';
+        operationTypeSubmitText.textContent = 'Zapisz zmiany';
+        operationTypeForm.querySelector('[name="id"]').value = type.id;
+        codeInput.value = type.code || '';
+        codeInput.readOnly = true;
+        codeInput.classList.add('bg-gray-100');
+        operationTypeForm.querySelector('[name="name"]').value = type.name || '';
+        operationTypeForm.querySelector('[name="description"]').value = type.description || '';
+        operationTypeForm.querySelector('[name="isActive"]').checked = type.isActive !== false;
+    } else {
+        operationTypeModalTitle.innerHTML = '<i class="fas fa-tasks"></i> Nowy typ operacji';
+        operationTypeSubmitText.textContent = 'Utwórz typ';
+        operationTypeForm.querySelector('[name="id"]').value = '';
+        codeInput.readOnly = false;
+        codeInput.classList.remove('bg-gray-100');
+        operationTypeForm.querySelector('[name="isActive"]').checked = true;
+    }
+
+    operationTypeModal.classList.remove('hidden');
+    (type ? operationTypeForm.querySelector('[name="name"]') : codeInput).focus();
+}
+
+function closeOperationTypeModal() {
+    operationTypeModal?.classList.add('hidden');
+}
+
+async function handleOperationTypeSubmit(e) {
+    e.preventDefault();
+
+    const formData = new FormData(operationTypeForm);
+    const id = formData.get('id');
+    const code = formData.get('code')?.trim().toLowerCase();
+    const name = formData.get('name')?.trim();
+    const description = formData.get('description')?.trim();
+    const isActive = formData.get('isActive') === 'on';
+
+    if (!code || !name) {
+        showOperationTypeError('Kod i nazwa są wymagane');
+        return;
+    }
+
+    if (!/^[a-z0-9_]+$/.test(code)) {
+        showOperationTypeError('Kod może zawierać tylko małe litery, cyfry i podkreślenia');
+        return;
+    }
+
+    operationTypeFormError?.classList.add('hidden');
+
+    const data = { name, description: description || null, isActive };
+    if (!id) data.code = code;
+
+    try {
+        const url = id ? `/api/production/operation-types/${id}` : '/api/production/operation-types';
+        const method = id ? 'PATCH' : 'POST';
+
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            showAdminToast(id ? 'Typ operacji zaktualizowany' : 'Typ operacji utworzony', 'success');
+            closeOperationTypeModal();
+            loadOperationTypesView();
+        } else {
+            showOperationTypeError(result.message || 'Błąd zapisu');
+        }
+    } catch (error) {
+        console.error('Błąd zapisu typu operacji:', error);
+        showOperationTypeError('Błąd połączenia z serwerem');
+    }
+}
+
+function showOperationTypeError(message) {
+    if (operationTypeFormError) {
+        const span = operationTypeFormError.querySelector('span');
+        if (span) span.textContent = message;
+        operationTypeFormError.classList.remove('hidden');
+    }
+}
+
+window.editOperationType = function(id) {
+    const type = operationTypes.find(t => t.id === id);
+    if (type) openOperationTypeModal(type);
+};
+
+window.toggleOperationTypeActive = async function(id, currentActive) {
+    const action = currentActive ? 'dezaktywować' : 'aktywować';
+    if (!confirm(`Czy na pewno chcesz ${action} ten typ operacji?`)) return;
+
+    try {
+        const response = await fetch(`/api/production/operation-types/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ isActive: !currentActive })
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            showAdminToast(`Typ operacji ${currentActive ? 'dezaktywowany' : 'aktywowany'}`, 'success');
+            loadOperationTypesView();
+        } else {
+            showAdminToast(result.message || 'Błąd zmiany statusu', 'error');
+        }
+    } catch (error) {
+        console.error('Błąd zmiany statusu typu operacji:', error);
+        showAdminToast('Błąd połączenia z serwerem', 'error');
+    }
+};
+
 // Event listenery dla produkcji
 document.getElementById('new-production-room-btn')?.addEventListener('click', () => openProductionRoomModal());
+
 document.getElementById('refresh-production-rooms-btn')?.addEventListener('click', loadProductionRooms);
 document.getElementById('new-work-center-btn')?.addEventListener('click', () => openWorkCenterModal());
 document.getElementById('refresh-work-centers-btn')?.addEventListener('click', loadWorkCenters);
@@ -5130,7 +6036,7 @@ function renderWorkCenters(centers) {
             </div>
             <div class="p-4">
                 <p class="text-sm text-gray-600 mb-2">
-                    <i class="fas fa-tag mr-2"></i>${WORK_CENTER_TYPE_LABELS[wc.type] || wc.type}
+                    <i class="fas fa-tag mr-2"></i>${getWorkCenterTypeName(wc.type) || wc.type}
                 </p>
                 ${wc.room ? `<p class="text-sm text-gray-600 mb-2"><i class="fas fa-door-open mr-2"></i>${escapeHtml(wc.room.name)}</p>` : ''}
                 ${wc.description ? `<p class="text-sm text-gray-500 mb-3">${escapeHtml(wc.description)}</p>` : ''}
@@ -5233,7 +6139,7 @@ function renderWorkStations(stations) {
                 </div>
                 <div class="p-4">
                     <p class="text-sm text-gray-600 mb-1">
-                        <i class="fas fa-tag mr-2 text-gray-400"></i>${WORK_CENTER_TYPE_LABELS[ws.type] || ws.type}
+                        <i class="fas fa-tag mr-2 text-gray-400"></i>${getWorkCenterTypeName(ws.type) || ws.type}
                     </p>
                     ${ws.manufacturer ? `<p class="text-sm text-gray-600 mb-1"><i class="fas fa-industry mr-2 text-gray-400"></i>${escapeHtml(ws.manufacturer)} ${ws.model || ''}</p>` : ''}
                     ${ws.workCenter ? `<p class="text-sm text-gray-600 mb-1"><i class="fas fa-cogs mr-2 text-gray-400"></i>${escapeHtml(ws.workCenter.name)}</p>` : ''}
@@ -5465,45 +6371,10 @@ async function editWorkCenterPaths(id) {
     }
 }
 
+// Alias dla zgodności wstecznej – właściwa implementacja jest w module "MODAL: MASZYNA / STANOWISKO" na dole pliku
 function openWorkStationModal(ws = null) {
-    const name = prompt('Nazwa maszyny:', ws?.name || '');
-    if (!name) return;
-    
-    const code = prompt('Kod maszyny:', ws?.code || '');
-    if (!code) return;
-    
-    const type = prompt('Typ (np. laser_co2):', ws?.type || 'laser_co2');
-    if (!type) return;
-    
-    const manufacturer = prompt('Producent:', ws?.manufacturer || '');
-    const model = prompt('Model:', ws?.model || '');
-    
-    saveWorkStation({ id: ws?.id, name, code, type, manufacturer, model });
-}
-
-async function saveWorkStation(data) {
-    try {
-        const method = data.id ? 'PATCH' : 'POST';
-        const url = data.id ? `/api/production/work-stations/${data.id}` : '/api/production/work-stations';
-        
-        const response = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify(data)
-        });
-        
-        const result = await response.json();
-        
-        if (result.status === 'success') {
-            showAdminToast(data.id ? 'Maszyna zaktualizowana' : 'Maszyna utworzona', 'success');
-            loadWorkStations();
-        } else {
-            showAdminToast(result.message || 'Błąd zapisu', 'error');
-        }
-    } catch (error) {
-        console.error('Błąd zapisu maszyny:', error);
-        showAdminToast('Błąd zapisu', 'error');
+    if (typeof window.openWorkStationModal === 'function') {
+        return window.openWorkStationModal(ws);
     }
 }
 
@@ -5597,7 +6468,7 @@ async function loadProductionPaths() {
         <tr>
             <td colspan="5" class="px-6 py-12 text-center text-gray-400">
                 <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
-                <p>Ładowanie ścieżek...</p>
+                <p class="text-lg">Ładowanie ścieżek...</p>
             </td>
         </tr>
     `;
@@ -5652,7 +6523,7 @@ function renderProductionPaths() {
         const operations = path.operations || [];
         const operationsHtml = operations.slice(0, 4).map(op => {
             const phase = PHASE_LABELS[op.phase] || PHASE_LABELS['OP'];
-            const typeName = OPERATION_TYPES[op.operationType] || op.operationType || 'Nieznana';
+            const typeName = getOperationTypeName(op.operationType);
             return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs bg-${phase.color}-100 text-${phase.color}-700">${escapeHtml(typeName)}</span>`;
         }).join(' → ');
         
@@ -5705,11 +6576,14 @@ function handleProductionPathsTableClick(e) {
     }
 }
 
-function openProductionPathModal(path = null) {
+async function openProductionPathModal(path = null) {
     if (!productionPathModal || !productionPathForm) return;
     
     productionPathForm.reset();
     productionPathFormError?.classList.add('hidden');
+
+    // Upewnij się, że słownik typów operacji jest załadowany przed zbudowaniem formularza
+    await loadOperationTypes();
     
     if (path) {
         productionPathModalTitle.textContent = 'Edytuj ścieżkę';
@@ -5745,6 +6619,7 @@ function closeProductionPathModal() {
 }
 
 function addOperationRow(operation = null, step = null) {
+
     if (!operationsContainer) return;
     
     const existingRows = operationsContainer.querySelectorAll('.operation-row');
@@ -5753,10 +6628,39 @@ function addOperationRow(operation = null, step = null) {
     const phaseOptions = Object.entries(PHASE_LABELS).map(([key, val]) => 
         `<option value="${key}" ${operation?.phase === key ? 'selected' : ''}>${val.label}</option>`
     ).join('');
-    
-    const typeOptions = Object.entries(OPERATION_TYPES).map(([key, val]) => 
-        `<option value="${key}" ${operation?.operationType === key ? 'selected' : ''}>${val}</option>`
-    ).join('');
+
+    let typeOptions = '';
+    const opTypeValue = operation?.operationType || '';
+
+    // Jeśli nie mamy jeszcze danych z API, spróbuj je pobrać w tle
+    if (!operationTypes || operationTypes.length === 0) {
+        loadOperationTypes();
+    }
+
+    const activeTypes = (operationTypes || []).filter(t => t.isActive !== false);
+
+    if (activeTypes.length > 0) {
+        typeOptions = activeTypes.map(t => 
+            `<option value="${t.code}" ${opTypeValue === t.code ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
+        ).join('');
+    }
+
+    // Fallback: jeśli z jakiegoś powodu nie ma danych z API, użyj stałej OPERATION_TYPES
+    if (!typeOptions) {
+        typeOptions = Object.entries(OPERATION_TYPES).map(([key, val]) => 
+            `<option value="${key}" ${opTypeValue === key ? 'selected' : ''}>${val}</option>`
+        ).join('');
+    }
+
+    // Jeżeli edytujemy ścieżkę z typem, który nie jest już aktywny / nie istnieje w słowniku,
+    // dodaj go jako opcję awaryjną, żeby nie zgubić danych
+    if (opTypeValue) {
+        const hasValue = typeOptions.includes(`value="${opTypeValue}"`);
+        if (!hasValue) {
+            const fallbackName = getOperationTypeName(opTypeValue);
+            typeOptions += `<option value="${opTypeValue}" selected>${escapeHtml(fallbackName)} (nieaktywny)</option>`;
+        }
+    }
     
     const row = document.createElement('div');
     row.className = 'operation-row p-4 bg-gray-50 rounded-lg border border-gray-200 mb-3';
@@ -5781,21 +6685,59 @@ function addOperationRow(operation = null, step = null) {
                     <input type="number" name="op_time" placeholder="np. 15" value="${operation?.estimatedTimeMin || ''}" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" min="0">
                 </div>
             </div>
-            <button type="button" class="remove-operation-btn text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0" title="Usuń operację">
-                <i class="fas fa-trash"></i>
-            </button>
+            <div class="flex flex-col gap-1 flex-shrink-0">
+                <button type="button" class="move-operation-up-btn text-gray-400 hover:text-gray-700 p-1.5 hover:bg-gray-100 rounded-lg transition-colors" title="Przenieś operację w górę">
+                    <i class="fas fa-chevron-up"></i>
+                </button>
+                <button type="button" class="move-operation-down-btn text-gray-400 hover:text-gray-700 p-1.5 hover:bg-gray-100 rounded-lg transition-colors" title="Przenieś operację w dół">
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <button type="button" class="remove-operation-btn text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="Usuń operację">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
         </div>
     `;
     
-    row.querySelector('.remove-operation-btn').addEventListener('click', () => {
-        row.remove();
-        renumberOperations();
-    });
+    const removeBtn = row.querySelector('.remove-operation-btn');
+    if (removeBtn) {
+        removeBtn.addEventListener('click', () => {
+            row.remove();
+            renumberOperations();
+        });
+    }
+
+    const moveUpBtn = row.querySelector('.move-operation-up-btn');
+    if (moveUpBtn) {
+        moveUpBtn.addEventListener('click', () => moveOperationRow(row, -1));
+    }
+
+    const moveDownBtn = row.querySelector('.move-operation-down-btn');
+    if (moveDownBtn) {
+        moveDownBtn.addEventListener('click', () => moveOperationRow(row, 1));
+    }
     
     operationsContainer.appendChild(row);
 }
 
+function moveOperationRow(row, direction) {
+    if (!operationsContainer || !row) return;
+
+    if (direction < 0) {
+        const prev = row.previousElementSibling;
+        if (!prev || !prev.classList.contains('operation-row')) return;
+        operationsContainer.insertBefore(row, prev);
+    } else if (direction > 0) {
+        const next = row.nextElementSibling;
+        if (!next || !next.classList.contains('operation-row')) return;
+        operationsContainer.insertBefore(next, row);
+    }
+
+    renumberOperations();
+}
+
 function renumberOperations() {
+
     const rows = operationsContainer?.querySelectorAll('.operation-row');
     rows?.forEach((row, index) => {
         const stepBadge = row.querySelector('span');
@@ -5978,7 +6920,7 @@ async function loadProductionOrders() {
         <tr>
             <td colspan="8" class="px-6 py-12 text-center text-gray-400">
                 <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
-                <p>Ładowanie zleceń...</p>
+                <p class="text-lg">Ładowanie zleceń...</p>
             </td>
         </tr>
     `;
@@ -6292,11 +7234,11 @@ async function fetchDepartmentsList() {
             </td>
         </tr>
     `;
-
+    
     try {
         const res = await fetch('/api/admin/departments', { credentials: 'include' });
         const json = await res.json();
-
+        
         if (json.status === 'success') {
             allDepartmentsList = json.data || [];
             renderDepartmentsTable();
@@ -6327,7 +7269,7 @@ async function fetchDepartmentsList() {
 // Renderowanie tabeli działów
 function renderDepartmentsTable() {
     if (!departmentsTableBody) return;
-
+    
     if (allDepartmentsList.length === 0) {
         departmentsTableBody.innerHTML = `
             <tr>
@@ -6344,7 +7286,7 @@ function renderDepartmentsTable() {
         `;
         return;
     }
-
+    
     departmentsTableBody.innerHTML = allDepartmentsList.map(dept => `
         <tr class="hover:bg-gray-50">
             <td class="p-4">
@@ -6567,7 +7509,13 @@ async function restoreDepartment(id, name) {
         productionRoomForm.reset();
         productionRoomFormError?.classList.add('hidden');
         
+        // Załaduj selecty z użytkownikami
         populateSupervisorSelect();
+        populateRoomManagerSelect();
+        
+        // Sekcja operatorów - ukryj domyślnie
+        const operatorsSection = document.getElementById('room-operators-section');
+        operatorsSection?.classList.add('hidden');
         
         if (room) {
             productionRoomModalTitle.innerHTML = '<i class="fas fa-door-open"></i> Edytuj pokój produkcyjny';
@@ -6576,8 +7524,21 @@ async function restoreDepartment(id, name) {
             productionRoomForm.querySelector('[name="name"]').value = room.name || '';
             productionRoomForm.querySelector('[name="area"]').value = room.area || '';
             productionRoomForm.querySelector('[name="description"]').value = room.description || '';
-            if (room.supervisorId) {
-                productionRoomForm.querySelector('[name="supervisorId"]').value = room.supervisorId;
+            
+            // Ustaw supervisorId i roomManagerUserId po załadowaniu selectów
+            setTimeout(() => {
+                if (room.supervisorId) {
+                    productionRoomForm.querySelector('[name="supervisorId"]').value = room.supervisorId;
+                }
+                if (room.roomManagerUserId) {
+                    productionRoomForm.querySelector('[name="roomManagerUserId"]').value = room.roomManagerUserId;
+                }
+            }, 100);
+            
+            // Pokaż sekcję operatorów w trybie edycji
+            if (operatorsSection) {
+                operatorsSection.classList.remove('hidden');
+                renderRoomOperators(room.operators || []);
             }
         } else {
             productionRoomModalTitle.innerHTML = '<i class="fas fa-door-open"></i> Nowy pokój produkcyjny';
@@ -6591,6 +7552,60 @@ async function restoreDepartment(id, name) {
 
     function closeProductionRoomModal() {
         productionRoomModal?.classList.add('hidden');
+    }
+
+    /**
+     * Renderuje listę operatorów przypisanych do pokoju
+     */
+    function renderRoomOperators(operators) {
+        const container = document.getElementById('room-operators-list');
+        if (!container) return;
+        
+        if (!operators || operators.length === 0) {
+            container.innerHTML = '<p class="text-gray-500 text-sm italic">Brak przypisanych operatorów</p>';
+            return;
+        }
+        
+        container.innerHTML = operators.map(op => `
+            <div class="flex items-center gap-2 py-1 border-b border-gray-200 last:border-0">
+                <i class="fas fa-user text-gray-400"></i>
+                <span class="text-sm font-medium">${op.name || op.email}</span>
+                <span class="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">${op.role}</span>
+            </div>
+        `).join('');
+    }
+
+    /**
+     * Ładuje listę użytkowników do selecta menedżera pokoju (MES-compliant)
+     */
+    async function populateRoomManagerSelect() {
+        const select = productionRoomForm?.querySelector('[name="roomManagerUserId"]');
+        if (!select) return;
+        
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">Brak (tylko ADMIN może zarządzać)</option>';
+        
+        try {
+            // Pobierz użytkowników z rolami produkcyjnymi (PRODUCTION_MANAGER, PRODUCTION)
+            const response = await fetch('/api/admin/users', { credentials: 'include' });
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                const productionUsers = (result.data || []).filter(user => 
+                    ['PRODUCTION_MANAGER', 'PRODUCTION', 'ADMIN'].includes(user.role)
+                );
+                productionUsers.forEach(user => {
+                    const opt = document.createElement('option');
+                    opt.value = user.id;
+                    opt.textContent = `${user.name || user.email} (${user.role})`;
+                    select.appendChild(opt);
+                });
+            }
+            
+            if (currentVal) select.value = currentVal;
+        } catch (error) {
+            console.error('Błąd ładowania menedżerów pokoju:', error);
+        }
     }
 
     async function populateSupervisorSelect() {
@@ -6628,6 +7643,7 @@ async function restoreDepartment(id, name) {
         const area = formData.get('area');
         const description = formData.get('description')?.trim();
         const supervisorId = formData.get('supervisorId');
+        const roomManagerUserId = formData.get('roomManagerUserId');
         
         if (!name) {
             showProductionRoomError('Nazwa pokoju jest wymagana');
@@ -6640,7 +7656,8 @@ async function restoreDepartment(id, name) {
             name,
             area: area ? parseFloat(area) : null,
             description: description || null,
-            supervisorId: supervisorId || null
+            supervisorId: supervisorId || null,
+            roomManagerUserId: roomManagerUserId || null  // MES-compliant room manager
         };
         
         try {
@@ -6680,20 +7697,21 @@ async function restoreDepartment(id, name) {
     // MODAL: GNIAZDO PRODUKCYJNE
     // ============================================
 
-    window.openWorkCenterModal = function(wc = null) {
+    window.openWorkCenterModal = async function(wc = null) {
         if (!workCenterModal || !workCenterForm) return;
         
         workCenterForm.reset();
         workCenterFormError?.classList.add('hidden');
         
-        populateRoomSelectForWorkCenter();
+        await populateWorkCenterTypeSelect();
+        await populateRoomSelectForWorkCenter();
         
         if (wc) {
             workCenterModalTitle.innerHTML = '<i class="fas fa-cogs"></i> Edytuj gniazdo produkcyjne';
             workCenterSubmitText.textContent = 'Zapisz zmiany';
             workCenterForm.querySelector('[name="id"]').value = wc.id;
             workCenterForm.querySelector('[name="name"]').value = wc.name || '';
-            workCenterForm.querySelector('[name="type"]').value = wc.type || '';
+            workCenterForm.querySelector('[name="workCenterTypeId"]').value = wc.workCenterTypeId || '';
             workCenterForm.querySelector('[name="description"]').value = wc.description || '';
             if (wc.roomId) {
                 workCenterForm.querySelector('[name="roomId"]').value = wc.roomId;
@@ -6710,6 +7728,28 @@ async function restoreDepartment(id, name) {
 
     function closeWorkCenterModal() {
         workCenterModal?.classList.add('hidden');
+    }
+
+    async function populateWorkCenterTypeSelect() {
+        const select = workCenterForm?.querySelector('[name="workCenterTypeId"]');
+        if (!select) return;
+        
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">Wybierz typ...</option>';
+        
+        // Załaduj typy jeśli jeszcze nie załadowane
+        if (workCenterTypes.length === 0) {
+            await loadWorkCenterTypes();
+        }
+        
+        workCenterTypes.forEach(type => {
+            const opt = document.createElement('option');
+            opt.value = type.id;
+            opt.textContent = type.name;
+            select.appendChild(opt);
+        });
+        
+        if (currentVal) select.value = currentVal;
     }
 
     async function populateRoomSelectForWorkCenter() {
@@ -6747,11 +7787,11 @@ async function restoreDepartment(id, name) {
         const formData = new FormData(workCenterForm);
         const id = formData.get('id');
         const name = formData.get('name')?.trim();
-        const type = formData.get('type');
+        const workCenterTypeId = formData.get('workCenterTypeId');
         const roomId = formData.get('roomId');
         const description = formData.get('description')?.trim();
         
-        if (!name || !type) {
+        if (!name || !workCenterTypeId) {
             showWorkCenterError('Nazwa i typ gniazda są wymagane');
             return;
         }
@@ -6760,7 +7800,7 @@ async function restoreDepartment(id, name) {
         
         const data = {
             name,
-            type,
+            workCenterTypeId,
             roomId: roomId || null,
             description: description || null
         };
@@ -6802,20 +7842,24 @@ async function restoreDepartment(id, name) {
     // MODAL: MASZYNA / STANOWISKO
     // ============================================
 
-    window.openWorkStationModal = function(ws = null) {
+    window.openWorkStationModal = async function(ws = null) {
         if (!workStationModal || !workStationForm) return;
         
         workStationForm.reset();
         workStationFormError?.classList.add('hidden');
+
+        const currentType = ws?.type || '';
         
-        populateWorkCenterSelectForWorkStation();
+        await Promise.all([
+            populateWorkStationTypeSelect(currentType),
+            populateWorkCenterSelectForWorkStation()
+        ]);
         
         if (ws) {
             workStationModalTitle.innerHTML = '<i class="fas fa-tools"></i> Edytuj maszynę';
             workStationSubmitText.textContent = 'Zapisz zmiany';
             workStationForm.querySelector('[name="id"]').value = ws.id;
             workStationForm.querySelector('[name="name"]').value = ws.name || '';
-            workStationForm.querySelector('[name="type"]').value = ws.type || '';
             workStationForm.querySelector('[name="manufacturer"]').value = ws.manufacturer || '';
             workStationForm.querySelector('[name="model"]').value = ws.model || '';
             if (ws.workCenterId) {
@@ -6833,6 +7877,51 @@ async function restoreDepartment(id, name) {
 
     function closeWorkStationModal() {
         workStationModal?.classList.add('hidden');
+    }
+
+    async function populateWorkStationTypeSelect(currentType = '') {
+        const select = workStationForm?.querySelector('[name="type"]');
+        if (!select) return;
+
+        const previousVal = select.value;
+        select.innerHTML = '<option value="">Wybierz typ...</option>';
+        
+        // Załaduj typy z API jeśli jeszcze nie są w pamięci
+        if (workCenterTypes.length === 0) {
+            await loadWorkCenterTypes();
+        }
+
+        if (workCenterTypes.length > 0) {
+            workCenterTypes
+                .filter(t => t.isActive !== false)
+                .forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.code;
+                    opt.textContent = t.name;
+                    select.appendChild(opt);
+                });
+        } else {
+            // Fallback: jeśli API zwróci pustą listę, użyj stałych etykiet
+            Object.entries(WORK_CENTER_TYPE_LABELS).forEach(([code, label]) => {
+                const opt = document.createElement('option');
+                opt.value = code;
+                opt.textContent = label;
+                select.appendChild(opt);
+            });
+        }
+
+        const targetValue = currentType || previousVal;
+        if (targetValue) {
+            // Jeśli typ z maszyny nie istnieje na liście (np. stary nieaktywny), dodaj go
+            const hasValue = Array.from(select.options).some(opt => opt.value === targetValue);
+            if (!hasValue) {
+                const opt = document.createElement('option');
+                opt.value = targetValue;
+                opt.textContent = getWorkCenterTypeName(targetValue);
+                select.appendChild(opt);
+            }
+            select.value = targetValue;
+        }
     }
 
     async function populateWorkCenterSelectForWorkStation() {
