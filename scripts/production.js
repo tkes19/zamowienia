@@ -16,15 +16,75 @@ let selectedProblemType = null;
 let refreshInterval = null;
 let orderTimers = {};
 
+let productionSse = null;
+let productionSseReconnectTimer = null;
+let productionSseRefreshTimer = null;
+
+function scheduleProductionSseReconnect() {
+    if (productionSseReconnectTimer) return;
+    productionSseReconnectTimer = setTimeout(() => {
+        productionSseReconnectTimer = null;
+        startProductionSse();
+    }, 3000);
+}
+
+function scheduleProductionSseRefresh() {
+    if (productionSseRefreshTimer) return;
+    productionSseRefreshTimer = setTimeout(() => {
+        productionSseRefreshTimer = null;
+        loadOrdersSilent();
+        loadStats();
+    }, 400);
+}
+
+function startProductionSse() {
+    if (productionSse) {
+        try { productionSse.close(); } catch (e) {}
+        productionSse = null;
+    }
+
+    try {
+        productionSse = new EventSource('/api/events');
+
+        productionSse.addEventListener('ready', () => {
+            // połączenie OK
+        });
+
+        productionSse.addEventListener('message', (ev) => {
+            try {
+                const payload = JSON.parse(ev.data || '{}');
+                if (payload?.type === 'productionStatusChanged') {
+                    scheduleProductionSseRefresh();
+                }
+            } catch (e) {
+                // ignore
+            }
+        });
+
+        productionSse.addEventListener('error', () => {
+            scheduleProductionSseReconnect();
+        });
+    } catch (e) {
+        scheduleProductionSseReconnect();
+    }
+}
+
 // Maszyny w pokoju operatora
 let currentRoomId = null;
 let roomMachines = [];
 let selectedMachineId = null;
 
+// Rozwinięte szczegóły ZP
+let openWorkOrderDetails = new Set(JSON.parse(localStorage.getItem('prodOpenWorkOrders') || '[]'));
+
 // Ustawienia widoku
 let viewMode = localStorage.getItem('prodViewMode') || 'grid'; // grid, list
 let sortMode = localStorage.getItem('prodSortMode') || 'priority';
-let displayMode = localStorage.getItem('prodDisplayMode') || 'orders'; // orders, workorders (Zbiorcze ZP)
+let displayMode = localStorage.getItem('prodDisplayMode') || 'workorders'; // orders, workorders (Zbiorcze ZP) - domyślnie workorders
+const WORKORDER_VIEWS = ['open', 'completed'];
+let workOrdersView = WORKORDER_VIEWS.includes(localStorage.getItem('prodWorkOrdersView')) 
+    ? localStorage.getItem('prodWorkOrdersView') 
+    : 'open'; // open, completed
 let activeFilters = {
     urgent: false,
     small: false,
@@ -105,6 +165,36 @@ function getTimeStatusClass(timeStatus) {
         case 'ON_TIME': return 'time-status-on-time';
         default: return 'time-status-unknown';
     }
+}
+
+/**
+ * Generuje badge SLA/termin dla kafelka ZP
+ * @param {string} deliveryDate - Data dostawy (ISO string)
+ * @returns {string} - HTML badge lub pusty string
+ */
+function getSlaBadge(deliveryDate) {
+    if (!deliveryDate) return '';
+    
+    const delivery = new Date(deliveryDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const diffDays = Math.ceil((delivery - today) / (1000 * 60 * 60 * 24));
+    
+    if (diffDays < 0) {
+        return `<span class="sla-badge sla-overdue"><i class="fas fa-exclamation-triangle"></i> Przeterminowane</span>`;
+    } else if (diffDays === 0) {
+        return `<span class="sla-badge sla-today"><i class="fas fa-clock"></i> Dziś!</span>`;
+    } else if (diffDays === 1) {
+        return `<span class="sla-badge sla-tomorrow"><i class="fas fa-calendar-day"></i> Jutro</span>`;
+    } else if (diffDays <= 3) {
+        return `<span class="sla-badge sla-soon"><i class="fas fa-calendar-alt"></i> ${diffDays} dni</span>`;
+    }
+    
+    return '';
 }
 
 // Formatuj czas trwania (sekundy -> MM:SS lub HH:MM:SS)
@@ -254,17 +344,12 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('[PRODUCTION] DOM loaded');
     checkAuth();
     initViewSettings();
-    setupProductImageModal();
-    initKpiDashboard(); // Inicjalizacja dashboardu KPI
-    loadOrders();
+    startProductionSse();
+    loadOrders(true);
     loadStats();
-    initViewSettings();
     
-    // Auto-odświeżanie co 30 sekund
-    refreshInterval = setInterval(() => {
-        loadOrders(true); // silent refresh
-        loadStats();
-    }, 30000);
+    // Szybki polling przez pierwsze 2 minuty (co 5s), potem normalny (co 30s)
+    startFastPolling();
     
     // Aktualizacja timerów co sekundę
     setInterval(updateTimers, 1000);
@@ -272,6 +357,73 @@ document.addEventListener('DOMContentLoaded', () => {
     // Skróty klawiszowe
     document.addEventListener('keydown', handleKeyboardShortcuts);
 });
+
+/**
+ * Szybki polling na start - co 5s przez 2 minuty, potem co 30s
+ * Unika pełnego re-renderu jeśli dane się nie zmieniły
+ */
+let lastOrdersHash = '';
+
+function startFastPolling() {
+    const FAST_INTERVAL = 5000;   // 5 sekund
+    const NORMAL_INTERVAL = 30000; // 30 sekund
+    const FAST_DURATION = 120000;  // 2 minuty
+    
+    // Szybki polling
+    refreshInterval = setInterval(() => {
+        loadOrdersSilent();
+        loadStats();
+    }, FAST_INTERVAL);
+    
+    // Po 2 minutach przełącz na normalny
+    setTimeout(() => {
+        clearInterval(refreshInterval);
+        refreshInterval = setInterval(() => {
+            loadOrdersSilent();
+            loadStats();
+        }, NORMAL_INTERVAL);
+        console.log('[PRODUCTION] Przełączono na normalny polling (30s)');
+    }, FAST_DURATION);
+    
+    console.log('[PRODUCTION] Szybki polling aktywny (5s przez 2 min)');
+}
+
+/**
+ * Cichy polling - odświeża dane tylko jeśli się zmieniły (bez pulsowania)
+ */
+function computeOrdersHash(payload) {
+    return JSON.stringify({
+        orderIds: (payload.data || []).map(o => o.id + ':' + o.status),
+        woIds: (payload.workOrders || []).map(wo => wo.id + ':' + (wo.orders ? wo.orders.length : 0))
+    });
+}
+
+async function loadOrdersSilent() {
+    try {
+        const url = `/api/production/orders/active?workOrdersView=${workOrdersView}`;
+        const response = await fetch(url, { credentials: 'include' });
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            // Sprawdź czy dane się zmieniły
+            const newHash = computeOrdersHash(data);
+            
+            if (newHash !== lastOrdersHash) {
+                lastOrdersHash = newHash;
+                orders = data.data || [];
+                workOrders = data.workOrders || [];
+                summary = data.summary || {};
+                applyFiltersAndSort();
+                renderOrders();
+                updateSummaryDisplay();
+                console.log('[PRODUCTION] Dane zaktualizowane (wykryto zmiany)');
+            }
+            // Jeśli brak zmian - nie renderuj ponownie (brak pulsowania)
+        }
+    } catch (error) {
+        console.error('[PRODUCTION] Błąd cichego pollingu:', error);
+    }
+}
 
 function initViewSettings() {
     // Przywróć tryb widoku
@@ -283,6 +435,7 @@ function initViewSettings() {
     
     // Przywróć tryb wyświetlania (pozycje / zbiorcze ZP)
     updateDisplayModeButton();
+    updateWorkOrdersViewButtons();
 }
 
 // Setup product image modal event listeners
@@ -377,8 +530,86 @@ function sortOrders() {
         sortMode = select.value;
         localStorage.setItem('prodSortMode', sortMode);
     }
-    applyFiltersAndSort();
+    
+    // Sortuj odpowiednią tablicę w zależności od trybu wyświetlania
+    if (displayMode === 'workorders') {
+        // Tryb Zbiorcze ZP - sortuj tablicę workOrders
+        sortWorkOrders();
+    } else {
+        // Tryb pojedynczych pozycji - sortuj przefiltrowane zamówienia
+        applyFiltersAndSort();
+    }
+    
     renderOrders();
+}
+
+function sortWorkOrders() {
+    // Sortowanie tablicy workOrders dla widoku Zbiorczych ZP
+    workOrders.sort((a, b) => {
+        // Przypięte zawsze na górze (chyba że sortujemy po pinned)
+        if (sortMode !== 'pinned') {
+            const aPinned = isPinned(a.id);
+            const bPinned = isPinned(b.id);
+            if (aPinned && !bPinned) return -1;
+            if (!aPinned && bPinned) return 1;
+        }
+        
+        switch (sortMode) {
+            case 'priority':
+                // Oblicz priorytet ZP na podstawie najwyższego priorytetu w zamówieniach
+                const aPriority = getWorkOrderPriority(a);
+                const bPriority = getWorkOrderPriority(b);
+                return aPriority - bPriority;
+            case 'pinned':
+                const aPinned = isPinned(a.id);
+                const bPinned = isPinned(b.id);
+                if (aPinned && !bPinned) return -1;
+                if (!aPinned && bPinned) return 1;
+                const pinnedPriorityA = getWorkOrderPriority(a);
+                const pinnedPriorityB = getWorkOrderPriority(b);
+                return pinnedPriorityA - pinnedPriorityB;
+            case 'quantity-asc':
+                return (a.totalQuantity || 0) - (b.totalQuantity || 0);
+            case 'quantity-desc':
+                return (b.totalQuantity || 0) - (a.totalQuantity || 0);
+            case 'date':
+                // Sortuj po dacie zamówienia handlowa (najstarsze na górze)
+                const aOrderDate = a.orders?.[0]?.sourceOrder?.createdAt ? new Date(a.orders[0].sourceOrder.createdAt).getTime() : Infinity;
+                const bOrderDate = b.orders?.[0]?.sourceOrder?.createdAt ? new Date(b.orders[0].sourceOrder.createdAt).getTime() : Infinity;
+                return aOrderDate - bOrderDate;
+            default:
+                return 0;
+        }
+    });
+}
+
+// Pomocnicza funkcja do pobierania priorytetu ZP
+function getWorkOrderPriority(workOrder) {
+    if (!workOrder.orders || workOrder.orders.length === 0) return 3;
+    // Zwróć najwyższy priorytet spośród zamówień w ZP (użyj computedPriority jeśli dostępne)
+    return Math.min(...workOrder.orders.map(order => order.computedPriority || order.priority || 3));
+}
+
+// Oblicza status Zbiorczego ZP na podstawie statusów poszczególnych zamówień
+function computeWorkOrderStatus(wo) {
+    if (!wo.orders || wo.orders.length === 0) {
+        return 'planned';
+    }
+    
+    const statuses = wo.orders.map(o => o.status);
+    const allCompleted = statuses.every(s => s === 'completed');
+    const anyInProgress = statuses.some(s => s === 'in_progress' || s === 'paused');
+    const anyApproved = statuses.some(s => s === 'approved');
+    
+    if (allCompleted) {
+        return 'completed';
+    } else if (anyInProgress) {
+        return 'in_progress';
+    } else if (anyApproved) {
+        return 'approved';
+    } else {
+        return 'planned';
+    }
 }
 
 function applyFiltersAndSort() {
@@ -436,6 +667,9 @@ function applyFiltersAndSort() {
 
 // Sprawdza, czy zlecenie pasuje do wybranej maszyny w pokoju
 function orderMatchesSelectedMachine(order) {
+    if (workOrdersView === 'completed') {
+        return true;
+    }
     if (!selectedMachineId || !roomMachines || roomMachines.length === 0) {
         return true;
     }
@@ -696,13 +930,18 @@ async function loadOrders(silent = false) {
     }
     
     try {
-        const response = await fetch('/api/production/orders/active', { credentials: 'include' });
+        // Przekaż parametr workOrdersView do API
+        const url = `/api/production/orders/active?workOrdersView=${workOrdersView}`;
+        const response = await fetch(url, { credentials: 'include' });
         const data = await response.json();
         
         if (data.status === 'success') {
             orders = data.data || [];
             workOrders = data.workOrders || [];
             summary = data.summary || {};
+            if (!silent) {
+                lastOrdersHash = computeOrdersHash(data);
+            }
             applyFiltersAndSort();
             renderOrders();
             updateSummaryDisplay();
@@ -838,8 +1077,11 @@ function renderWorkOrders(container) {
     container.innerHTML = html;
 }
 
-// Renderowanie karty Zbiorczego ZP
+// Renderowanie karty Zbiorczego ZP - PRZEPROJEKTOWANY (kompaktowy kafelek)
 function renderWorkOrderCard(wo) {
+    // Oblicz status ZP na podstawie statusów poszczególnych zamówień
+    const woStatus = computeWorkOrderStatus(wo);
+    
     const statusLabels = {
         'planned': 'Zaplanowane',
         'approved': 'Do realizacji',
@@ -847,64 +1089,57 @@ function renderWorkOrderCard(wo) {
         'completed': 'Zakończone'
     };
     
-    const statusClass = wo.status.replace('_', '-');
-    const priorityClass = `p${wo.priority || 3}`;
-    const priorityHighClass = (wo.priority === 1) ? 'priority-high' : '';
+    const statusClass = woStatus.replace('_', '-');
+    const computedPriority = getWorkOrderPriority(wo);
+    const priorityClass = `p${computedPriority}`;
+    const priorityHighClass = (computedPriority === 1) ? 'priority-high' : '';
+    const isOpen = openWorkOrderDetails.has(String(wo.id));
     
     // Oblicz postęp
     const completedOrders = wo.orders.filter(o => o.status === 'completed').length;
     const inProgressOrders = wo.orders.filter(o => o.status === 'in_progress').length;
+    const pendingOrders = wo.orders.length - completedOrders;
     const progressPercent = wo.orders.length > 0 ? Math.round((completedOrders / wo.orders.length) * 100) : 0;
-    
-    // Lista produktów (skrócona) z dodatkowymi informacjami
-    const productsList = wo.orders.slice(0, 5).map(o => {
-        const product = o.product || {};
-        const orderItem = o.sourceOrderItem || {};
-        const source = orderItem.source || '';
-        const location = orderItem.locationName || orderItem.projectName || '';
-        const projects = formatProjectsDisplay(orderItem.selectedProjects, orderItem.projectQuantities);
-        
-        // URL podglądu produktu - priorytet: orderItem.projectViewUrl > product.imageUrl
-        const previewUrl = orderItem.projectViewUrl || orderItem.projectviewurl || product.imageUrl || '';
-        const productName = product.name || product.code || 'Produkt';
-        const productIdentifier = product.identifier || product.code || '';
-        
-        return `<div class="wo-product-item">
-            <div class="wo-product-main">
-                <span class="wo-product-name">${escapeHtml(productName)}</span>
-                ${previewUrl ? `<button class="wo-preview-btn" onclick="event.stopPropagation(); showProductImage('${previewUrl}', '${encodeURIComponent(productName)}', '${encodeURIComponent(productIdentifier)}', '${encodeURIComponent(location)}')" title="Podgląd produktu"><i class="fas fa-eye"></i></button>` : ''}
-                <span class="wo-product-qty">${o.quantity || 0} szt.</span>
-            </div>
-            ${(source || location) ? `
-            <div class="wo-product-meta">
-                ${source ? `<span class="wo-source-badge ${source.toLowerCase()}">${source}</span>` : ''}
-                ${location ? `<span class="wo-location"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(location)}</span>` : ''}
-            </div>` : ''}
-            ${projects ? `<div class="wo-product-projects">${projects}</div>` : ''}
-        </div>`;
-    }).join('');
-    
-    const moreProducts = wo.orders.length > 5 ? `<div class="wo-more-products">+ ${wo.orders.length - 5} więcej...</div>` : '';
+    const isAllCompleted = completedOrders === wo.orders.length && wo.orders.length > 0;
     
     // Numer zamówienia źródłowego
     const sourceOrder = wo.orders[0]?.sourceOrder;
     const orderNumber = sourceOrder?.orderNumber || '---';
     const customer = sourceOrder?.customer?.name || 'Klient';
     
+    // Badge SLA/termin - pobierz z pierwszego zlecenia
+    const deliveryDate = sourceOrder?.deliveryDate || wo.orders[0]?.deliveryDate;
+    const slaBadge = getSlaBadge(deliveryDate);
+    
+    // Polska odmiana "produkt"
+    function getProduktWord(count) {
+        if (count === 1) return 'produkt';
+        const tens = Math.floor(count / 10) * 10;
+        const ones = count % 10;
+        if ((tens === 10 || tens === 20 || tens === 30 || tens === 40 || tens === 50 || tens === 60 || tens === 70 || tens === 80 || tens === 90 || tens === 100) && (ones >= 2 && ones <= 4)) {
+            return 'produkty';
+        }
+        if (ones >= 2 && ones <= 4 && tens !== 10 && tens !== 20 && tens !== 30 && tens !== 40 && tens !== 50 && tens !== 60 && tens !== 70 && tens !== 80 && tens !== 90) {
+            return 'produkty';
+        }
+        return 'produktów';
+    }
+    
     return `
-        <div class="prod-workorder-card status-${statusClass} ${priorityHighClass}" data-workorder-id="${wo.id}">
+        <div class="prod-workorder-card status-${statusClass} ${priorityHighClass} ${isAllCompleted ? 'all-completed' : ''}" data-workorder-id="${wo.id}">
             <div class="wo-header">
                 <div class="wo-number-row">
                     <span class="wo-number">${wo.workOrderNumber}</span>
                     <span class="wo-room-badge"><i class="fas fa-door-open"></i> ${escapeHtml(wo.roomName)}</span>
                 </div>
                 <div class="wo-status-row">
-                    <span class="prod-status-badge ${wo.status}">${statusLabels[wo.status] || wo.status}</span>
-                    <span class="prod-priority-badge ${priorityClass}">${wo.priority || 3}</span>
+                    <span class="prod-status-badge ${statusClass}">${statusLabels[woStatus] || woStatus}</span>
+                    <span class="prod-priority-badge ${priorityClass}">${computedPriority}</span>
+                    ${slaBadge}
                 </div>
             </div>
             
-            <div class="wo-body">
+            <div class="wo-body-compact">
                 <div class="wo-order-info">
                     <a href="/orders.html?search=${encodeURIComponent(orderNumber)}" class="wo-order-link" title="Otwórz zamówienie">
                         <i class="fas fa-receipt"></i> ${orderNumber}
@@ -912,55 +1147,38 @@ function renderWorkOrderCard(wo) {
                     <span class="wo-customer"><i class="fas fa-user"></i> ${escapeHtml(customer)}</span>
                 </div>
                 
-                <div class="wo-summary">
-                    <div class="wo-summary-item">
-                        <span class="wo-summary-value">${wo.productsCount}</span>
-                        <span class="wo-summary-label">produktów</span>
-                    </div>
-                    <div class="wo-summary-item">
-                        <span class="wo-summary-value">${wo.totalQuantity}</span>
-                        <span class="wo-summary-label">szt. łącznie</span>
-                    </div>
-                    ${inProgressOrders > 0 ? `
-                    <div class="wo-summary-item active">
-                        <span class="wo-summary-value">${inProgressOrders}</span>
-                        <span class="wo-summary-label">w trakcie</span>
-                    </div>
-                    ` : ''}
+                <div class="wo-metrics">
+                    <span class="wo-metric"><strong>${wo.productsCount}</strong> ${getProduktWord(wo.productsCount)}</span>
+                    <span class="wo-metric-sep">•</span>
+                    <span class="wo-metric"><strong>${wo.totalQuantity}</strong> szt.</span>
+                    ${inProgressOrders > 0 ? `<span class="wo-metric-sep">•</span><span class="wo-metric active"><strong>${inProgressOrders}</strong> w trakcie</span>` : ''}
                 </div>
                 
-                <div class="wo-products-list">
-                    ${productsList}
-                    ${moreProducts}
-                </div>
-                
-                ${wo.orders.length > 0 ? `
-                <div class="wo-progress">
+                <div class="wo-progress-compact">
                     <div class="wo-progress-bar">
-                        <div class="wo-progress-fill" style="width: ${progressPercent}%"></div>
+                        <div class="wo-progress-fill ${isAllCompleted ? 'completed' : ''}" style="width: ${progressPercent}%"></div>
                     </div>
-                    <div class="wo-progress-text">${completedOrders}/${wo.orders.length} pozycji (${progressPercent}%)</div>
+                    <span class="wo-progress-label">${completedOrders}/${wo.orders.length} ${isAllCompleted ? '✓' : ''}</span>
                 </div>
-                ` : ''}
             </div>
             
             <div class="wo-actions">
                 <button class="prod-btn prod-btn-secondary" onclick="toggleWorkOrderDetails(${wo.id})" title="Pokaż/ukryj pozycje">
-                    <i class="fas fa-chevron-down"></i> Pozycje
+                    <i class="fas ${isOpen ? 'fa-chevron-up' : 'fa-chevron-down'}"></i> Szczegóły
                 </button>
                 <button class="prod-btn prod-btn-print" onclick="printWorkOrder(${wo.id})" title="Drukuj zlecenie produkcyjne">
-                    <i class="fas fa-print"></i> Drukuj ZP
+                    <i class="fas fa-print"></i> Drukuj
                 </button>
             </div>
             
-            <div class="wo-details" id="wo-details-${wo.id}" style="display: none;">
+            <div class="wo-details ${isOpen ? 'open' : ''}" id="wo-details-${wo.id}">
                 ${wo.orders.map(order => renderOrderCardCompact(order)).join('')}
             </div>
         </div>
     `;
 }
 
-// Kompaktowa karta pozycji wewnątrz ZP
+// Kompaktowa karta pozycji wewnątrz ZP - z oznaczeniem completed i numerem matrycy
 function renderOrderCardCompact(order) {
     const product = order.product || {};
     const orderItem = order.sourceOrderItem || {};
@@ -971,10 +1189,19 @@ function renderOrderCardCompact(order) {
         'completed': 'Zakończone'
     };
     
-    const currentOp = order.currentOperation;
-    const nextOp = order.nextOperation;
-    const canStart = !currentOp && nextOp && (order.status === 'approved' || order.status === 'planned');
-    const canComplete = currentOp && (currentOp.status === 'active' || currentOp.status === 'paused');
+    const isCompleted = order.status === 'completed';
+    const ops = Array.isArray(order.operations) ? order.operations : [];
+    const derivedCurrentOp = ops.find(op => op.status === 'active') || ops.find(op => op.status === 'paused') || null;
+    const derivedNextOp = ops.find(op => op.status === 'pending') || null;
+    const currentOp = order.currentOperation || derivedCurrentOp;
+    const nextOp = order.nextOperation || derivedNextOp;
+    const canStart = !isCompleted && !currentOp && nextOp && (
+        order.status === 'approved' ||
+        order.status === 'planned' ||
+        order.status === 'in_progress' ||
+        order.status === 'paused'
+    );
+    const canComplete = !isCompleted && currentOp && (currentOp.status === 'active' || currentOp.status === 'paused');
     const operationId = currentOp?.id || nextOp?.id;
     
     // Dane z pozycji zamówienia
@@ -983,8 +1210,15 @@ function renderOrderCardCompact(order) {
     const projects = formatProjectsDisplay(orderItem.selectedProjects, orderItem.projectQuantities);
     const notes = order.productionnotes || orderItem.productionNotes || '';
     
+    // Wyciągnij numer matrycy z notatek (format: "MATRYCA: 12345" lub "Matryca: 12345")
+    const matrixMatch = notes.match(/MATRYCA:\s*(\S+)/i);
+    const matrixNumber = matrixMatch ? matrixMatch[1] : null;
+    
+    // Źródło ilości (czy wg projektów czy suma całkowita)
+    const quantitySource = orderItem.source === 'PROJEKTY' ? 'PROJEKTY' : 'SUMA';
+    
     // URL podglądu produktu
-    const previewUrl = product.imageUrl || orderItem.projectViewUrl || orderItem.projectviewurl || '';
+    const previewUrl = orderItem.projectViewUrl || orderItem.projectviewurl || product.imageUrl || '';
     const productName = product.name || product.code || 'Produkt';
     const productIdentifier = product.identifier || product.code || '';
     
@@ -994,8 +1228,9 @@ function renderOrderCardCompact(order) {
         `<span class="wo-timer" data-start="${startTime}"><i class="fas fa-clock"></i> <span class="timer-value">00:00</span></span>` : '';
     
     return `
-        <div class="wo-order-item status-${order.status.replace('_', '-')}" data-order-id="${order.id}">
+        <div class="wo-order-item status-${order.status.replace('_', '-')} ${isCompleted ? 'item-completed' : ''}" data-order-id="${order.id}">
             <div class="wo-order-item-header">
+                ${isCompleted ? '<span class="wo-completed-check"><i class="fas fa-check-circle"></i></span>' : ''}
                 <span class="wo-order-item-product">${escapeHtml(product.name || product.code || 'Produkt')}</span>
                 <span class="wo-order-item-qty">${order.quantity || 0} szt.</span>
                 ${timerHtml}
@@ -1013,14 +1248,21 @@ function renderOrderCardCompact(order) {
                 <div class="wo-order-item-projects">
                     <span class="wo-projects-label"><i class="fas fa-list-ol"></i> Projekty:</span>
                     ${projects}
+                    <span class="wo-qty-source ${quantitySource.toLowerCase()}">${quantitySource === 'PROJEKTY' ? 'Wg projektów' : 'Suma całkowita'}</span>
                 </div>` : ''}
                 
-                ${notes ? `
+                ${matrixNumber ? `
+                <div class="wo-order-item-matrix">
+                    <i class="fas fa-hashtag"></i> Matryca: <strong>${escapeHtml(matrixNumber)}</strong>
+                </div>` : ''}
+                
+                ${notes && !matrixMatch ? `
                 <div class="wo-order-item-notes">
                     <i class="fas fa-sticky-note"></i> ${escapeHtml(notes)}
                 </div>` : ''}
             </div>
             
+            ${!isCompleted ? `
             <div class="wo-order-item-actions">
                 ${previewUrl ? `
                     <button class="prod-btn-sm prod-btn-view" onclick="showProductImage('${previewUrl}', '${encodeURIComponent(productName)}', '${encodeURIComponent(productIdentifier)}', '${encodeURIComponent(location)}')" title="Podgląd produktu">
@@ -1029,18 +1271,25 @@ function renderOrderCardCompact(order) {
                 ` : ''}
                 ${canStart ? `
                     <button class="prod-btn-sm prod-btn-start" onclick="startOperation(${operationId}, ${order.id})">
-                        <i class="fas fa-play"></i>
+                        <i class="fas fa-play"></i> Start
                     </button>
                 ` : ''}
                 ${canComplete ? `
                     <button class="prod-btn-sm prod-btn-complete" onclick="showCompleteModal(${currentOp.id}, ${order.quantity})">
-                        <i class="fas fa-check"></i>
+                        <i class="fas fa-check"></i> Zakończ
                     </button>
                 ` : ''}
+                ${operationId ? `
                 <button class="prod-btn-sm prod-btn-problem" onclick="showProblemModal(${operationId})">
                     <i class="fas fa-exclamation-triangle"></i>
                 </button>
+                ` : ''}
             </div>
+            ` : `
+            <div class="wo-order-item-completed-info">
+                <i class="fas fa-check-double"></i> Wykonane
+            </div>
+            `}
         </div>
     `;
 }
@@ -1049,13 +1298,25 @@ function renderOrderCardCompact(order) {
 function toggleWorkOrderDetails(woId) {
     const detailsEl = document.getElementById(`wo-details-${woId}`);
     if (detailsEl) {
-        const isVisible = detailsEl.style.display !== 'none';
-        detailsEl.style.display = isVisible ? 'none' : 'block';
+        const isVisible = detailsEl.classList.contains('open');
+        const nextVisible = !isVisible;
+        
+        // Toggle klasy CSS zamiast inline style
+        detailsEl.classList.toggle('open', nextVisible);
+
+        // Zapisz stan w localStorage aby nie tracić po renderowaniu
+        const idStr = String(woId);
+        if (nextVisible) {
+            openWorkOrderDetails.add(idStr);
+        } else {
+            openWorkOrderDetails.delete(idStr);
+        }
+        localStorage.setItem('prodOpenWorkOrders', JSON.stringify([...openWorkOrderDetails]));
         
         // Zmień ikonę przycisku
         const btn = detailsEl.parentElement.querySelector('.wo-actions button:first-child i');
         if (btn) {
-            btn.className = isVisible ? 'fas fa-chevron-down' : 'fas fa-chevron-up';
+            btn.className = nextVisible ? 'fas fa-chevron-up' : 'fas fa-chevron-down';
         }
     }
 }
@@ -1066,6 +1327,167 @@ function toggleDisplayMode() {
     localStorage.setItem('prodDisplayMode', displayMode);
     updateDisplayModeButton();
     renderOrders();
+}
+
+// ============================================
+// OPTYMISTYCZNE AKTUALIZACJE UI (bez pełnego reloadu)
+// ============================================
+
+/**
+ * Aktualizuje pojedyncze zlecenie w miejscu (zmiana statusu)
+ */
+async function updateOrderInPlace(orderId, newStatus, operationId) {
+    // Znajdź zlecenie w lokalnych danych
+    const orderIndex = orders.findIndex(o => o.id === orderId || String(o.id) === String(orderId));
+    if (orderIndex === -1) {
+        // Fallback: pełne odświeżenie jeśli nie znaleziono
+        await loadOrders(true);
+        return;
+    }
+    
+    // Zaktualizuj lokalny stan
+    orders[orderIndex].status = newStatus;
+    if (operationId) {
+        const nowIso = new Date().toISOString();
+        orders[orderIndex].currentOperation = {
+            ...(orders[orderIndex].currentOperation || {}),
+            id: operationId,
+            status: 'active',
+            startedAt: nowIso,
+            startedat: nowIso,
+            starttime: nowIso
+        };
+        if (orders[orderIndex].nextOperation && orders[orderIndex].nextOperation.id === operationId) {
+            orders[orderIndex].nextOperation = null;
+        }
+    }
+    
+    // Znajdź workOrder zawierający to zlecenie
+    const woId = orders[orderIndex].workOrderId || orders[orderIndex].workorderid;
+    if (woId) {
+        const woIndex = workOrders.findIndex(wo => wo.id === woId || String(wo.id) === String(woId));
+        if (woIndex !== -1) {
+            // Zaktualizuj zlecenie w workOrder
+            const woOrderIndex = workOrders[woIndex].orders.findIndex(o => o.id === orderId || String(o.id) === String(orderId));
+            if (woOrderIndex !== -1) {
+                workOrders[woIndex].orders[woOrderIndex].status = newStatus;
+                if (operationId) {
+                    const nowIso = new Date().toISOString();
+                    workOrders[woIndex].orders[woOrderIndex].currentOperation = {
+                        ...(workOrders[woIndex].orders[woOrderIndex].currentOperation || {}),
+                        id: operationId,
+                        status: 'active',
+                        startedAt: nowIso,
+                        startedat: nowIso,
+                        starttime: nowIso
+                    };
+                    if (workOrders[woIndex].orders[woOrderIndex].nextOperation &&
+                        workOrders[woIndex].orders[woOrderIndex].nextOperation.id === operationId) {
+                        workOrders[woIndex].orders[woOrderIndex].nextOperation = null;
+                    }
+                }
+            }
+            
+            // Przerenderuj tylko ten kafelek
+            rerenderWorkOrderCard(woId);
+            return;
+        }
+    }
+    
+    // Fallback: pełne renderowanie
+    applyFiltersAndSort();
+    renderOrders();
+}
+
+/**
+ * Odświeża pojedynczy WorkOrder z serwera (po zakończeniu operacji)
+ */
+async function refreshSingleWorkOrder(operationId) {
+    try {
+        // Pobierz świeże dane tylko dla tego ZP
+        const url = `/api/production/orders/active?workOrdersView=${workOrdersView}`;
+        const response = await fetch(url, { credentials: 'include' });
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            // Zaktualizuj lokalne dane
+            orders = data.data || [];
+            workOrders = data.workOrders || [];
+            summary = data.summary || {};
+            
+            // Zachowaj stan otwarcia kafelków i przerenderuj
+            applyFiltersAndSort();
+            renderOrders();
+        }
+    } catch (error) {
+        console.error('Błąd odświeżania ZP:', error);
+    }
+}
+
+/**
+ * Przerenderowuje pojedynczy kafelek WorkOrder bez przeładowania całej listy
+ */
+function rerenderWorkOrderCard(woId) {
+    const wo = workOrders.find(w => w.id === woId || String(w.id) === String(woId));
+    if (!wo) return;
+    
+    const cardEl = document.querySelector(`[data-workorder-id="${woId}"]`);
+    if (!cardEl) return;
+    
+    // Wygeneruj nowy HTML
+    const newHtml = renderWorkOrderCard(wo);
+    
+    // Zamień element
+    const temp = document.createElement('div');
+    temp.innerHTML = newHtml;
+    const newCard = temp.firstElementChild;
+    
+    cardEl.replaceWith(newCard);
+}
+
+// ============================================
+// PRZEŁĄCZNIK WIDOKU ZP: Do zrobienia / Wykonane
+// ============================================
+function setWorkOrdersView(view) {
+    if (!WORKORDER_VIEWS.includes(view)) return;
+    workOrdersView = view;
+    localStorage.setItem('prodWorkOrdersView', view);
+    updateWorkOrdersViewButtons();
+    loadOrders(); // Przeładuj dane z nowym filtrem
+}
+
+function updateWorkOrdersViewButtons() {
+    const buttons = document.querySelectorAll('.wo-view-btn');
+    buttons.forEach(btn => {
+        const btnView = btn.dataset.view;
+        btn.classList.toggle('active', btnView === workOrdersView);
+    });
+}
+
+// ============================================
+// ZAKOŃCZ ZP (A1-lite: potwierdzenie + przełączenie na Wykonane)
+// ============================================
+function confirmFinishWorkOrder(woId) {
+    const wo = workOrders.find(w => w.id === woId);
+    if (!wo) {
+        showToast('Nie znaleziono zlecenia produkcyjnego', 'error');
+        return;
+    }
+    
+    const completedCount = wo.orders.filter(o => o.status === 'completed').length;
+    const totalCount = wo.orders.length;
+    
+    if (completedCount < totalCount) {
+        showToast(`Nie wszystkie pozycje są ukończone (${completedCount}/${totalCount})`, 'warning');
+        return;
+    }
+    
+    // Pokaż modal potwierdzenia
+    if (confirm(`Zlecenie ${wo.workOrderNumber} jest w 100% ukończone.\n\nCzy chcesz przenieść je do widoku "Wykonane"?`)) {
+        showToast(`Zlecenie ${wo.workOrderNumber} zakończone!`, 'success');
+        // Przełącz na widok "Wykonane"
+        setWorkOrdersView('completed');
+    }
 }
 
 // Utwórz zamówienie testowe z wieloma produktami
@@ -1432,6 +1854,14 @@ function stopTimer(orderId) {
 // AKCJE NA OPERACJACH
 // ============================================
 async function startOperation(operationId, orderId) {
+    // Optymistyczna aktualizacja UI - natychmiast zmień stan
+    const orderEl = document.querySelector(`[data-order-id="${orderId}"]`);
+    const btn = orderEl?.querySelector('.prod-btn-start, .prod-btn-sm.prod-btn-start');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
+    
     try {
         const response = await fetch(`/api/production/operations/${operationId}/start`, {
             method: 'POST',
@@ -1443,18 +1873,34 @@ async function startOperation(operationId, orderId) {
         
         if (data.status === 'success') {
             showToast('Operacja rozpoczęta', 'success');
-            loadOrders();
-            loadStats();
+            // Lokalna aktualizacja stanu zamiast pełnego reloadu
+            await updateOrderInPlace(orderId, 'in_progress', operationId);
+            loadStats(); // tylko statystyki
         } else {
             showToast(data.message || 'Błąd startu operacji', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-play"></i> Start';
+            }
         }
     } catch (error) {
         console.error('Błąd startu operacji:', error);
         showToast('Błąd połączenia', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-play"></i> Start';
+        }
     }
 }
 
 async function pauseOperation(operationId) {
+    // Znajdź przycisk i pokaż spinner
+    const btn = document.querySelector(`[onclick*="pauseOperation(${operationId})"]`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    }
+    
     try {
         const response = await fetch(`/api/production/operations/${operationId}/pause`, {
             method: 'POST',
@@ -1466,14 +1912,23 @@ async function pauseOperation(operationId) {
         
         if (data.status === 'success') {
             showToast('Operacja wstrzymana', 'info');
-            loadOrders();
+            // Lokalna aktualizacja - odśwież tylko ten element
+            await refreshSingleWorkOrder(operationId);
             loadStats();
         } else {
             showToast(data.message || 'Błąd pauzy', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-coffee"></i> PAUZA';
+            }
         }
     } catch (error) {
         console.error('Błąd pauzy:', error);
         showToast('Błąd połączenia', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-coffee"></i> PAUZA';
+        }
     }
 }
 
@@ -1485,6 +1940,18 @@ function showCompleteModal(operationId, quantity) {
     document.getElementById('outputQuantity').value = quantity || 0;
     document.getElementById('wasteQuantity').value = 0;
     document.getElementById('qualityNotes').value = '';
+    // Pole numeru matrycy (jeśli istnieje)
+    const matrixInput = document.getElementById('matrixNumber');
+    if (matrixInput) {
+        matrixInput.value = '';
+    }
+    
+    const confirmBtn = document.querySelector('#completeModal .prod-btn-primary, #completeModal .prod-btn-complete');
+    if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = '<i class="fas fa-check"></i> ZAPISZ';
+    }
+
     document.getElementById('completeModal').classList.add('active');
 }
 
@@ -1500,17 +1967,43 @@ async function confirmComplete() {
     
     const outputQuantity = parseInt(document.getElementById('outputQuantity').value) || 0;
     const wasteQuantity = parseInt(document.getElementById('wasteQuantity').value) || 0;
-    const qualityNotes = document.getElementById('qualityNotes').value.trim();
+    let qualityNotes = document.getElementById('qualityNotes').value.trim();
+    
+    // Dodaj numer matrycy do notatek (jeśli podany)
+    const matrixInput = document.getElementById('matrixNumber');
+    const matrixNumber = matrixInput ? matrixInput.value.trim() : '';
+    if (matrixNumber) {
+        qualityNotes = `MATRYCA: ${matrixNumber}${qualityNotes ? '\n' + qualityNotes : ''}`;
+    }
+    
+    // Pokaż spinner na przycisku
+    const confirmBtn = document.querySelector('#completeModal .prod-btn-primary, #completeModal .prod-btn-complete');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Zapisuję...';
+    }
+    
+    const operationIdToComplete = currentOperationId;
+    console.log('[confirmComplete] Rozpoczynam zakończenie operacji:', operationIdToComplete);
     
     try {
-        const response = await fetch(`/api/production/operations/${currentOperationId}/complete`, {
+        // Timeout 15 sekund
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        
+        const response = await fetch(`/api/production/operations/${operationIdToComplete}/complete`, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ outputQuantity, wasteQuantity, qualityNotes })
+            body: JSON.stringify({ outputQuantity, wasteQuantity, qualityNotes }),
+            signal: controller.signal
         });
         
+        clearTimeout(timeoutId);
+        
+        console.log('[confirmComplete] Response status:', response.status);
         const data = await response.json();
+        console.log('[confirmComplete] Response data:', data);
         
         if (data.status === 'success') {
             closeModal('completeModal');
@@ -1521,14 +2014,29 @@ async function confirmComplete() {
                 showToast('Operacja zakończona', 'success');
             }
             
-            loadOrders();
+            // Pełne odświeżenie danych - zapewnia poprawne usunięcie zakończonych pozycji
+            await loadOrders(true);
             loadStats();
         } else {
+            console.error('[confirmComplete] Błąd z API:', data.message);
             showToast(data.message || 'Błąd zakończenia', 'error');
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = '<i class="fas fa-check"></i> Potwierdź';
+            }
         }
     } catch (error) {
-        console.error('Błąd zakończenia:', error);
-        showToast('Błąd połączenia', 'error');
+        if (error.name === 'AbortError') {
+            console.error('[confirmComplete] Timeout - brak odpowiedzi w 15s');
+            showToast('Przekroczono czas oczekiwania (15s)', 'error');
+        } else {
+            console.error('[confirmComplete] Błąd:', error);
+            showToast('Błąd połączenia: ' + error.message, 'error');
+        }
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="fas fa-check"></i> Potwierdź';
+        }
     }
 }
 
@@ -1695,12 +2203,55 @@ function showToast(message, type = 'info') {
 // PRODUCT IMAGE MODAL FUNCTIONS
 // ============================================
 
+function normalizeProjectViewUrlForImage(value) {
+    if (value === null || value === undefined) return value;
+    if (typeof value !== 'string') return value;
+
+    const raw = value.trim();
+    if (!raw) return raw;
+
+    if (raw === '/') {
+        return null;
+    }
+
+    try {
+        const parsed = new URL(raw);
+        const pathname = parsed.pathname || '';
+        const search = parsed.search || '';
+
+        if ((pathname === '' || pathname === '/') && !search) {
+            return null;
+        }
+
+        if (pathname.startsWith('/api/gallery/')) {
+            return `${pathname}${search}`;
+        }
+
+        return raw;
+    } catch (e) {
+        // Nie jest absolutnym URL-em (np. już jest względny)
+    }
+
+    if (raw.startsWith('/api/gallery/')) {
+        return raw;
+    }
+
+    if (raw.startsWith('api/gallery/')) {
+        return `/${raw}`;
+    }
+
+    return raw;
+}
+
 // Pokaż obrazek produktu w modalu
 function showProductImage(imageUrl, productName = '', productIdentifier = '', locationName = '') {
+    const normalizedUrl = normalizeProjectViewUrlForImage(imageUrl);
     console.log('[showProductImage] URL received:', imageUrl);
+    console.log('[showProductImage] URL normalized:', normalizedUrl);
     
-    if (!imageUrl) {
+    if (!normalizedUrl) {
         console.log('[showProductImage] No URL provided');
+        showToast('Brak podglądu produktu', 'info');
         return;
     }
     
@@ -1713,7 +2264,7 @@ function showProductImage(imageUrl, productName = '', productIdentifier = '', lo
     productImageTitle.textContent = title;
     productImageDetails.textContent = details.join(' | ') || '';
     
-    console.log('[showProductImage] Setting image src to:', imageUrl);
+    console.log('[showProductImage] Setting image src to:', normalizedUrl);
     
     // Reset zoom state BEFORE loading image
     isZoomed = false;
@@ -1727,17 +2278,17 @@ function showProductImage(imageUrl, productName = '', productIdentifier = '', lo
     
     newImage.addEventListener('load', function() {
         console.log('[showProductImage] Image loaded successfully');
-        productImageContent.src = imageUrl;
+        productImageContent.src = normalizedUrl;
         productImageModal.classList.remove('hidden');
     }, { once: true });
     
     newImage.addEventListener('error', function() {
-        console.error('[showProductImage] Failed to load image:', imageUrl);
+        console.error('[showProductImage] Failed to load image:', normalizedUrl);
         showToast('Błąd ładowania obrazka produktu', 'error');
     }, { once: true });
     
     // Start loading the image
-    newImage.src = imageUrl;
+    newImage.src = normalizedUrl;
 }
 
 // Zoom functionality
@@ -1774,6 +2325,26 @@ function closeProductImage() {
     productImageModal.classList.add('hidden');
     productImageContent.src = '';
 }
+
+// Export functions for HTML access
+window.sortOrders = sortOrders;
+window.toggleViewMode = toggleViewMode;
+window.toggleFilter = toggleFilter;
+window.togglePin = togglePin;
+window.setSelectedMachine = setSelectedMachine;
+window.refreshOrders = refreshOrders;
+window.logout = logout;
+window.toggleDisplayMode = toggleDisplayMode;
+window.setWorkOrdersView = setWorkOrdersView;
+window.toggleFullscreen = toggleFullscreen;
+window.closeAllModals = closeAllModals;
+window.createTestMultiProductOrder = createTestMultiProductOrder;
+window.runDiagnostics = runDiagnostics;
+window.adjustQuantity = adjustQuantity;
+window.closeModal = closeModal;
+window.selectProblemType = selectProblemType;
+window.confirmComplete = confirmComplete;
+window.confirmProblem = confirmProblem;
 
 // Export modal functions
 window.showProductImage = showProductImage;
