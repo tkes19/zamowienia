@@ -71,6 +71,7 @@ Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
 
 - Node.js 16+ (wraz z `npm`).
 - Jeśli chcesz pobierać aktualizacje repozytorium – Git (opcjonalnie).
+- Do kompilacji styli Tailwind wymagane jest jednorazowe `npm install` w katalogu głównym (instaluje tylko dev-dependency `tailwindcss`).
 
 ## 2. Struktura projektu
 
@@ -95,6 +96,20 @@ npm install            # tylko pierwszy raz
 npm run dev            # tryb deweloperski z nodemonem
 # lub: npm start       # zwykłe uruchomienie
 ```
+
+### 3.1. Kompilacja Tailwind CSS
+
+Frontend korzysta z lokalnie generowanego pliku `assets/tailwind.generated.css`.
+
+```powershell
+cd "C:\Users\Tomek\OneDrive\000 CURSOR\ZAMÓWIENIA"
+npm install               # tylko pierwszy raz (instaluje Tailwind CLI)
+npm run tailwind:build    # jednorazowa kompilacja (minifikacja)
+# lub: npm run tailwind:watch  # tryb nasłuchiwania podczas pracy nad UI
+```
+
+Źródło styli: `assets/tailwind.css` (używa dyrektyw `@tailwind`).  
+Kompilacja generuje `assets/tailwind.generated.css`, na który wskazują wszystkie pliki `.html`.
 
 ## Tak uruchamiałem w domu 
 
@@ -412,10 +427,69 @@ W każdej opcji pamiętaj o ustawieniu zmiennych środowiskowych (`PORT`, `SMTP_
   - Ulepszono wyświetlanie informacji o miejscowościach w szczegółach zamówień.
   - Naprawiono błąd związany z dostępem do szczegółów zamówień dla użytkowników z rolą `SALES_REP`.
 
+---
 
+## Panel Produkcji - Przeprojektowanie (grudzień 2024)
 
+### Nowe funkcje
+
+#### 1. Przełącznik widoku ZP
+Operator może przełączać między trzema widokami:
+- **Do zrobienia** (`open`) - zlecenia aktywne (planned, approved, in_progress)
+- **Wykonane** (`completed`) - zlecenia zakończone dzisiaj
+- **Wszystkie** (`all`) - wszystkie zlecenia
+
+#### 2. Kompaktowy kafelek ZP
+Przeprojektowany kafelek zlecenia produkcyjnego:
+- Zmniejszony rozmiar dla lepszej skanowalności
+- Usunięte dublowanie informacji
+- Wyświetlanie 1 produktu + "+N więcej" zamiast pełnej listy
+- Szczegóły dostępne po kliknięciu "Szczegóły"
+
+#### 3. Śledzenie postępu w ramach ZP
+- Ukończone pozycje pozostają widoczne w ZP do momentu zakończenia całego zlecenia
+- Wizualne oznaczenie ukończonych pozycji (wyszarzenie + ✓)
+- Ukrycie przycisków akcji dla ukończonych pozycji
+- Pasek postępu pokazuje % ukończenia
+
+#### 4. Przepływ między pokojami (R1)
+- Po zakończeniu operacji w pokoju A, pozycja automatycznie znika z A
+- Pozycja pojawia się w kolejnym pokoju B na ścieżce produkcyjnej
+- Filtrowanie bierze pod uwagę tylko operacje `pending/active/paused`
+
+#### 5. Numer matrycy
+- Nowe pole w modalu zakończenia operacji
+- Operator może wpisać numer matrycy przy zakończeniu
+- Numer zapisywany w notatkach operacji (format: `MATRYCA: xxx`)
+- Wyświetlany w szczegółach pozycji
+
+#### 6. Przycisk "Zakończ ZP"
+- Dostępny tylko gdy 100% pozycji jest ukończonych
+- Potwierdza zakończenie zlecenia
+- Automatycznie przełącza na widok "Wykonane"
+
+### API
+
+#### GET /api/production/orders/active
+Nowy parametr: `workOrdersView`
+- `open` (domyślny) - otwarte zlecenia + completed pozycje z tych samych ZP
+- `completed` - tylko zakończone dzisiaj
+- `all` - wszystkie statusy
+
+### Testy
+Nowy plik testów: `backend/workorders-view.test.js`
+- Testy reguły R1 (filtrowanie po statusie operacji)
+- Testy parametru workOrdersView
+- Testy dołączania completed do otwartych ZP
+- Testy obliczania postępu
+- Testy parsowania numeru matrycy
+
+### Pliki zmienione
+- `backend/server.js` - logika filtrowania i parametr workOrdersView
+- `scripts/production.js` - przeprojektowane renderowanie kafelków
+- `production.html` - nowe UI (przełącznik, pole matrycy, style CSS)
 
 
 
 Własne teksty
-Od razu wszystko przeprojektój bez pół środków. Zaprojektój plan , wdróż go krok o kroku. Wykonaj testy jednostkowe, uzupełnij dokumentcję. 
+Od razu wszystko przeprojektój bez pół środków. Pamiętaj UX i UI. Zaprojektój plan , wdróż go krok po kroku. Wykonaj testy jednostkowe, uzupełnij dokumentcję. 

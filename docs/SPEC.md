@@ -95,7 +95,12 @@ System używa wspólnej belki nawigacyjnej widocznej na wszystkich głównych st
 
 ```sql
 -- Użytkownicy
-User (id, email, name, shortCode, role, password, createdAt, updatedAt)
+User (
+  id, email, name, shortCode, role, password,
+  createdAt, updatedAt,
+  productionroomid,        -- cache pokoju głównego (synchro trigger)
+  isKioskEnabled, pinHash
+)
 
 -- Przypisania folderów KI
 UserFolderAccess (id, userId, folderName, isActive, assignedBy, notes, createdAt)
@@ -107,6 +112,17 @@ UserCityAccessLog (id, accessId, action, changedBy, changedAt, oldValues, newVal
 
 -- Ulubione
 UserFavorites (id, userId, type, itemId, displayName, metadata, createdAt)
+
+-- Przypisania użytkowników do wielu pokoi produkcyjnych
+UserProductionRoom (
+  id serial PRIMARY KEY,
+  userId uuid REFERENCES "User"(id) ON DELETE CASCADE,
+  roomId integer REFERENCES "ProductionRoom"(id) ON DELETE CASCADE,
+  isPrimary boolean DEFAULT false,
+  notes text,
+  assignedBy uuid REFERENCES "User"(id),
+  createdAt timestamptz DEFAULT now()
+)
 ```
 
 ### 5.2. Zamówienia
@@ -230,14 +246,17 @@ Przykłady: `ADMIN`, `SALES_DEPT`, `GRAPHICS`, `WAREHOUSE`, `PRODUCTION`, `OPERA
 Na poziomie bazy **Dział i Pokój nie są sztywno związane** – łączy je użytkownik:
 
 - użytkownik ma przypisany `departmentId` (struktura organizacyjna),
-- użytkownik ma przypisany `productionroomid` (miejsce pracy w produkcji),
-- użytkownik ma `role` (uprawnienia w systemie).
+- użytkownik ma przypisania w tabeli `UserProductionRoom` (miejsce pracy w produkcji, wiele wpisów),
+- pole `User.productionroomid` przechowuje pokój główny (używany przez kiosk, raporty; synchronizowane triggerem),
+- użytkownik ma `role` (uprawnienia w systemie, potencjalnie wiele dzięki `UserRoleAssignment`).
 
 Taki model jest elastyczny:
 
 - jeden dział może mieć użytkowników pracujących w wielu pokojach,
 - jeden pokój może być obsługiwany przez ludzi z różnych działów,
+- operator/brygadzista może mieć kilka pokoi (np. Pakowanie + Żywicowanie) i przełączać je w UI,
 - zmiana roli (uprawnień) nie wymaga zmiany działu ani pokoju.
+- **Przykład (Handlowiec + Operator):** użytkownik może mieć główną rolę `SALES_REP`, a dodatkową `OPERATOR`. Po zalogowaniu wybiera aktywną rolę przez `POST /api/auth/active-role`. Gdy aktywna rola jest produkcyjna, UI pokazuje widoki produkcyjne oraz dropdown pokojów (jeśli ma przypisania w `UserProductionRoom`). Dzięki temu jeden login obsługuje sprzedaż i produkcję bez przepinania kont.
 
 Rozszerzenia tabeli `Order` i (opcjonalnie) `OrderItem` pod moduł grafiki
 opisane są w `docs/SPEC_PRODUCTION_PANEL.md` (sekcja 9.2) i będą wdrażane w
@@ -318,6 +337,65 @@ Powód:
 - minimalizuje ryzyko rozbieżności w sposobie pobierania `auth_id` / `auth_role`
   między endpointami.
 
+### 6.1.2. Tryb kiosku (PIN 6 cyfr)
+
+Tryb kiosku jest przeznaczony dla stanowisk na hali produkcyjnej, gdzie operatorzy nie muszą posiadać firmowego emaila.
+
+- Wejście: `/kiosk` (serwuje `login.html` w trybie kiosku; widoczny jest tylko panel produkcji)
+- Wejście alternatywne: `/login` (split-screen: panel produkcji po lewej + panel firmowy po prawej)
+- Logowanie: operator wybiera **pokój produkcyjny**, następnie **operatora**, a potem wpisuje **PIN (6 cyfr)**.
+- Zapamiętywanie pokoju: frontend zapisuje `kioskRoomId` w `localStorage`.
+- Wymagane role: `OPERATOR`, `PRODUCTION`, `PRODUCTION_MANAGER`.
+
+Implementacja UI/UX:
+
+- Strona `login.html` zawiera dwa niezależne formularze:
+  - `#kiosk-login-form` (Produkcja / kiosk) → `POST /api/kiosk/login`
+  - `#company-login-form` (Logowanie firmowe) → `POST /api/auth/login`
+- Na `/kiosk` panel firmowy jest ukryty (pozostaje wyłącznie logowanie produkcyjne).
+- Na `/login` oba panele są widoczne równolegle (split-screen).
+- W panelu kiosku prezentowany jest wskaźnik „Ostatnio wybrany pokój” oraz przycisk `Zmień pokój`.
+
+Feature flag (docelowo ograniczenie do sieci produkcyjnej):
+
+- `KIOSK_NETWORK_RESTRICTION_ENABLED=true|false`
+- `KIOSK_ALLOWED_CIDRS` – lista CIDR po przecinku (np. `192.168.0.0/24,10.0.0.0/8`)
+
+Endpointy kiosku:
+
+| Endpoint | Metoda | Opis |
+|----------|--------|------|
+| `/kiosk` | GET | Strona logowania w trybie kiosku |
+| `/api/kiosk/rooms` | GET | Lista aktywnych pokojów produkcyjnych |
+| `/api/kiosk/operators?roomId=...` | GET | Lista aktywnych użytkowników przypisanych do pokoju, z `isKioskEnabled=true` i rolą produkcyjną |
+| `/api/kiosk/login` | POST | Logowanie przez `userId` + `pin` (6 cyfr), ustawia cookies auth |
+
+Kontrakt: `POST /api/kiosk/login`
+
+```json
+{
+  "userId": "uuid",
+  "pin": "123456"
+}
+```
+
+Odpowiedź:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "id": "uuid",
+    "role": "OPERATOR"
+  }
+}
+```
+
+Uwagi bezpieczeństwa:
+
+- PIN jest przechowywany wyłącznie jako hash bcrypt w polu `User.pinHash`.
+- Backend stosuje rate-limit (licznik prób per IP i użytkownik) analogicznie do `/api/auth/login`.
+
 ### 6.2. Zamówienia
 
 | Endpoint | Metoda | Opis | Role |
@@ -373,6 +451,11 @@ Zapis w bazie:
 | `/api/favorites` | GET | Lista ulubionych (zwraca `data`) |
 | `/api/favorites` | POST | Dodaj (wymaga: type, itemId, displayName) |
 | `/api/favorites/:type/:itemId` | DELETE | Usuń z ulubionych |
+
+### 6.7. Auto-wylogowanie w panelu produkcji
+
+Panel produkcji (`/production`) posiada auto-wylogowanie po **20 minutach bezczynności**.
+Po przekroczeniu limitu frontend wywołuje `POST /api/auth/logout` i przekierowuje użytkownika na `/kiosk`.
 
 ### 6.6. Mapowanie projektów galerii na produkty
 

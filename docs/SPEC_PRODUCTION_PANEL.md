@@ -22,6 +22,49 @@ Relacja między tymi elementami jest taka sama jak w SPEC.md:
 użytkownik ma przypisany dział, pokój produkcyjny i rolę, a panel korzysta z tych
 informacji przy filtrowaniu zadań i uprawnień.
 
+### 1.2. Multiroom – przypisanie użytkownika do wielu pokoi (2025-12-18)
+
+Operatorzy produkcji mogą pracować w więcej niż jednym pokoju produkcyjnym
+(np. rano na Składaniu/Pakowaniu, po południu na Żywicowaniu). System obsługuje
+to przez tabelę łącznikową `UserProductionRoom`:
+
+```sql
+CREATE TABLE "UserProductionRoom" (
+  id SERIAL PRIMARY KEY,
+  "userId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  "roomId" integer NOT NULL REFERENCES "ProductionRoom"(id) ON DELETE CASCADE,
+  "isPrimary" boolean NOT NULL DEFAULT false,
+  notes text,
+  "assignedBy" text REFERENCES "User"(id) ON DELETE SET NULL,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  UNIQUE ("userId", "roomId")
+);
+```
+
+**Kluczowe elementy:**
+
+- **isPrimary** – flaga oznaczająca pokój główny (domyślny) użytkownika
+- **User.productionroomid** – cache pokoju głównego, synchronizowany triggerem
+- **Trigger `sync_user_primary_room()`** – automatycznie aktualizuje `User.productionroomid`
+  przy zmianach w `UserProductionRoom`
+
+**API:**
+
+| Endpoint | Opis |
+|----------|------|
+| `GET /api/admin/user-production-rooms?userId=` | Lista przypisań (admin) |
+| `GET /api/user-production-rooms` | Pokoje bieżącego użytkownika |
+| `POST /api/admin/user-production-rooms` | Dodaj przypisanie |
+| `PATCH /api/admin/user-production-rooms/:id` | Zmień (np. isPrimary) |
+| `DELETE /api/admin/user-production-rooms/:id` | Usuń przypisanie |
+
+**Frontend:**
+
+- **Panel admina:** kolumna "Pokoje prod." w tabeli użytkowników + modal zarządzania
+- **Panel produkcji:** dropdown selector pokoju (gdy `hasMultipleRooms === true`)
+- **Persystencja:** aktywny pokój zapisywany w `localStorage.activeProductionRoomId`
+- **Przykład Handlowiec+Operator:** nadaj użytkownikowi dodatkową rolę `OPERATOR` w sekcji wieloról panelu admina, a następnie przypisz mu pokoje w modalu multiroom. Użytkownik loguje się standardowo, przełącza aktywną rolę na produkcyjną (endpoint `POST /api/auth/active-role` już dostępny w UI), po czym może wybierać pokoje w dropdownie i pracować jak operator bez tworzenia oddzielnego konta.
+
 ---
 
 ## 2. Decyzje architektoniczne
@@ -94,6 +137,8 @@ CREATE TABLE public."WorkStation" (
   "createdAt" timestamp DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" timestamp DEFAULT CURRENT_TIMESTAMP
 );
+
+> **Notatka operacyjna (2025-12-18):** Statusy `available / in_use / maintenance / breakdown` są już wykorzystywane w panelu admina poprzez szybkie przełączniki (`production-drilldown.js → quickChangeStatus`), które wywołują `PATCH /api/production/work-stations/:id/status`. Endpoint backendu aktualizuje pola `status` i `currentOperatorId`, dzięki czemu dane są od razu gotowe dla automatyzacji opisanej w tej specyfikacji (planowanie operacji, blokady przypisań produktów, raporty awarii). Ręczna zmiana statusu traktowana jest jako interim UX zasilający przyszłe procesy MES.
 
 -- Ścieżki produkcyjne
 CREATE TABLE public."ProductionPath" (
@@ -3275,9 +3320,253 @@ logi `pause`/`resume` z agregacją czasu przestojów).
     - `aggregateRoomStats()` – agregacja statystyk pokojów
     - Walidacja zakresu dat i uprawnień
 
+### 11.7 Refaktoryzacja UX panelu operatora (2025-12-14)
+
+✅ **Zrealizowane:**
+
+- **Kafelki ZP bez glitchów:**
+  - Sekcja szczegółów `.wo-details` domyślnie ukryta przez CSS (`display: none`)
+  - Klasa `.open` przełącza widoczność (bez inline style)
+  - Stan otwarcia zapisywany w `localStorage` (`prodOpenWorkOrders`)
+  - Ikona strzałki zmienia się zgodnie ze stanem (chevron-up/down)
+
+- **Akcje bez przeładowania strony:**
+  - `startOperation()` – optymistyczna aktualizacja UI, spinner na przycisku
+  - `pauseOperation()` – lokalna zmiana stanu, bez `loadOrders()`
+  - `confirmComplete()` – spinner „Zapisuję...", odświeżenie tylko zmienionego ZP
+  - Funkcje pomocnicze: `updateOrderInPlace()`, `refreshSingleWorkOrder()`, `rerenderWorkOrderCard()`
+
+- **Szybkie pojawianie się nowych ZP:**
+  - `startFastPolling()` – co 5s przez pierwsze 2 minuty, potem co 30s
+  - Natychmiastowe `loadOrders()` po zalogowaniu
+
+- **Badge SLA/termin:**
+  - Funkcja `getSlaBadge(deliveryDate)` generuje badge:
+    - `sla-overdue` – przeterminowane (czerwony, pulsujący)
+    - `sla-today` – termin dziś (pomarańczowy, pulsujący)
+    - `sla-tomorrow` – termin jutro (niebieski)
+    - `sla-soon` – termin za 2-3 dni (szary)
+  - Badge wyświetlany w nagłówku kafelka ZP
+
+- **Filtry widoku:**
+  - Usunięto przycisk „Wszystkie" – zostały tylko „Do zrobienia" / „Wykonane"
+  - Stała `WORKORDER_VIEWS = ['open', 'completed']`
+
+- **Testy jednostkowe:**
+  - Plik `backend/workorders-view.test.js` rozszerzony o:
+    - Badge SLA/termin (`getSlaBadgeType`)
+    - Optymistyczne aktualizacje UI (`updateOrderStatus`)
+    - Stan otwarcia kafelków (`toggleWorkOrderOpen`)
+    - Walidacja widoków (bez `all`)
+
 ---
 
-**Wersja dokumentu:** 1.1  
+## 7. Aktualizacje i Poprawki (2025-12-16)
+
+### 7.1 Fix sortowania w widoku "Wykonane"
+
+**Problem:** Sortowanie nie działało w widoku "Wykonane" (Zbiorcze ZP)
+
+**Rozwiązanie:**
+- Zmodyfikowano `sortOrders()` aby obsługiwał tryb `workorders`
+- Dodano dedykowaną funkcję `sortWorkOrders()` dla sortowania ZP
+- Naprawiono obliczanie priorytetów i statusów
+
+**Szczegóły implementacji:**
+
+#### 7.1.1 Funkcja `sortOrders()`
+```javascript
+function sortOrders() {
+    // Sortuj odpowiednią tablicę w zależności od trybu wyświetlania
+    if (displayMode === 'workorders') {
+        sortWorkOrders(); // Tryb Zbiorcze ZP
+    } else {
+        applyFiltersAndSort(); // Tryb pojedynczych pozycji
+    }
+    renderOrders();
+}
+```
+
+#### 7.1.2 Funkcja `sortWorkOrders()`
+- Sortuje tablicę `workOrders` dla widoku Zbiorczych ZP
+- Obsługuje wszystkie opcje sortowania: priority, pinned, quantity-asc/desc, date
+- Używa `getWorkOrderPriority()` do obliczania priorytetu ZP
+
+#### 7.1.3 Obliczanie statusów ZP
+```javascript
+function computeWorkOrderStatus(wo) {
+    if (!wo.orders || wo.orders.length === 0) return 'planned';
+    
+    const statuses = wo.orders.map(o => o.status);
+    const allCompleted = statuses.every(s => s === 'completed');
+    const anyInProgress = statuses.some(s => s === 'in_progress' || s === 'paused');
+    const anyApproved = statuses.some(s => s === 'approved');
+    
+    if (allCompleted) return 'completed';
+    else if (anyInProgress) return 'in_progress';
+    else if (anyApproved) return 'approved';
+    else return 'planned';
+}
+```
+
+#### 7.1.4 Priorytety ZP
+```javascript
+function getWorkOrderPriority(workOrder) {
+    if (!workOrder.orders || workOrder.orders.length === 0) return 3;
+    // Zwróć najwyższy priorytet spośród zamówień w ZP (użyj computedPriority jeśli dostępne)
+    return Math.min(...workOrder.orders.map(order => order.computedPriority || order.priority || 3));
+}
+```
+
+#### 7.1.5 Sortowanie po dacie
+- **"Data"** = data zamówienia handlowca (`order.sourceOrder.createdAt`)
+- **"Priorytet"** = data dostawy (obliczony priorytet czasowy)
+- Zmieniono z daty utworzenia ZP na datę zamówienia dla lepszej logiki biznesowej
+
+### 7.2 Statusy i priorytety dynamiczne
+
+**Problem:** Status "ZAPLANOWANE" nie zmieniał się, priorytet zawsze "3"
+
+**Rozwiązanie:**
+- Status ZP obliczany dynamicznie na podstawie statusów pojedynczych zamówień
+- Priorytet ZP obliczany na podstawie `computedPriority` (priorytety czasowe)
+- Wyświetlanie używa obliczonych wartości zamiast statycznych z bazy
+
+**Efekty:**
+- Statusy ZP zmieniają się: planned → approved → in_progress → completed
+- Priorytety ZP odzwierciedlają rzeczywistą pilność (1-4)
+- Sortowanie działa poprawnie we wszystkich widokach
+
+---
+
+## 8. Real-time Updates (2025-12-16)
+
+### 8.1 Server-Sent Events (SSE) dla aktualizacji statusów
+
+**Problem:** Kolumna "Produkcja" w widoku Zamówienia aktualizowała się dopiero po odświeżeniu strony. Status zamówienia nie zmieniał się w czasie rzeczywistym po zakończeniu produkcji.
+
+**Rozwiązanie:** Wdrożono mechanizm Server-Sent Events (SSE) do broadcastowania zmian statusu produkcji z backendu do frontendu.
+
+#### 8.1.1 Backend - infrastruktura SSE
+
+**Plik:** `backend/server.js`
+
+**Endpoint SSE:**
+```javascript
+// GET /api/events - strumień zdarzeń (productionStatusChanged)
+app.get('/api/events', async (req, res) => {
+    // Autoryzacja: SALES_REP, ADMIN, SALES_DEPT, WAREHOUSE, PRODUCTION, OPERATOR, PRODUCTION_MANAGER
+    // Nagłówki SSE: Content-Type: text/event-stream
+    // Zarządzanie klientami: sseClients Set
+    // Event: 'ready' + 'message' (productionStatusChanged)
+});
+```
+
+**Endpoint statusu produkcji:**
+```javascript
+// GET /api/orders/:id/production-status
+// Zwraca: { status: 'success', data: productionStatus, orderStatus }
+// Uwzględnia uprawnienia: SALES_REP tylko swoje zamówienia
+```
+
+**Broadcast zdarzeń:**
+```javascript
+function broadcastSseEvent(payload) {
+    // Wysyła do wszystkich podłączonych klientów SSE
+    // Format: { type: 'productionStatusChanged', orderId, productionStatus, at: Date.now() }
+}
+```
+
+#### 8.1.2 Logika wielopokojowa - zabezpieczenie przed przedwczesnym "gotowe"
+
+**Problem:** "Produkcja gotowa" pojawiała się po zakończeniu operacji w jednym pokoju, nawet jeśli produkt miał jeszcze operacje w innych pokojach.
+
+**Rozwiązanie:** Wprowadzono walidację pełnej ścieżki produkcyjnej przed uznaniem statusu za zakończony.
+
+**Helper computeProductionStatusForOrder():**
+```javascript
+async function computeProductionStatusForOrder(orderId) {
+    // Cache ProductionPath (60s) dla wydajności
+    // Wylicza oczekiwaną liczbę operacji z productionpathexpression + ProductionPath.operations
+    // Uznaje COMPLETED tylko gdy:
+    //   - liczba operacji >= oczekiwana (wszystkie pokoje/operacje)
+    //   - wszystkie operacje mają status 'completed'
+}
+```
+
+**Zabezpieczenie w endpointach produkcyjnych:**
+```javascript
+// PATCH /api/production/operations/:id/status
+if (status === 'completed') {
+    // Sprawdź czy wszystkie oczekiwane operacje istnieją
+    // Nie ustawiaj ProductionOrder.status='completed' przedwcześnie
+}
+```
+
+#### 8.1.3 Frontend - nasłuch i aktualizacje bez przeładowania
+
+**Plik:** `scripts/orders.js`
+
+**SSE listener:**
+- Łączy się z `/api/events` i nasłuchuje na `productionStatusChanged`
+- Po otrzymaniu zdarzenia wywołuje `refreshOrderProductionStatus()`
+
+**Aktualizacja kolumn:**
+- Pobiera świeży status produkcji i status zamówienia
+- Aktualizuje `allOrders[i].productionStatus` i `allOrders[i].status`
+- Podmienia tylko komórki w DOM (bez przeładowania tabeli)
+
+**Plik:** `scripts/production.js`
+
+**SSE listener dla panelu produkcji:**
+- Łączy się z `/api/events` i nasłuchuje na zdarzenia `productionStatusChanged`
+- Używa debounce (400ms) do unikania nadmiernych odświeżeń
+- Implementuje auto-reconnect z wykładniczym opóźnieniem
+- Po otrzymaniu zdarzenia wywołuje `loadOrdersSilent()` i `loadStats()`
+
+**Cache busting i optymistyczne aktualizacje:**
+- Parametr wersji w JS (`?v=20251216-1`) zapobiega problemom z cache
+- Natychmiastowa aktualizacja `currentOperation` w `updateOrderInPlace`
+- Fallback logic w `renderOrderCardCompact` wylicza stan z `order.operations`
+
+#### 8.1.4 Emitery zdarzeń
+
+Zdarzenia `productionStatusChanged` emitowane po zmianach statusu w endpointach:
+- `PATCH /api/production/orders/:id/status`
+- `PATCH /api/production/operations/:id/status`
+- `POST /api/production/operations/:id/start`
+- `POST /api/production/operations/:id/pause`
+- `POST /api/production/operations/:id/complete`
+- `POST /api/production/operations/:id/problem`
+- `POST /api/production/operations/:id/cancel`
+
+#### 8.1.5 Efekty końcowe
+
+**Real-time updates:**
+- Kolumna "Produkcja" w Zamówienia aktualizuje się natychmiast po zmianie statusu produkcji
+- Kolumna "Status" zmienia się z "W produkcji" na "Gotowe" po zakończeniu CAŁEJ ścieżki
+- Panel produkcji odświeża się lekko (bez przeładowania) po zmianach
+
+**Synchronizacja między kartami przeglądarki:**
+- Zmiana statusu operacji w jednej karcie panelu produkcji natychmiast odzwierciedla się w drugiej karcie
+- Przycisk "Start" znika natychmiast po rozpoczęciu operacji (optymistyczna aktualizacja `currentOperation`)
+- Przycisk "Zakończ" pojawia się bez potrzeby ręcznego odświeżania strony
+- SSE zapewnia spójność stanu we wszystkich otwartych kartach z panelu produkcji
+
+**Wielopokojowe ścieżki:**
+- "Produkcja gotowa" pojawia się dopiero po ostatniej operacji w ostatnim pokoju
+- Logika chroni przed przedwczesnym completion gdy kolejne etapy nie są jeszcze utworzone
+- Cache ProductionPath minimalizuje obciążenie bazy
+
+**Optymalizacje UX:**
+- Cache busting (`?v=20251216-1`) zapobiega problemom ze starą wersją JS w cache przeglądarki
+- Optymistyczna aktualizacja UI eliminuje opóźnienia między akcją użytkownika a reakcją interfejsu
+- Fallback logic w `renderOrderCardCompact` zapewnia poprawne wyświetlanie przycisków nawet przy braku `currentOperation`
+- Debounce (400ms) zapobiega nadmiernym odświeżeniom przy szybkich zmianach statusu
+
+---
+
+**Wersja dokumentu:** 1.5  
 **Data utworzenia:** 2025-12-01  
-**Data aktualizacji:** 2025-12-10  
+**Data aktualizacji:** 2025-12-17  
 **Autor:** System ZAMÓWIENIA Development Team

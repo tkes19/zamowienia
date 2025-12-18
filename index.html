@@ -205,6 +205,56 @@
         border-color: #ef4444;
         box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.3);
       }
+
+      /* Przełącznik „Podgląd” */
+      .cart-preview-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        color: #4b5563;
+        user-select: none;
+        cursor: pointer;
+      }
+
+      .cart-preview-toggle input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .cart-preview-toggle__track {
+        position: relative;
+        width: 44px;
+        height: 24px;
+        border-radius: 999px;
+        background: #e5e7eb;
+        transition: background 0.2s ease;
+      }
+
+      .cart-preview-toggle__thumb {
+        position: absolute;
+        inset: 3px auto 3px 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+        transition: transform 0.2s ease;
+      }
+
+      .cart-preview-toggle input:checked + .cart-preview-toggle__track {
+        background: #2563eb;
+      }
+
+      .cart-preview-toggle input:checked + .cart-preview-toggle__track .cart-preview-toggle__thumb {
+        transform: translateX(18px);
+      }
+
+      .cart-preview-toggle__label {
+        font-weight: 600;
+        color: #111827;
+      }
     </style>
   </head>
   <body class="hide-prices hide-guest">
@@ -473,7 +523,7 @@
         </section>
       </section>
 
-      <section class="panel guest-hidden">
+      <section class="panel guest-hidden" id="selected-products-section">
         <div class="panel__header">
           <h2>Wybrane produkty</h2>
           <div class="table-controls">
@@ -536,10 +586,17 @@
         </div>
       </section>
 
-      <section class="panel guest-hidden">
+      <section class="panel guest-hidden" id="cart-section">
         <div class="panel__header">
           <h2>Koszyk zamówienia</h2>
           <div class="panel__actions">
+            <label class="cart-preview-toggle" for="cart-preview-toggle">
+              <input id="cart-preview-toggle" type="checkbox" />
+              <span class="cart-preview-toggle__track">
+                <span class="cart-preview-toggle__thumb"></span>
+              </span>
+              <span class="cart-preview-toggle__label">Podgląd</span>
+            </label>
             <button id="save-template-btn" class="btn btn--secondary btn--small" type="button">
               <i class="fas fa-save"></i> Zapisz szablon
             </button>

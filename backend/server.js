@@ -1,5 +1,6 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
+
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto'); // Dodano import crypto
@@ -16,6 +17,192 @@ const PORT = process.env.PORT || 3001;
 const GALLERY_BASE = process.env.GALLERY_BASE || 'http://rezon.myqnapcloud.com:81/home';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
+ const sseClients = new Set();
+
+ function broadcastSseEvent(payload) {
+     const data = JSON.stringify(payload || {});
+     for (const client of sseClients) {
+         try {
+             client.write(`event: message\n`);
+             client.write(`data: ${data}\n\n`);
+         } catch (e) {
+             try { client.end(); } catch (e2) {}
+             sseClients.delete(client);
+         }
+     }
+ }
+
+ async function computeProductionStatusForOrder(orderId) {
+     if (!supabase || !orderId) {
+         return { status: 'NOT_STARTED', label: 'Nie uruchomione', details: [] };
+     }
+
+     // Cache aktywnych ścieżek (żeby nie bić DB przy każdym evencie)
+     if (!global.__prodPathsCache) {
+         global.__prodPathsCache = { at: 0, byCode: {} };
+     }
+
+     async function getActiveProductionPathsByCode() {
+         const now = Date.now();
+         if (global.__prodPathsCache.at && (now - global.__prodPathsCache.at) < 60000) {
+             return global.__prodPathsCache.byCode || {};
+         }
+
+         const { data: allPaths } = await supabase
+             .from('ProductionPath')
+             .select('*')
+             .eq('isActive', true);
+
+         const byCode = {};
+         (allPaths || []).forEach(p => { byCode[p.code] = p; });
+         global.__prodPathsCache = { at: now, byCode };
+         return byCode;
+     }
+
+     async function computeExpectedOperationsCount(prodOrderRow) {
+         const expr = prodOrderRow?.productionpathexpression;
+         if (!expr) return null;
+
+         // parseProductionPathExpression jest już w tym pliku (używana w createProductionOrdersForOrder)
+         let parsed = null;
+         try {
+             parsed = parseProductionPathExpression(expr);
+         } catch (e) {
+             return null;
+         }
+
+         if (!parsed || !Array.isArray(parsed.branches) || parsed.branches.length === 0) {
+             return null;
+         }
+
+         const branchCode = prodOrderRow?.branchcode || null;
+         const branch = branchCode
+             ? parsed.branches.find((b, idx) => {
+                 const code = parsed.branches.length > 1 ? String.fromCharCode(65 + idx) : null;
+                 return code === branchCode;
+             })
+             : parsed.branches[0];
+
+         if (!branch || !Array.isArray(branch.pathCodes) || branch.pathCodes.length === 0) {
+             return null;
+         }
+
+         const pathsByCode = await getActiveProductionPathsByCode();
+         let expected = 0;
+
+         for (const pathCode of branch.pathCodes) {
+             const pathDef = pathsByCode[pathCode];
+             if (!pathDef) {
+                 expected += 1;
+                 continue;
+             }
+             const ops = pathDef.operations || [];
+             expected += (Array.isArray(ops) && ops.length > 0) ? ops.length : 1;
+         }
+
+         return expected;
+     }
+
+     const { data: prodOrders, error: prodError } = await supabase
+         .from('ProductionOrder')
+         .select('id, sourceorderid, status, productionpathexpression, branchcode')
+         .eq('sourceorderid', orderId);
+
+     if (prodError || !prodOrders || prodOrders.length === 0) {
+         return { status: 'NOT_STARTED', label: 'Nie uruchomione', details: [] };
+     }
+
+     const prodOrderIds = prodOrders.map(po => po.id);
+     let operationsMap = {};
+     if (prodOrderIds.length > 0) {
+         const { data: operations } = await supabase
+             .from('ProductionOperation')
+             .select('id, productionorderid, status')
+             .in('productionorderid', prodOrderIds);
+
+         (operations || []).forEach(op => {
+             if (!operationsMap[op.productionorderid]) {
+                 operationsMap[op.productionorderid] = [];
+             }
+             operationsMap[op.productionorderid].push(op);
+         });
+     }
+
+     let allCompleted = true;
+     let anyInProgress = false;
+     let details = [];
+
+     for (const po of (prodOrders || [])) {
+         const ops = operationsMap[po.id] || [];
+         const hasActive = ops.some(op => op.status === 'active');
+         const hasPaused = ops.some(op => op.status === 'paused');
+         const expectedOpsCount = await computeExpectedOperationsCount(po);
+         const hasAllExpectedOps = expectedOpsCount ? (ops.length >= expectedOpsCount) : (ops.length > 0);
+         const allOpsCompleted = hasAllExpectedOps && ops.every(op => op.status === 'completed');
+
+         if (po.status === 'completed' || allOpsCompleted) {
+             details.push({ orderId: po.id, status: 'completed' });
+         } else if (po.status === 'in_progress' || hasActive || hasPaused) {
+             anyInProgress = true;
+             allCompleted = false;
+             details.push({ orderId: po.id, status: 'in_progress' });
+         } else {
+             allCompleted = false;
+             details.push({ orderId: po.id, status: 'pending' });
+         }
+     }
+
+     if (allCompleted) {
+         return { status: 'COMPLETED', label: 'Produkcja gotowa', details };
+     }
+     if (anyInProgress) {
+         return { status: 'IN_PROGRESS', label: 'W trakcie', details };
+     }
+     return { status: 'PENDING', label: 'Zaplanowane', details };
+ }
+
+ function normalizeProjectViewUrl(value) {
+     if (value === null || value === undefined) return value;
+     if (typeof value !== 'string') return value;
+
+     const raw = value.trim();
+     if (!raw) return raw;
+
+     if (raw === '/') {
+         return null;
+     }
+
+     // Jeśli to absolutny URL (np. http://localhost:3001/api/gallery/image?url=...)
+     // to sprowadź go do ścieżki względnej, aby działał na każdym originie (dev/prod) i z CSP.
+     try {
+         const parsed = new URL(raw);
+         const pathname = parsed.pathname || '';
+         const search = parsed.search || '';
+
+         if ((pathname === '' || pathname === '/') && !search) {
+             return null;
+         }
+
+         if (pathname.startsWith('/api/gallery/')) {
+             return `${pathname}${search}`;
+         }
+
+         return raw;
+     } catch (e) {
+         // Nie jest absolutnym URL-em (np. już jest względny)
+     }
+
+     if (raw.startsWith('/api/gallery/')) {
+         return raw;
+     }
+
+     if (raw.startsWith('api/gallery/')) {
+         return `/${raw}`;
+     }
+
+     return raw;
+ }
+
 // Konfiguracja Supabase – wartości muszą być ustawione w backend/.env
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,9 +211,15 @@ const AUTH_COOKIE_SECRET = process.env.AUTH_COOKIE_SECRET || (SUPABASE_SERVICE_R
     ? crypto.createHash('sha256').update(String(SUPABASE_SERVICE_ROLE_KEY)).digest('hex')
     : 'dev-insecure-auth-secret');
 
-const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
-const LOGIN_WINDOW_MS = Number(process.env.LOGIN_WINDOW_MS || 15 * 60 * 1000);
-const loginAttempts = new Map();
+ const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
+ const LOGIN_WINDOW_MS = Number(process.env.LOGIN_WINDOW_MS || 15 * 60 * 1000);
+ const loginAttempts = new Map();
+
+ const KIOSK_NETWORK_RESTRICTION_ENABLED = String(process.env.KIOSK_NETWORK_RESTRICTION_ENABLED || '').toLowerCase() === 'true';
+ const KIOSK_ALLOWED_CIDRS = String(process.env.KIOSK_ALLOWED_CIDRS || '')
+     .split(',')
+     .map(v => v.trim())
+     .filter(Boolean);
 
 let supabase = null;
 if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
@@ -46,6 +239,111 @@ app.use((req, res, next) => {
 
 // Serwowanie plików statycznych z folderu nadrzędnego
 app.use(express.static(path.join(__dirname, '..')));
+
+ // ============================================
+ // SSE: GET /api/events - strumień zdarzeń (np. zmiana statusu produkcji)
+ // ============================================
+ app.get('/api/events', async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { userId, role } = await getAuthContext(req);
+    if (!userId || !role) {
+      return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+     if (!['SALES_REP', 'ADMIN', 'SALES_DEPT', 'WAREHOUSE', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER'].includes(role)) {
+       return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu' });
+     }
+
+     res.status(200);
+     res.setHeader('Content-Type', 'text/event-stream');
+     res.setHeader('Cache-Control', 'no-cache');
+     res.setHeader('Connection', 'keep-alive');
+     res.flushHeaders?.();
+
+     res.write(`event: ready\n`);
+     res.write(`data: ${JSON.stringify({ status: 'ok', at: Date.now() })}\n\n`);
+
+     sseClients.add(res);
+
+     req.on('close', () => {
+       sseClients.delete(res);
+       try { res.end(); } catch (e) {}
+     });
+   } catch (error) {
+     console.error('[GET /api/events] Wyjątek:', error);
+     return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+   }
+ });
+
+ // ============================================
+ // GET /api/orders/:id/production-status - status produkcji dla zamówienia
+ // ============================================
+ app.get('/api/orders/:id/production-status', async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { userId, role } = await getAuthContext(req);
+    if (!userId || !role) {
+      return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+     if (!['SALES_REP', 'ADMIN', 'SALES_DEPT', 'WAREHOUSE', 'PRODUCTION'].includes(role)) {
+       return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu' });
+     }
+
+     const orderId = req.params.id;
+     if (!orderId) {
+       return res.status(400).json({ status: 'error', message: 'Brak orderId' });
+     }
+
+     let orderStatus = null;
+
+     // SALES_REP tylko swoje
+     if (role === 'SALES_REP') {
+       const { data: order, error: orderError } = await supabase
+         .from('Order')
+         .select('id, userId, status')
+         .eq('id', orderId)
+         .single();
+
+       if (orderError || !order) {
+         return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+       }
+
+       if (order.userId !== userId) {
+         return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu' });
+       }
+
+       orderStatus = order.status || null;
+     }
+
+     if (!orderStatus) {
+       const { data: orderRow, error: orderRowError } = await supabase
+         .from('Order')
+         .select('status')
+         .eq('id', orderId)
+         .single();
+
+       if (orderRowError || !orderRow) {
+         return res.status(404).json({ status: 'error', message: 'Zamówienie nie znalezione' });
+       }
+
+       orderStatus = orderRow.status || null;
+     }
+
+     const productionStatus = await computeProductionStatusForOrder(orderId);
+     return res.json({ status: 'success', data: productionStatus, orderStatus });
+   } catch (error) {
+     console.error('[GET /api/orders/:id/production-status] Wyjątek:', error);
+     return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+   }
+ });
 
 // Dopuszczalny origin frontendu (np. https://zamowienia.example.com) – w produkcji warto ustawić w .env
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '';
@@ -97,7 +395,7 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   if (IS_PRODUCTION) {
     res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; connect-src 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:; script-src 'self' 'unsafe-inline'; connect-src 'self'");
   }
   next();
 });
@@ -183,6 +481,64 @@ function getLoginAttemptKey(req, email) {
     return `${ip}|${normalizedEmail}`;
 }
 
+function normalizeIp(ip) {
+    if (!ip) return '';
+    const raw = String(ip);
+    if (raw.startsWith('::ffff:')) {
+        return raw.slice('::ffff:'.length);
+    }
+    return raw;
+}
+
+function ipToInt(ip) {
+    const parts = String(ip).split('.').map(p => Number(p));
+    if (parts.length !== 4 || parts.some(p => !Number.isFinite(p) || p < 0 || p > 255)) {
+        return null;
+    }
+    return ((parts[0] << 24) >>> 0) + ((parts[1] << 16) >>> 0) + ((parts[2] << 8) >>> 0) + (parts[3] >>> 0);
+}
+
+function cidrContains(ip, cidr) {
+    const normalizedIp = normalizeIp(ip);
+    const ipInt = ipToInt(normalizedIp);
+    if (ipInt === null) return false;
+
+    const trimmed = String(cidr || '').trim();
+    if (!trimmed) return false;
+
+    if (!trimmed.includes('/')) {
+        return normalizeIp(trimmed) === normalizedIp;
+    }
+
+    const [baseIp, maskStr] = trimmed.split('/');
+    const baseInt = ipToInt(normalizeIp(baseIp));
+    const maskBits = Number(maskStr);
+    if (baseInt === null || !Number.isFinite(maskBits) || maskBits < 0 || maskBits > 32) {
+        return false;
+    }
+
+    const mask = maskBits === 0 ? 0 : (0xffffffff << (32 - maskBits)) >>> 0;
+    return (ipInt & mask) === (baseInt & mask);
+}
+
+function kioskNetworkGuard(req, res, next) {
+    if (!KIOSK_NETWORK_RESTRICTION_ENABLED) {
+        return next();
+    }
+
+    if (!Array.isArray(KIOSK_ALLOWED_CIDRS) || KIOSK_ALLOWED_CIDRS.length === 0) {
+        return res.status(403).json({ status: 'error', message: 'Kiosk nie jest skonfigurowany (brak dozwolonych sieci).' });
+    }
+
+    const clientIp = normalizeIp(req.ip || (req.connection && req.connection.remoteAddress) || '');
+    const allowed = KIOSK_ALLOWED_CIDRS.some(cidr => cidrContains(clientIp, cidr));
+    if (!allowed) {
+        return res.status(403).json({ status: 'error', message: 'Kiosk dostępny tylko w sieci firmowej.' });
+    }
+
+    return next();
+}
+
 function isLoginBlocked(key) {
     const state = loginAttempts.get(key);
     if (!state) return false;
@@ -207,6 +563,26 @@ function registerFailedLogin(key) {
 
 function resetLoginAttempts(key) {
     loginAttempts.delete(key);
+}
+
+function formatRemainingAttempts(remaining) {
+    const n = Number(remaining);
+    if (!Number.isFinite(n)) return 'prób';
+    if (n === 1) return 'próbę';
+    if (n >= 2 && n <= 4) return 'próby';
+    return 'prób';
+}
+
+function buildKioskFailedPinMessage(attemptKey) {
+    const state = loginAttempts.get(attemptKey);
+    const count = state && Number.isFinite(state.count) ? state.count : 1;
+    const remaining = Math.max(0, LOGIN_MAX_ATTEMPTS - count);
+
+    if (count >= 2 && remaining > 0) {
+        return `Nieprawidłowy PIN. Pozostało ${remaining} ${formatRemainingAttempts(remaining)}.`;
+    }
+
+    return 'Nieprawidłowy PIN.';
 }
 
 function isSafeMethod(method) {
@@ -303,11 +679,58 @@ function requireRole(allowedRoles = []) {
     return async (req, res, next) => {
         const { userId, role } = await getAuthContext(req);
 
+        const accepts = (req.headers && req.headers.accept) ? String(req.headers.accept) : '';
+        const isBrowserRequest = !String(req.path || '').startsWith('/api') && accepts.includes('text/html');
+
+        const sendAccessPage = (statusCode, title, message) => {
+            res.status(statusCode).send(`<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <style>
+    body{margin:0;min-height:100vh;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0b1220;color:#e5e7eb;display:flex;align-items:center;justify-content:center;padding:24px}
+    .card{width:min(720px,92vw);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:22px 20px;box-shadow:0 12px 30px rgba(0,0,0,.35)}
+    h1{margin:0 0 10px;font-size:20px}
+    p{margin:0 0 12px;line-height:1.5;color:#cbd5e1}
+    ul{margin:10px 0 16px 18px;color:#cbd5e1}
+    li{margin:6px 0}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+    a.btn{display:inline-block;text-decoration:none;background:#2563eb;color:#fff;padding:10px 12px;border-radius:10px;font-weight:600}
+    a.btn.secondary{background:rgba(255,255,255,.12);color:#e5e7eb}
+    code{background:rgba(255,255,255,.10);padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>${title}</h1>
+    <p>${message}</p>
+    <ul>
+      <li>Użytkownik musi mieć przypisaną rolę produkcyjną (np. <code>OPERATOR</code> / <code>PRODUCTION</code>).</li>
+      <li>Użytkownik musi być aktywny (<code>isActive</code>).</li>
+      <li>Dla operatora kiosku wymagany jest przypisany pokój produkcyjny (<code>productionRoomId</code>) oraz włączony dostęp do kiosku (<code>isKioskEnabled</code>) i PIN.</li>
+    </ul>
+    <div class="actions">
+      <a class="btn" href="/admin">Przejdź do panelu admina</a>
+      <a class="btn secondary" href="/login">Wróć do logowania</a>
+    </div>
+  </div>
+</body>
+</html>`);
+        };
+
         if (!userId || !role) {
+            if (isBrowserRequest) {
+                return res.redirect('/login');
+            }
             return res.status(401).json({ status: 'error', message: 'Nieautoryzowany – zaloguj się.' });
         }
 
         if (Array.isArray(allowedRoles) && allowedRoles.length && !allowedRoles.includes(role)) {
+            if (isBrowserRequest) {
+                return sendAccessPage(403, 'Brak dostępu do tej strony', 'To konto nie ma jeszcze skonfigurowanych uprawnień do panelu produkcji.');
+            }
             return res.status(403).json({ status: 'error', message: 'Brak uprawnień do tego zasobu.' });
         }
 
@@ -372,6 +795,11 @@ app.get('/', (req, res) => {
 
 // Strona logowania (publiczna)
 app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, '../login.html'));
+});
+
+// Kiosk logowania (publiczny, opcjonalnie ograniczony po IP)
+app.get('/kiosk', kioskNetworkGuard, (req, res) => {
   res.sendFile(path.join(__dirname, '../login.html'));
 });
 
@@ -480,6 +908,179 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (err) {
         console.error('Błąd logowania:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas logowania', details: err.message });
+    }
+});
+
+// ============================================
+// Kiosk: GET /api/kiosk/rooms - lista pokojów produkcyjnych
+// ============================================
+app.get('/api/kiosk/rooms', kioskNetworkGuard, async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data: rooms, error } = await supabase
+            .from('ProductionRoom')
+            .select('id, name, code, isActive')
+            .eq('isActive', true)
+            .order('name', { ascending: true });
+
+        if (error) {
+            console.error('Błąd pobierania pokojów kiosku:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać listy pokojów', details: error.message });
+        }
+
+        return res.json({ status: 'success', data: rooms || [] });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/kiosk/rooms:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas pobierania pokojów' });
+    }
+});
+
+// ============================================
+// Kiosk: GET /api/kiosk/operators?roomId=... - operatorzy z pokoju (multiroom)
+// ============================================
+app.get('/api/kiosk/operators', kioskNetworkGuard, async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { roomId } = req.query || {};
+    if (!roomId) {
+        return res.status(400).json({ status: 'error', message: 'roomId jest wymagane' });
+    }
+
+    const parsedRoomId = parseInt(roomId, 10);
+
+    try {
+        const allowedRoles = ['OPERATOR', 'PRODUCTION', 'PRODUCTION_MANAGER'];
+
+        // Pobierz użytkowników przypisanych do pokoju przez UserProductionRoom (multiroom)
+        const { data: roomAssignments, error: assignError } = await supabase
+            .from('UserProductionRoom')
+            .select('userId')
+            .eq('roomId', parsedRoomId);
+
+        const assignedUserIds = (roomAssignments || []).map(a => a.userId);
+
+        // Pobierz też użytkowników z legacy productionroomid
+        const { data: legacyUsers, error: legacyError } = await supabase
+            .from('User')
+            .select('id')
+            .eq('productionroomid', parsedRoomId)
+            .eq('isActive', true)
+            .eq('isKioskEnabled', true)
+            .in('role', allowedRoles);
+
+        const legacyUserIds = (legacyUsers || []).map(u => u.id);
+
+        // Połącz unikalne ID
+        const allUserIds = [...new Set([...assignedUserIds, ...legacyUserIds])];
+
+        if (allUserIds.length === 0) {
+            return res.json({ status: 'success', data: [] });
+        }
+
+        // Pobierz pełne dane użytkowników
+        const { data: users, error } = await supabase
+            .from('User')
+            .select('id, name, role, productionroomid, isActive, isKioskEnabled')
+            .in('id', allUserIds)
+            .eq('isActive', true)
+            .eq('isKioskEnabled', true)
+            .in('role', allowedRoles)
+            .order('name', { ascending: true });
+
+        if (error) {
+            console.error('Błąd pobierania operatorów kiosku:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać listy operatorów', details: error.message });
+        }
+
+        return res.json({ status: 'success', data: users || [] });
+    } catch (err) {
+        console.error('Wyjątek w GET /api/kiosk/operators:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas pobierania operatorów' });
+    }
+});
+
+// ============================================
+// Kiosk: POST /api/kiosk/login - logowanie PIN
+// ============================================
+app.post('/api/kiosk/login', kioskNetworkGuard, async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { userId, pin } = req.body || {};
+    const pinStr = (pin || '').toString().trim();
+
+    if (!userId || !pinStr) {
+        return res.status(400).json({ status: 'error', message: 'Wymagane pola: userId, pin' });
+    }
+
+    if (!/^\d{6}$/.test(pinStr)) {
+        return res.status(400).json({ status: 'error', message: 'PIN musi mieć 6 cyfr' });
+    }
+
+    try {
+        const attemptKey = getLoginAttemptKey(req, `kiosk:${userId}`);
+        if (isLoginBlocked(attemptKey)) {
+            return res.status(429).json({ status: 'error', message: 'Zbyt wiele nieudanych prób logowania. Spróbuj ponownie później.' });
+        }
+
+        const { data: user, error } = await supabase
+            .from('User')
+            .select('id, role, isActive, pinHash, isKioskEnabled')
+            .eq('id', userId)
+            .single();
+
+        if (error || !user) {
+            registerFailedLogin(attemptKey);
+            return res.status(401).json({ status: 'error', message: buildKioskFailedPinMessage(attemptKey) });
+        }
+
+        if (user.isActive === false) {
+            registerFailedLogin(attemptKey);
+            return res.status(403).json({ status: 'error', message: 'Konto jest nieaktywne.' });
+        }
+
+        const allowedRoles = ['OPERATOR', 'PRODUCTION', 'PRODUCTION_MANAGER'];
+        if (!allowedRoles.includes(user.role)) {
+            registerFailedLogin(attemptKey);
+            return res.status(403).json({ status: 'error', message: 'Brak uprawnień do logowania kioskiem.' });
+        }
+
+        if (!user.isKioskEnabled) {
+            registerFailedLogin(attemptKey);
+            return res.status(403).json({ status: 'error', message: 'Konto nie ma dostępu do kiosku.' });
+        }
+
+        if (!user.pinHash) {
+            registerFailedLogin(attemptKey);
+            return res.status(403).json({ status: 'error', message: 'Konto nie ma ustawionego PIN.' });
+        }
+
+        let ok = false;
+        try {
+            ok = await bcrypt.compare(pinStr, user.pinHash);
+        } catch (compareErr) {
+            console.warn('Błąd porównania PIN:', compareErr);
+            ok = false;
+        }
+
+        if (!ok) {
+            registerFailedLogin(attemptKey);
+            return res.status(401).json({ status: 'error', message: buildKioskFailedPinMessage(attemptKey) });
+        }
+
+        setAuthCookies(res, { id: user.id, role: user.role });
+        resetLoginAttempts(attemptKey);
+
+        return res.json({ status: 'success', data: { id: user.id, role: user.role } });
+    } catch (err) {
+        console.error('Błąd logowania kiosku:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera podczas logowania.' });
     }
 });
 
@@ -1086,6 +1687,31 @@ app.get('/api/auth/me', async (req, res) => {
             return res.status(404).json({ status: 'error', message: 'Użytkownik nie znaleziony' });
         }
 
+        // Pobierz wszystkie pokoje produkcyjne użytkownika (multiroom)
+        let productionRooms = [];
+        const { data: roomAssignments, error: roomsError } = await supabase
+            .from('UserProductionRoom')
+            .select(`
+                id,
+                roomId,
+                isPrimary,
+                room:ProductionRoom!UserProductionRoom_roomId_fkey(id, name, code)
+            `)
+            .eq('userId', userId)
+            .order('isPrimary', { ascending: false })
+            .order('createdAt', { ascending: true });
+
+        if (!roomsError && roomAssignments) {
+            productionRooms = roomAssignments.map(ra => ({
+                id: ra.roomId,
+                name: ra.room?.name || null,
+                code: ra.room?.code || null,
+                isPrimary: ra.isPrimary
+            }));
+        }
+
+        const primaryRoom = productionRooms.find(r => r.isPrimary) || productionRooms[0] || null;
+
         return res.json({
             status: 'success',
             id: user.id,
@@ -1093,9 +1719,11 @@ app.get('/api/auth/me', async (req, res) => {
             email: user.email || null,
             name: user.name || null,
             departmentId: user.departmentId || null,
-            productionroomid: user.productionroomid || null,
-            productionRoomName: user.productionRoom?.name || null,
-            productionRoomCode: user.productionRoom?.code || null
+            productionroomid: user.productionroomid || primaryRoom?.id || null,
+            productionRoomName: primaryRoom?.name || user.productionRoom?.name || null,
+            productionRoomCode: primaryRoom?.code || user.productionRoom?.code || null,
+            productionRooms: productionRooms,
+            hasMultipleRooms: productionRooms.length > 1
         });
     } catch (err) {
         console.error('Wyjątek w /api/auth/me:', err);
@@ -1547,13 +2175,6 @@ app.put('/api/admin/user-role-assignments/sync/:userId', requireRole(['ADMIN']),
             }
         }
 
-        // Zaktualizuj główną rolę w User (pierwsza z listy lub NEW_USER)
-        const primaryRole = roles.length > 0 ? roles[0] : 'NEW_USER';
-        await supabase
-            .from('User')
-            .update({ role: primaryRole, updatedAt: new Date().toISOString() })
-            .eq('id', userId);
-
         console.log(`[PUT /api/admin/user-role-assignments/sync] Admin ${adminId} zsynchronizował role użytkownika ${userId}: ${roles.join(', ')}`);
 
         return res.json({
@@ -1604,6 +2225,377 @@ app.get('/api/supabase/health', requireRole(['ADMIN']), async (req, res) => {
     } catch (err) {
         console.error('Wyjątek Supabase:', err);
         return res.status(500).json({ status: 'error', message: 'Wyjątek podczas łączenia z Supabase', details: err.message });
+    }
+});
+
+// ============================================
+// Helper: checkItemStock - sprawdza dostępność stanu dla pozycji zamówienia
+// ============================================
+async function checkItemStock(orderItemId) {
+    if (!supabase) {
+        throw new Error('Supabase nie jest skonfigurowany');
+    }
+
+    try {
+        // Pobierz pozycję zamówienia z informacjami o produkcie
+        const { data: orderItem, error: itemError } = await supabase
+            .from('OrderItem')
+            .select(`
+                id,
+                quantity,
+                totalQuantity,
+                Product (
+                    id
+                )
+            `)
+            .eq('id', orderItemId)
+            .single();
+
+        if (itemError) {
+            console.error('Błąd pobierania pozycji zamówienia:', itemError);
+            throw new Error('Nie udało się pobrać pozycji zamówienia');
+        }
+
+        if (!orderItem || !orderItem.Product) {
+            throw new Error('Nie znaleziono pozycji lub produktu');
+        }
+
+        // Pobierz stan magazynowy dla produktu
+        const { data: inventory, error: invError } = await supabase
+            .from('Inventory')
+            .select('stock, stockReserved')
+            .eq('productId', orderItem.Product.id)
+            .eq('location', 'MAIN')
+            .single();
+
+        if (invError && invError.code !== 'PGRST116') { // PGRST116 = not found
+            console.error('Błąd pobierania stanu magazynowego:', invError);
+            throw new Error('Nie udało się pobrać stanu magazynowego');
+        }
+
+        const stock = Number(inventory?.stock || 0);
+        const reserved = Number(inventory?.stockReserved || 0);
+        const available = stock - reserved;
+        const required = Number(orderItem.totalQuantity || orderItem.quantity || 0);
+
+        return {
+            isInStock: available >= required,
+            available: available,
+            required: required,
+            stock: stock,
+            reserved: reserved,
+            belowStock: available < required
+        };
+    } catch (error) {
+        console.error('Błąd w checkItemStock:', error);
+        throw error;
+    }
+}
+
+// ============================================
+// Helper: checkOrderStock - sprawdza stany dla wszystkich pozycji zamówienia
+// ============================================
+async function checkOrderStock(orderId) {
+    if (!supabase) {
+        throw new Error('Supabase nie jest skonfigurowany');
+    }
+
+    try {
+        // Pobierz wszystkie pozycje zamówienia
+        const { data: orderItems, error: itemsError } = await supabase
+            .from('OrderItem')
+            .select(`
+                id,
+                quantity,
+                totalQuantity,
+                Product (
+                    id
+                )
+            `)
+            .eq('orderId', orderId);
+
+        if (itemsError) {
+            console.error('Błąd pobierania pozycji zamówienia:', itemsError);
+            throw new Error('Nie udało się pobrać pozycji zamówienia');
+        }
+
+        if (!orderItems || orderItems.length === 0) {
+            return {
+                allInStock: false,
+                inStockItems: [],
+                outOfStockItems: []
+            };
+        }
+
+        const inStockItems = [];
+        const outOfStockItems = [];
+
+        // Sprawdź stan dla każdej pozycji
+        for (const item of orderItems) {
+            const stockInfo = await checkItemStock(item.id);
+            
+            if (stockInfo.isInStock) {
+                inStockItems.push({
+                    ...item,
+                    stockInfo
+                });
+            } else {
+                outOfStockItems.push({
+                    ...item,
+                    stockInfo
+                });
+            }
+        }
+
+        return {
+            allInStock: outOfStockItems.length === 0,
+            inStockItems,
+            outOfStockItems
+        };
+    } catch (error) {
+        console.error('Błąd w checkOrderStock:', error);
+        throw error;
+    }
+}
+
+// ============================================
+// Helper: maybeAutoApproveOrder - automatycznie zatwierdza zamówienie wg ustawień
+// ============================================
+async function maybeAutoApproveOrder(orderId, context = {}) {
+    if (!supabase) {
+        console.warn('Supabase nie jest skonfigurowany - pomijam automatyczne zatwierdzanie');
+        return;
+    }
+
+    try {
+        // Pobierz ustawienie autoReleaseMode
+        const { data: settings, error: settingsError } = await supabase
+            .from('Settings')
+            .select('value')
+            .eq('key', 'autoReleaseMode')
+            .single();
+
+        if (settingsError) {
+            if (settingsError.code === 'PGRST205') {
+                // Brak tabeli Settings w bazie (np. dev / środowisko niezsynchronizowane) -> traktuj jak NONE
+                console.warn('[maybeAutoApproveOrder] Brak tabeli Settings (PGRST205) - tryb NONE');
+                return;
+            }
+            console.error('Błąd pobierania ustawienia autoReleaseMode:', settingsError);
+            return;
+        }
+
+        const autoReleaseMode = settings?.value || 'NONE';
+        console.log(`[maybeAutoApproveOrder] Order ${orderId}, mode: ${autoReleaseMode}`);
+
+        // Jeśli tryb NONE - nie robimy nic
+        if (autoReleaseMode === 'NONE') {
+            console.log(`[maybeAutoApproveOrder] Tryb NONE - zamówienie ${orderId} pozostaje PENDING`);
+            return;
+        }
+
+        // Pobierz zamówienie
+        const { data: order, error: orderError } = await supabase
+            .from('Order')
+            .select('id, status, userId')
+            .eq('id', orderId)
+            .single();
+
+        if (orderError || !order) {
+            console.error('Błąd pobierania zamówienia:', orderError);
+            return;
+        }
+
+        if (order.status !== 'PENDING') {
+            console.log(`[maybeAutoApproveOrder] Zamówienie ${orderId} nie jest PENDING (${order.status}) - pomijam`);
+            return;
+        }
+
+        // Tryb ALL - zatwierdzamy wszystko
+        if (autoReleaseMode === 'ALL') {
+            console.log(`[maybeAutoApproveOrder] Tryb ALL - zatwierdzam zamówienie ${orderId}`);
+            await approveOrderInternally(orderId, context.userId || 'SYSTEM', 'Automatyczna akceptacja (ALL)');
+            return;
+        }
+
+        // Tryb IN_STOCK_ONLY - sprawdzamy stany
+        if (autoReleaseMode === 'IN_STOCK_ONLY') {
+            console.log(`[maybeAutoApproveOrder] Tryb IN_STOCK_ONLY - sprawdzam stany dla zamówienia ${orderId}`);
+            const stockCheck = await checkOrderStock(orderId);
+            
+            if (stockCheck.inStockItems.length === 0) {
+                console.log(`[maybeAutoApproveOrder] Żadna pozycja nie ma stanu - zamówienie ${orderId} pozostaje PENDING`);
+                return;
+            }
+
+            console.log(`[maybeAutoApproveOrder] ${stockCheck.inStockItems.length}/${stockCheck.inStockItems.length + stockCheck.outOfStockItems.length} pozycji ma stan`);
+            await approveOrderInternally(orderId, context.userId || 'SYSTEM', 'Automatyczna akceptacja (IN_STOCK_ONLY)', {
+                mode: 'IN_STOCK_ONLY',
+                stockCheck
+            });
+            return;
+        }
+
+    } catch (error) {
+        console.error('Błąd w maybeAutoApproveOrder:', error);
+    }
+}
+
+// ============================================
+// Helper: approveOrderInternally - wewnętrzna funkcja zatwierdzania zamówienia
+// ============================================
+async function approveOrderInternally(orderId, approvedBy, notes, options = {}) {
+    if (!supabase) {
+        throw new Error('Supabase nie jest skonfigurowany');
+    }
+
+    try {
+        // Zmień status na APPROVED
+        const { error: updateError } = await supabase
+            .from('Order')
+            .update({ 
+                status: 'APPROVED',
+                updatedAt: new Date().toISOString()
+            })
+            .eq('id', orderId);
+
+        if (updateError) {
+            console.error('Błąd aktualizacji statusu zamówienia:', updateError);
+            throw updateError;
+        }
+
+        // Zapisz w historii
+        const { error: historyError } = await supabase
+            .from('OrderStatusHistory')
+            .insert({
+                orderId: orderId,
+                oldStatus: 'PENDING',
+                newStatus: 'APPROVED',
+                changedBy: approvedBy,
+                changedAt: new Date().toISOString(),
+                notes: notes
+            });
+
+        if (historyError) {
+            console.error('Błąd zapisu do historii zmian:', historyError);
+        }
+
+        // Wywołaj tworzenie zleceń produkcyjnych z odpowiednim trybem
+        const result = await createProductionOrdersForOrder(orderId, { 
+            userId: approvedBy,
+            mode: options.mode || 'ALL'
+        });
+
+        if (result.created > 0) {
+            console.log(`[approveOrderInternally] Utworzono ${result.created} zleceń produkcyjnych dla zamówienia ${orderId}`);
+        }
+
+        if (result.errors && result.errors.length > 0) {
+            console.warn(`[approveOrderInternally] Błędy przy tworzeniu zleceń:`, result.errors);
+        }
+
+        return result;
+    } catch (error) {
+        console.error('Błąd w approveOrderInternally:', error);
+        throw error;
+    }
+}
+
+// ============================================
+// GET /api/settings/order-workflow - pobierz ustawienia workflow zamówień
+// ============================================
+app.get('/api/settings/order-workflow', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('Settings')
+            .select('key, value, description')
+            .in('key', ['autoReleaseMode']);
+
+        if (error) {
+            if (error.code === 'PGRST205') {
+                // Brak tabeli Settings - zwróć defaulty, żeby UI admina nie padało
+                return res.json({
+                    status: 'success',
+                    data: {
+                        autoReleaseMode: {
+                            value: 'NONE',
+                            description: 'Brak tabeli Settings w bazie (fallback domyślny: NONE)'
+                        }
+                    }
+                });
+            }
+
+            console.error('Błąd pobierania ustawień:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać ustawień' });
+        }
+
+        const settings = {};
+        data.forEach(setting => {
+            settings[setting.key] = {
+                value: setting.value,
+                description: setting.description
+            };
+        });
+
+        return res.json({ status: 'success', data: settings });
+    } catch (error) {
+        console.error('Błąd w GET /api/settings/order-workflow:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
+// ============================================
+// PATCH /api/settings/order-workflow - aktualizuj ustawienia workflow zamówień
+// ============================================
+app.patch('/api/settings/order-workflow', requireRole(['ADMIN', 'SALES_DEPT']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const cookies = parseCookies(req);
+        const userId = cookies.auth_id;
+        const { autoReleaseMode } = req.body || {};
+
+        if (!autoReleaseMode || !['NONE', 'ALL', 'IN_STOCK_ONLY'].includes(autoReleaseMode)) {
+            return res.status(400).json({ 
+                status: 'error', 
+                message: 'Nieprawidłowa wartość autoReleaseMode. Dozwolone: NONE, ALL, IN_STOCK_ONLY' 
+            });
+        }
+
+        const { error } = await supabase
+            .from('Settings')
+            .update({
+                value: autoReleaseMode,
+                updatedBy: userId,
+                updatedAt: new Date().toISOString()
+            })
+            .eq('key', 'autoReleaseMode');
+
+        if (error) {
+            if (error.code === 'PGRST205') {
+                return res.status(501).json({
+                    status: 'error',
+                    message: 'Brak tabeli Settings w bazie. Ustawienia workflow nie są dostępne w tym środowisku.'
+                });
+            }
+            console.error('Błąd aktualizacji ustawień:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować ustawień' });
+        }
+
+        return res.json({ 
+            status: 'success', 
+            message: 'Ustawienia zostały zaktualizowane',
+            data: { autoReleaseMode }
+        });
+    } catch (error) {
+        console.error('Błąd w PATCH /api/settings/order-workflow:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
 
@@ -2955,6 +3947,7 @@ app.get('/api/admin/users', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRA
                 email,
                 role,
                 isActive,
+                isKioskEnabled,
                 createdAt,
                 departmentId,
                 productionroomid,
@@ -2973,17 +3966,60 @@ app.get('/api/admin/users', requireRole(['ADMIN', 'SALES_DEPT', 'GRAPHICS', 'GRA
             return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać użytkowników', details: error.message });
         }
 
-        const users = (data || []).map(user => ({
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            isActive: user.isActive,
-            createdAt: user.createdAt,
-            departmentId: user.departmentId,
-            departmentName: user.Department?.name || null,
-            productionroomid: user.productionroomid || null
-        }));
+        // Debug: log role for specific user ID
+        const targetUser = data?.find(u => u.id === '66c3468e-6258-49c2-b10e-0f292e52b473');
+        if (targetUser) {
+            console.log('[GET /api/admin/users] target user role', { id: targetUser.id, role: targetUser.role });
+        }
+
+        // Pobierz wszystkie przypisania pokoi produkcyjnych (multiroom)
+        const userIds = (data || []).map(u => u.id);
+        let roomAssignmentsMap = {};
+        
+        if (userIds.length > 0) {
+            const { data: roomAssignments } = await supabase
+                .from('UserProductionRoom')
+                .select(`
+                    userId,
+                    roomId,
+                    isPrimary,
+                    room:ProductionRoom!UserProductionRoom_roomId_fkey(id, name, code)
+                `)
+                .in('userId', userIds);
+            
+            // Grupuj przypisania po userId
+            (roomAssignments || []).forEach(ra => {
+                if (!roomAssignmentsMap[ra.userId]) {
+                    roomAssignmentsMap[ra.userId] = [];
+                }
+                roomAssignmentsMap[ra.userId].push({
+                    id: ra.roomId,
+                    name: ra.room?.name || null,
+                    code: ra.room?.code || null,
+                    isPrimary: ra.isPrimary
+                });
+            });
+        }
+
+        const users = (data || []).map(user => {
+            const productionRooms = roomAssignmentsMap[user.id] || [];
+            const primaryRoom = productionRooms.find(r => r.isPrimary) || productionRooms[0] || null;
+            
+            return {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                isActive: user.isActive,
+                isKioskEnabled: user.isKioskEnabled === true,
+                createdAt: user.createdAt,
+                departmentId: user.departmentId,
+                departmentName: user.Department?.name || null,
+                productionroomid: user.productionroomid || primaryRoom?.id || null,
+                productionRoomName: primaryRoom?.name || null,
+                productionRooms: productionRooms
+            };
+        });
 
         return res.json({ status: 'success', data: users });
     } catch (err) {
@@ -2998,47 +4034,96 @@ app.post('/api/admin/users', requireRole(['ADMIN']), async (req, res) => {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
 
-    const { name, email, password, role, departmentId, productionRoomId } = req.body || {};
+    const { name, email, password, role, departmentId, productionRoomId, kioskPin, isKioskEnabled } = req.body || {};
 
-    if (!email || !password || !role) {
-        return res.status(400).json({ status: 'error', message: 'Wymagane pola: email, password, role' });
+    if (!role) {
+        return res.status(400).json({ status: 'error', message: 'Wymagane pole: role' });
     }
 
-    if (password.length < 6) {
-        return res.status(400).json({ status: 'error', message: 'Hasło musi mieć co najmniej 6 znaków' });
+    const kioskRoles = ['OPERATOR', 'PRODUCTION', 'PRODUCTION_MANAGER'];
+    const wantsKiosk = kioskRoles.includes(role) && (kioskPin !== undefined || isKioskEnabled === true);
+
+    if (!wantsKiosk) {
+        if (!email || !password) {
+            return res.status(400).json({ status: 'error', message: 'Wymagane pola: email, password' });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({ status: 'error', message: 'Hasło musi mieć co najmniej 6 znaków' });
+        }
+    } else {
+        if (kioskPin === undefined && isKioskEnabled === true) {
+            return res.status(400).json({ status: 'error', message: 'Dla użytkownika kiosku podaj kioskPin (6 cyfr)' });
+        }
     }
 
     try {
-        // Sprawdź, czy email już istnieje
-        const { data: existing } = await supabase
-            .from('User')
-            .select('id')
-            .eq('email', email)
-            .single();
+        if (email) {
+            // Sprawdź, czy email już istnieje
+            const { data: existing } = await supabase
+                .from('User')
+                .select('id')
+                .eq('email', email)
+                .single();
 
-        if (existing) {
-            return res.status(400).json({ status: 'error', message: 'Użytkownik o tym adresie email już istnieje' });
+            if (existing) {
+                return res.status(400).json({ status: 'error', message: 'Użytkownik o tym adresie email już istnieje' });
+            }
         }
 
-        // Hash hasła
-        const hashedPassword = await bcrypt.hash(password, 10);
+        // Hash hasła (opcjonalnie)
+        const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
+
+        let hashedPin = null;
+        if (kioskPin !== undefined) {
+            const pinStr = (kioskPin || '').toString().trim();
+            if (!/^\d{6}$/.test(pinStr)) {
+                return res.status(400).json({ status: 'error', message: 'kioskPin musi mieć 6 cyfr' });
+            }
+            hashedPin = await bcrypt.hash(pinStr, 10);
+        }
+
+        let resolvedProductionRoomId = productionRoomId || null;
+        if (wantsKiosk && !resolvedProductionRoomId) {
+            const { data: rooms, error: roomsError } = await supabase
+                .from('ProductionRoom')
+                .select('id')
+                .eq('isActive', true);
+
+            if (roomsError) {
+                console.error('[POST /api/admin/users] Błąd pobierania pokojów:', roomsError);
+            } else if (Array.isArray(rooms) && rooms.length === 1) {
+                resolvedProductionRoomId = rooms[0].id;
+            } else {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Dla operatora kiosku wybierz pokój produkcyjny (w systemie jest więcej niż jeden pokój).',
+                });
+            }
+        }
 
         const userData = {
             name: name || null,
-            email,
+            email: email || null,
             password: hashedPassword,
             role,
             departmentId: departmentId || null,
-            productionroomid: productionRoomId || null,
+            productionroomid: resolvedProductionRoomId,
+            isKioskEnabled: typeof isKioskEnabled === 'boolean' ? isKioskEnabled : (hashedPin ? true : false),
+            pinHash: hashedPin,
             isActive: true,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         };
 
+        if (wantsKiosk && !email) {
+            console.log(`[POST /api/admin/users] Utworzono użytkownika kiosku bez email: ${userData.name || userData.role}`);
+        }
+
         const { data: newUser, error } = await supabase
             .from('User')
             .insert(userData)
-            .select('id, name, email, role, isActive, createdAt, departmentId, productionroomid')
+            .select('id, name, email, role, isActive, createdAt, departmentId, productionroomid, isKioskEnabled')
             .single();
 
         if (error) {
@@ -3060,7 +4145,9 @@ app.patch('/api/admin/users/:id', requireRole(['ADMIN']), async (req, res) => {
     }
 
     const { id } = req.params;
-    const { name, role, departmentId, productionRoomId, isActive, password } = req.body || {};
+    const { name, role, departmentId, productionRoomId, isActive, password, kioskPin, isKioskEnabled } = req.body || {};
+
+    console.log('[PATCH /api/admin/users/:id] start', { id, role });
 
     const updateData = {
         updatedAt: new Date().toISOString(),
@@ -3071,6 +4158,9 @@ app.patch('/api/admin/users/:id', requireRole(['ADMIN']), async (req, res) => {
     if (departmentId !== undefined) updateData.departmentId = departmentId;
     if (productionRoomId !== undefined) updateData.productionroomid = productionRoomId || null;
     if (typeof isActive === 'boolean') updateData.isActive = isActive;
+    if (typeof isKioskEnabled === 'boolean') updateData.isKioskEnabled = isKioskEnabled;
+
+    console.log('[PATCH /api/admin/users/:id] updateData', { id, updateData });
 
     try {
         if (password !== undefined) {
@@ -3082,12 +4172,25 @@ app.patch('/api/admin/users/:id', requireRole(['ADMIN']), async (req, res) => {
             updateData.password = hashedPassword;
         }
 
+        if (kioskPin !== undefined) {
+            const pinStr = (kioskPin || '').toString().trim();
+            if (!/^\d{6}$/.test(pinStr)) {
+                return res.status(400).json({ status: 'error', message: 'kioskPin musi mieć 6 cyfr' });
+            }
+            updateData.pinHash = await bcrypt.hash(pinStr, 10);
+            if (updateData.isKioskEnabled === undefined) {
+                updateData.isKioskEnabled = true;
+            }
+        }
+
         const { data, error } = await supabase
             .from('User')
             .update(updateData)
             .eq('id', id)
-            .select('id, name, email, role, isActive, departmentId, productionroomid')
+            .select('id, name, email, role, isActive, departmentId, productionroomid, isKioskEnabled')
             .single();
+
+        console.log('[PATCH /api/admin/users/:id] updated', { id, role: data?.role });
 
         if (error) {
             console.error('Błąd aktualizacji użytkownika:', error);
@@ -3430,6 +4533,326 @@ app.delete('/api/admin/user-folder-access/:id', requireRole(['ADMIN', 'SALES_DEP
         return res.json({ status: 'success', message: 'Przypisanie usunięte' });
     } catch (err) {
         console.error('Wyjątek w DELETE /api/admin/user-folder-access/:id:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+// -----------------------------
+// API - Przypisania pokoi produkcyjnych (UserProductionRoom) - MULTIROOM
+// -----------------------------
+
+/**
+ * GET /api/admin/user-production-rooms
+ * Lista przypisań pokoi produkcyjnych dla użytkownika
+ * Query: userId (opcjonalne - jeśli brak, zwraca wszystkie)
+ */
+app.get('/api/admin/user-production-rooms', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { userId } = req.query;
+
+    try {
+        let query = supabase
+            .from('UserProductionRoom')
+            .select(`
+                id,
+                userId,
+                roomId,
+                isPrimary,
+                notes,
+                assignedBy,
+                createdAt,
+                user:User!UserProductionRoom_userId_fkey(id, name, email, role),
+                room:ProductionRoom!UserProductionRoom_roomId_fkey(id, name, code),
+                assignedByUser:User!UserProductionRoom_assignedBy_fkey(id, name, email)
+            `)
+            .order('createdAt', { ascending: false });
+
+        if (userId) {
+            query = query.eq('userId', userId);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('[GET /api/admin/user-production-rooms] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać przypisań', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            data: data || [],
+            count: data?.length || 0
+        });
+    } catch (err) {
+        console.error('[GET /api/admin/user-production-rooms] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+/**
+ * GET /api/user-production-rooms
+ * Pokoje produkcyjne bieżącego użytkownika
+ */
+app.get('/api/user-production-rooms', async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const cookies = parseCookies(req);
+    const currentUserId = cookies.auth_id;
+
+    if (!currentUserId) {
+        return res.status(401).json({ status: 'error', message: 'Brak autoryzacji' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('UserProductionRoom')
+            .select(`
+                id,
+                roomId,
+                isPrimary,
+                notes,
+                createdAt,
+                room:ProductionRoom!UserProductionRoom_roomId_fkey(id, name, code)
+            `)
+            .eq('userId', currentUserId)
+            .order('isPrimary', { ascending: false })
+            .order('createdAt', { ascending: true });
+
+        if (error) {
+            console.error('[GET /api/user-production-rooms] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać pokoi', details: error.message });
+        }
+
+        const rooms = (data || []).map(d => ({
+            id: d.roomId,
+            name: d.room?.name || null,
+            code: d.room?.code || null,
+            isPrimary: d.isPrimary,
+            assignmentId: d.id
+        }));
+
+        const primaryRoom = rooms.find(r => r.isPrimary) || rooms[0] || null;
+
+        return res.json({
+            status: 'success',
+            data: rooms,
+            primaryRoomId: primaryRoom?.id || null,
+            primaryRoomName: primaryRoom?.name || null
+        });
+    } catch (err) {
+        console.error('[GET /api/user-production-rooms] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+/**
+ * POST /api/admin/user-production-rooms
+ * Tworzenie nowego przypisania pokoju do użytkownika
+ */
+app.post('/api/admin/user-production-rooms', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id: assignedById } = req.user;
+    const { userId, roomId, isPrimary, notes } = req.body || {};
+
+    if (!userId || !roomId) {
+        return res.status(400).json({ status: 'error', message: 'userId i roomId są wymagane' });
+    }
+
+    try {
+        // Sprawdź czy użytkownik istnieje
+        const { data: userExists } = await supabase
+            .from('User')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+        if (!userExists) {
+            return res.status(404).json({ status: 'error', message: 'Użytkownik nie istnieje' });
+        }
+
+        // Sprawdź czy pokój istnieje
+        const { data: roomExists } = await supabase
+            .from('ProductionRoom')
+            .select('id')
+            .eq('id', roomId)
+            .single();
+
+        if (!roomExists) {
+            return res.status(404).json({ status: 'error', message: 'Pokój produkcyjny nie istnieje' });
+        }
+
+        // Sprawdź czy przypisanie już istnieje
+        const { data: existing } = await supabase
+            .from('UserProductionRoom')
+            .select('id')
+            .eq('userId', userId)
+            .eq('roomId', roomId)
+            .single();
+
+        if (existing) {
+            return res.status(409).json({ status: 'error', message: 'Użytkownik jest już przypisany do tego pokoju' });
+        }
+
+        // Jeśli isPrimary=true, usuń flagę z innych przypisań tego użytkownika
+        if (isPrimary === true) {
+            await supabase
+                .from('UserProductionRoom')
+                .update({ isPrimary: false })
+                .eq('userId', userId)
+                .eq('isPrimary', true);
+        }
+
+        // Utwórz przypisanie
+        const { data, error } = await supabase
+            .from('UserProductionRoom')
+            .insert({
+                userId,
+                roomId,
+                isPrimary: isPrimary === true,
+                notes: notes?.trim() || null,
+                assignedBy: assignedById,
+                createdAt: new Date().toISOString()
+            })
+            .select(`
+                id,
+                userId,
+                roomId,
+                isPrimary,
+                notes,
+                createdAt,
+                room:ProductionRoom!UserProductionRoom_roomId_fkey(id, name, code)
+            `)
+            .single();
+
+        if (error) {
+            console.error('[POST /api/admin/user-production-rooms] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć przypisania', details: error.message });
+        }
+
+        console.log(`[POST /api/admin/user-production-rooms] Admin ${assignedById} przypisał użytkownika ${userId} do pokoju ${roomId}`);
+
+        return res.status(201).json({ status: 'success', data, message: 'Przypisanie utworzone' });
+    } catch (err) {
+        console.error('[POST /api/admin/user-production-rooms] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+/**
+ * PATCH /api/admin/user-production-rooms/:id
+ * Aktualizacja przypisania (np. zmiana isPrimary)
+ */
+app.patch('/api/admin/user-production-rooms/:id', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+    const { isPrimary, notes } = req.body || {};
+
+    try {
+        // Pobierz obecne przypisanie
+        const { data: current } = await supabase
+            .from('UserProductionRoom')
+            .select('id, userId, roomId, isPrimary')
+            .eq('id', id)
+            .single();
+
+        if (!current) {
+            return res.status(404).json({ status: 'error', message: 'Przypisanie nie znalezione' });
+        }
+
+        const updateData = {};
+        if (notes !== undefined) updateData.notes = notes?.trim() || null;
+
+        // Jeśli ustawiamy isPrimary=true, usuń flagę z innych
+        if (isPrimary === true && !current.isPrimary) {
+            await supabase
+                .from('UserProductionRoom')
+                .update({ isPrimary: false })
+                .eq('userId', current.userId)
+                .eq('isPrimary', true);
+            updateData.isPrimary = true;
+        } else if (isPrimary === false) {
+            updateData.isPrimary = false;
+        }
+
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Brak danych do aktualizacji' });
+        }
+
+        const { data, error } = await supabase
+            .from('UserProductionRoom')
+            .update(updateData)
+            .eq('id', id)
+            .select(`
+                id,
+                userId,
+                roomId,
+                isPrimary,
+                notes,
+                createdAt,
+                room:ProductionRoom!UserProductionRoom_roomId_fkey(id, name, code)
+            `)
+            .single();
+
+        if (error) {
+            console.error('[PATCH /api/admin/user-production-rooms/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się zaktualizować przypisania', details: error.message });
+        }
+
+        return res.json({ status: 'success', data, message: 'Przypisanie zaktualizowane' });
+    } catch (err) {
+        console.error('[PATCH /api/admin/user-production-rooms/:id] Wyjątek:', err);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
+    }
+});
+
+/**
+ * DELETE /api/admin/user-production-rooms/:id
+ * Usunięcie przypisania pokoju
+ */
+app.delete('/api/admin/user-production-rooms/:id', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const { data: toDelete } = await supabase
+            .from('UserProductionRoom')
+            .select('id, userId, roomId')
+            .eq('id', id)
+            .single();
+
+        if (!toDelete) {
+            return res.status(404).json({ status: 'error', message: 'Przypisanie nie znalezione' });
+        }
+
+        const { error } = await supabase
+            .from('UserProductionRoom')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('[DELETE /api/admin/user-production-rooms/:id] Błąd:', error);
+            return res.status(500).json({ status: 'error', message: 'Nie udało się usunąć przypisania', details: error.message });
+        }
+
+        console.log(`[DELETE /api/admin/user-production-rooms/:id] Usunięto przypisanie ${id} (user: ${toDelete.userId}, room: ${toDelete.roomId})`);
+
+        return res.json({ status: 'success', message: 'Przypisanie usunięte' });
+    } catch (err) {
+        console.error('[DELETE /api/admin/user-production-rooms/:id] Wyjątek:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
     }
 });
@@ -4178,7 +5601,18 @@ app.get('/api/graphics/tasks', requireRole(['GRAPHICS', 'GRAPHIC_DESIGNER', 'SAL
             return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać zadań', details: error.message });
         }
 
-        return res.json({ status: 'success', data: data || [] });
+        const normalized = (data || []).map(task => {
+            if (!task || !task.OrderItem) return task;
+            return {
+                ...task,
+                OrderItem: {
+                    ...task.OrderItem,
+                    projectviewurl: normalizeProjectViewUrl(task.OrderItem.projectviewurl)
+                }
+            };
+        });
+
+        return res.json({ status: 'success', data: normalized });
     } catch (err) {
         console.error('Wyjątek w GET /api/graphics/tasks:', err);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: err.message });
@@ -4227,6 +5661,10 @@ app.get('/api/graphics/tasks/:id', requireRole(['GRAPHICS', 'GRAPHIC_DESIGNER', 
 
         if (error) {
             return res.status(404).json({ status: 'error', message: 'Zadanie nie znalezione', details: error.message });
+        }
+
+        if (data && data.OrderItem) {
+            data.OrderItem.projectviewurl = normalizeProjectViewUrl(data.OrderItem.projectviewurl);
         }
 
         return res.json({ status: 'success', data });
@@ -5152,6 +6590,25 @@ async function generateShortCode(firstName, lastName) {
  * Generuje numer zamówienia w formacie: YYYY/N/XXX
  * gdzie YYYY = rok, N = kolejny numer w roku, XXX = shortCode handlowca
  */
+function computeNextOrderNumber({ year, shortCode, existingOrderNumbers }) {
+    const numbers = Array.isArray(existingOrderNumbers) ? existingOrderNumbers : [];
+    let maxSequence = 0;
+
+    numbers.forEach(num => {
+        if (typeof num !== 'string') return;
+        if (!num.startsWith(`${year}/`)) return;
+        const parts = num.split('/');
+        if (parts.length < 2) return;
+        const seq = parseInt(parts[1], 10);
+        if (!Number.isNaN(seq) && seq > maxSequence) {
+            maxSequence = seq;
+        }
+    });
+
+    const sequence = maxSequence + 1;
+    return `${year}/${sequence}/${shortCode}`;
+}
+
 async function generateOrderNumber(userId) {
     if (!supabase) {
         throw new Error('Supabase nie jest skonfigurowany');
@@ -5186,19 +6643,17 @@ async function generateOrderNumber(userId) {
     }
     const year = new Date().getFullYear();
 
-    // Policz zamówienia w danym roku
-    const { data: yearOrders, error: countError } = await supabase
+    const { data: yearOrders, error: fetchError } = await supabase
         .from('Order')
-        .select('id', { count: 'exact' })
+        .select('orderNumber')
         .ilike('orderNumber', `${year}/%`);
 
-    if (countError) {
-        throw new Error(`Błąd przy liczeniu zamówień: ${countError.message}`);
+    if (fetchError) {
+        throw new Error(`Błąd przy pobieraniu zamówień: ${fetchError.message}`);
     }
 
-    const sequence = (yearOrders?.length || 0) + 1;
-
-    return `${year}/${sequence}/${shortCode}`;
+    const existingOrderNumbers = (yearOrders || []).map(row => row.orderNumber || row.ordernumber);
+    return computeNextOrderNumber({ year, shortCode, existingOrderNumbers });
 }
 
 // ========================================
@@ -5270,31 +6725,55 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
         // Policz total
         const total = items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
 
-        // Wygeneruj orderNumber
-        const orderNumber = await generateOrderNumber(userId);
+        let order = null;
+        let orderError = null;
+        let orderNumber = null;
 
-        // Utwórz Order (z deliveryDate i domyślnym priority=3)
-        const { data: order, error: orderError } = await supabase
-            .from('Order')
-            .insert({
-                customerId,
-                userId,
-                orderNumber,
-                status: 'PENDING',
-                total: parseFloat(total.toFixed(2)),
-                deliveryDate: deliveryDateParsed.toISOString(),
-                priority: 3,
-                notes: notes || null,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            })
-            .select('id')
-            .single();
+        for (let attempt = 0; attempt < 7; attempt++) {
+            orderNumber = await generateOrderNumber(userId);
+
+            const insertResult = await supabase
+                .from('Order')
+                .insert({
+                    customerId,
+                    userId,
+                    orderNumber,
+                    status: 'PENDING',
+                    total: parseFloat(total.toFixed(2)),
+                    deliveryDate: deliveryDateParsed.toISOString(),
+                    priority: 3,
+                    notes: notes || null,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                })
+                .select('id')
+                .single();
+
+            order = insertResult.data;
+            orderError = insertResult.error;
+
+            if (!orderError && order) {
+                break;
+            }
+
+            const isUniqueViolation =
+                orderError &&
+                (orderError.code === '23505' ||
+                    (typeof orderError.message === 'string' && orderError.message.toLowerCase().includes('duplicate')));
+
+            if (!isUniqueViolation) {
+                break;
+            }
+
+            console.log(`[POST /api/orders] Konflikt numeru zamówienia (UNIQUE) dla "${orderNumber}". Próba ponowienia: ${attempt + 1}/7`);
+        }
 
         if (orderError || !order) {
             console.error('Błąd tworzenia Order:', orderError);
             return res.status(500).json({ status: 'error', message: 'Nie udało się utworzyć zamówienia', details: orderError?.message });
         }
+
+        console.log(`[POST /api/orders] Utworzono zamówienie ${orderNumber} (id=${order.id})`);
 
         const orderId = order.id;
 
@@ -5408,6 +6887,49 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
 
         console.log(`✅ Zamówienie ${orderNumber} utworzone (ID: ${orderId}), zadania grafiki: ${createdGraphicTasks}`);
 
+        // Spróbuj automatycznie zatwierdzić zamówienie wg ustawień
+        let autoApprovalInfo = {
+            autoApproved: false,
+            newStatus: 'PENDING',
+            blockedReason: null
+        };
+
+        try {
+            console.log(`[POST /api/orders] Sprawdzam automatyczne zatwierdzenie dla zamówienia ${orderId}`);
+            await maybeAutoApproveOrder(orderId, { userId });
+            
+            // Sprawdź finalny status zamówienia
+            const { data: updatedOrder } = await supabase
+                .from('Order')
+                .select('status')
+                .eq('id', orderId)
+                .single();
+            
+            if (updatedOrder) {
+                autoApprovalInfo.newStatus = updatedOrder.status;
+                autoApprovalInfo.autoApproved = updatedOrder.status === 'APPROVED';
+                
+                if (!autoApprovalInfo.autoApproved && updatedOrder.status === 'PENDING') {
+                    // Pobierz ustawienie aby określić przyczynę blokady
+                    const { data: settings } = await supabase
+                        .from('Settings')
+                        .select('value')
+                        .eq('key', 'autoReleaseMode')
+                        .single();
+                    
+                    const mode = settings?.value || 'NONE';
+                    if (mode === 'NONE') {
+                        autoApprovalInfo.blockedReason = 'MODE_NONE';
+                    } else if (mode === 'IN_STOCK_ONLY') {
+                        autoApprovalInfo.blockedReason = 'OUT_OF_STOCK';
+                    }
+                }
+            }
+        } catch (autoApproveError) {
+            console.error('[POST /api/orders] Błąd automatycznego zatwierdzania:', autoApproveError);
+            // Nie przerywamy tworzenia zamówienia - zamówienie zostało utworzone pomyślnie
+        }
+
         return res.status(201).json({
             status: 'success',
             message: 'Zamówienie zostało utworzone',
@@ -5415,7 +6937,8 @@ app.post('/api/orders', requireRole(['SALES_REP', 'SALES_DEPT', 'ADMIN']), async
                 orderId,
                 orderNumber,
                 total,
-                itemCount: items.length
+                itemCount: items.length,
+                autoApproval: autoApprovalInfo
             }
         });
 
@@ -6208,9 +7731,78 @@ app.get('/api/orders', async (req, res) => {
 
             const belowStockSet = new Set((belowStockItems || []).map(row => row.orderId));
 
+            // Pobierz zlecenia produkcyjne dla wszystkich zamówień
+            const { data: prodOrders, error: prodError } = await supabase
+                .from('ProductionOrder')
+                .select('id, sourceorderid, status')
+                .in('sourceorderid', orderIds);
+
+            if (prodError) {
+                console.error('Błąd Supabase w GET /api/orders (ProductionOrder):', prodError);
+            }
+
+            // Pobierz operacje dla zleceń produkcyjnych
+            const prodOrderIds = (prodOrders || []).map(po => po.id);
+            let operationsMap = {};
+            if (prodOrderIds.length > 0) {
+                const { data: operations } = await supabase
+                    .from('ProductionOperation')
+                    .select('id, productionorderid, status')
+                    .in('productionorderid', prodOrderIds);
+
+                (operations || []).forEach(op => {
+                    if (!operationsMap[op.productionorderid]) {
+                        operationsMap[op.productionorderid] = [];
+                    }
+                    operationsMap[op.productionorderid].push(op);
+                });
+            }
+
+            // Agreguj status produkcji dla każdego zamówienia
+            const productionStatusMap = {};
+            orderIds.forEach(orderId => {
+                const orderProdOrders = (prodOrders || []).filter(po => po.sourceorderid === orderId);
+                
+                if (orderProdOrders.length === 0) {
+                    productionStatusMap[orderId] = { status: 'NOT_STARTED', label: 'Nie uruchomione', details: [] };
+                    return;
+                }
+
+                let allCompleted = true;
+                let anyInProgress = false;
+                let details = [];
+
+                orderProdOrders.forEach(po => {
+                    const ops = operationsMap[po.id] || [];
+                    const hasActive = ops.some(op => op.status === 'active');
+                    const hasPaused = ops.some(op => op.status === 'paused');
+                    const allOpsCompleted = ops.length > 0 && ops.every(op => op.status === 'completed');
+
+                    if (po.status === 'completed' || allOpsCompleted) {
+                        details.push({ orderId: po.id, status: 'completed' });
+                    } else if (po.status === 'in_progress' || hasActive || hasPaused) {
+                        anyInProgress = true;
+                        allCompleted = false;
+                        details.push({ orderId: po.id, status: 'in_progress' });
+                    } else {
+                        allCompleted = false;
+                        details.push({ orderId: po.id, status: 'pending' });
+                    }
+                });
+
+                if (allCompleted) {
+                    productionStatusMap[orderId] = { status: 'COMPLETED', label: 'Produkcja gotowa', details };
+                } else if (anyInProgress) {
+                    productionStatusMap[orderId] = { status: 'IN_PROGRESS', label: 'W trakcie', details };
+                } else {
+                    productionStatusMap[orderId] = { status: 'PENDING', label: 'Zaplanowane', details };
+                }
+            });
+
             enrichedOrders = enrichedOrders.map(o => ({
                 ...o,
-                hasBelowStock: belowStockSet.has(o.id)
+                hasBelowStock: belowStockSet.has(o.id),
+                productionStatus: productionStatusMap[o.id] || { status: 'NOT_STARTED', label: 'Nie uruchomione', details: [] }
             }));
 
             if (belowStockOnly && ['true', '1', 'on'].includes(String(belowStockOnly).toLowerCase())) {
@@ -6218,11 +7810,23 @@ app.get('/api/orders', async (req, res) => {
             }
         }
 
-        console.log('[GET /api/orders] returning', { count: enrichedOrders.length });
+        const normalizedOrders = (enrichedOrders || []).map(order => {
+            if (!order || !Array.isArray(order.OrderItem)) return order;
+            const normalizedItems = order.OrderItem.map(item => ({
+                ...item,
+                projectviewurl: normalizeProjectViewUrl(item.projectviewurl)
+            }));
+            return {
+                ...order,
+                OrderItem: normalizedItems
+            };
+        });
+
+        console.log('[GET /api/orders] returning', { count: normalizedOrders.length });
 
         return res.json({
             status: 'success',
-            data: enrichedOrders
+            data: normalizedOrders
         });
     } catch (error) {
         console.error('Błąd w GET /api/orders:', error);
@@ -6727,11 +8331,16 @@ app.get('/api/orders/:id', async (req, res) => {
             return res.status(500).json({ status: 'error', message: 'Nie udało się pobrać pozycji zamówienia' });
         }
 
+        const normalizedItems = (items || []).map(item => ({
+            ...item,
+            projectviewurl: normalizeProjectViewUrl(item.projectviewurl)
+        }));
+
         res.json({
             status: 'success',
             data: {
                 ...order,
-                items: items || []
+                items: normalizedItems
             }
         });
     } catch (error) {
@@ -6916,7 +8525,7 @@ async function generateWorkStationCode(supabaseClient, name, workCenterId) {
 
 // Eksportuj funkcje do testów
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { generateBaseCode, generateRoomCode, generateWorkCenterCode, generateWorkStationCode, computeOrderTimePriority };
+    module.exports = { generateBaseCode, generateRoomCode, generateWorkCenterCode, generateWorkStationCode, computeOrderTimePriority, computeNextOrderNumber, normalizeProjectViewUrl };
 }
 
 // ============================================
@@ -7006,8 +8615,8 @@ app.get('/api/production/rooms', requireRole(['ADMIN', 'PRODUCTION', 'PRODUCTION
             .from('ProductionRoom')
             .select(`
                 *,
-                supervisor:User!ProductionRoom_supervisorId_fkey(id, name, email),
-                roomManager:User!ProductionRoom_roomManagerUserId_fkey(id, name, email),
+                supervisor:User!ProductionRoom_supervisorId_fkey(id, name, email, role),
+                roomManager:User!ProductionRoom_roomManagerUserId_fkey(id, name, email, role),
                 workCenters:WorkCenter(id, name, code, type)
             `)
             .eq('isActive', true)
@@ -7469,10 +9078,25 @@ app.get('/api/production/work-centers', requireRole(['ADMIN', 'PRODUCTION', 'SAL
             return res.status(500).json({ status: 'error', message: 'Błąd pobierania gniazd' });
         }
 
-        const centersWithCounts = (workCenters || []).map(wc => ({
-            ...wc,
-            workStationCount: wc.workStations?.length || 0
-        }));
+        const centersWithCounts = (workCenters || []).map(wc => {
+            const stations = wc.workStations || [];
+            const statusCounts = {
+                available: 0,
+                in_use: 0,
+                maintenance: 0,
+                breakdown: 0
+            };
+            stations.forEach(s => {
+                if (statusCounts.hasOwnProperty(s.status)) {
+                    statusCounts[s.status]++;
+                }
+            });
+            return {
+                ...wc,
+                workStationCount: stations.length,
+                workStationsByStatus: statusCounts
+            };
+        });
 
         return res.json({ status: 'success', data: centersWithCounts });
     } catch (error) {
@@ -7580,7 +9204,7 @@ app.get('/api/production/work-stations', requireRole(['ADMIN', 'PRODUCTION', 'SA
             .from('WorkStation')
             .select(`
                 *,
-                workCenter:WorkCenter(id, name, code, type),
+                workCenter:WorkCenter(id, name, code, type, room:ProductionRoom(id, name, code)),
                 currentOperator:User!WorkStation_currentOperatorId_fkey(id, name)
             `)
             .eq('isActive', true)
@@ -8029,7 +9653,7 @@ async function createProductionOrdersForOrder(orderId, options = {}) {
         throw new Error('Supabase nie jest skonfigurowany');
     }
 
-    const { priority = 3, notes = null, userId = null } = options;
+    const { priority = 3, notes = null, userId = null, mode = 'ALL' } = options;
 
     // Sprawdź czy już istnieją zlecenia dla tego zamówienia (unikamy duplikatów)
     const { data: existingOrders, error: checkError } = await supabase
@@ -8048,13 +9672,13 @@ async function createProductionOrdersForOrder(orderId, options = {}) {
         return { created: 0, skipped: true, orders: [], errors: [] };
     }
 
-    // Pobierz zamówienie z pozycjami
+    // Pobierz zamówienie z pozycjami (uwzględniamy totalQuantity)
     const { data: order, error: orderError } = await supabase
         .from('Order')
         .select(`
             *,
             items:OrderItem(
-                id, productId, quantity, productionNotes,
+                id, productId, quantity, totalQuantity, productionNotes,
                 product:Product(id, name, code, productionPath)
             )
         `)
@@ -8069,6 +9693,26 @@ async function createProductionOrdersForOrder(orderId, options = {}) {
     if (!order.items || order.items.length === 0) {
         console.log(`[createProductionOrdersForOrder] Zamówienie ${orderId} nie ma pozycji.`);
         return { created: 0, skipped: false, orders: [], errors: [{ error: 'Zamówienie nie ma pozycji' }] };
+    }
+
+    // Jeśli tryb IN_STOCK_ONLY - filtruj pozycje ze stanem magazynowym
+    let itemsToProcess = order.items;
+    if (mode === 'IN_STOCK_ONLY') {
+        console.log(`[createProductionOrdersForOrder] Tryb IN_STOCK_ONLY - sprawdzam stany dla zamówienia ${orderId}`);
+        const stockCheck = await checkOrderStock(orderId);
+        
+        // Tworzymy mapę pozycji ze stanem dla szybkiego dostępu
+        const inStockItemIds = new Set(stockCheck.inStockItems.map(item => item.id));
+        
+        // Filtrujemy tylko pozycje ze stanem
+        itemsToProcess = order.items.filter(item => inStockItemIds.has(item.id));
+        
+        console.log(`[createProductionOrdersForOrder] ${itemsToProcess.length}/${order.items.length} pozycji ma wystarczający stan magazynowy`);
+        
+        if (itemsToProcess.length === 0) {
+            console.log(`[createProductionOrdersForOrder] Żadna pozycja nie ma stanu - nie tworzę zleceń produkcyjnych`);
+            return { created: 0, skipped: false, orders: [], errors: [], outOfStockItems: stockCheck.outOfStockItems };
+        }
     }
 
     // Pobierz wszystkie ścieżki produkcyjne (do mapowania kodów)
@@ -8487,6 +10131,59 @@ app.post('/api/production/orders/from-order/:orderId', requireRole(['ADMIN', 'PR
     }
 });
 
+// POST /api/production/orders/fix-orphaned - napraw zlecenia bez operacji (zmiana statusu na planned)
+app.post('/api/production/orders/fix-orphaned', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), async (req, res) => {
+    if (!supabase) {
+        return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
+    }
+
+    try {
+        const { data: orders } = await supabase
+            .from('ProductionOrder')
+            .select('id, ordernumber, status')
+            .in('status', ['in_progress', 'paused', 'approved']);
+
+        const orphaned = [];
+        for (const order of orders || []) {
+            const { data: operations } = await supabase
+                .from('ProductionOperation')
+                .select('id')
+                .eq('productionorderid', order.id)
+                .limit(1);
+
+            if (!operations || operations.length === 0) {
+                orphaned.push(order);
+            }
+        }
+
+        if (orphaned.length === 0) {
+            return res.json({ status: 'success', message: 'Brak zleceń bez operacji', fixed: 0 });
+        }
+
+        const orphanedIds = orphaned.map(o => o.id);
+        const { error: updateError } = await supabase
+            .from('ProductionOrder')
+            .update({ status: 'planned', updatedAt: new Date().toISOString() })
+            .in('id', orphanedIds);
+
+        if (updateError) {
+            console.error('[POST /api/production/orders/fix-orphaned] Błąd:', updateError);
+            return res.status(500).json({ status: 'error', message: 'Błąd aktualizacji' });
+        }
+
+        console.log(`[POST /api/production/orders/fix-orphaned] Naprawiono ${orphaned.length} zleceń:`, orphaned.map(o => o.ordernumber));
+        return res.json({ 
+            status: 'success', 
+            message: `Naprawiono ${orphaned.length} zleceń bez operacji`, 
+            fixed: orphaned.length,
+            orders: orphaned.map(o => ({ id: o.id, orderNumber: o.ordernumber, oldStatus: o.status, newStatus: 'planned' }))
+        });
+    } catch (error) {
+        console.error('[POST /api/production/orders/fix-orphaned] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+    }
+});
+
 // GET /api/production/orders - lista zleceń produkcyjnych z postępem operacji, nazwami ścieżek i aktualnym etapem
 app.get('/api/production/orders', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT', 'SALES_REP']), async (req, res) => {
     if (!supabase) {
@@ -8820,6 +10517,13 @@ app.patch('/api/production/orders/:id/status', requireRole(['ADMIN', 'PRODUCTION
         // Automatycznie zaktualizuj status zamówienia
         if (prodOrder.sourceorderid) {
             await updateOrderStatusFromProduction(prodOrder.sourceorderid);
+            const productionStatus = await computeProductionStatusForOrder(prodOrder.sourceorderid);
+            broadcastSseEvent({
+                type: 'productionStatusChanged',
+                orderId: prodOrder.sourceorderid,
+                productionStatus,
+                at: Date.now()
+            });
         }
 
         return res.json({ status: 'success', data: updated });
@@ -8952,7 +10656,57 @@ app.patch('/api/production/operations/:id/status', requireRole(['ADMIN', 'PRODUC
                 .select('id, status')
                 .eq('productionorderid', operation.productionorderid);
             
-            const allCompleted = allOps && allOps.every(op => op.status === 'completed');
+            // Ochrona: nie ustawiaj completed, jeśli nie ma jeszcze wszystkich oczekiwanych operacji (wielopokojowe ścieżki)
+            const { data: prodOrderRow } = await supabase
+                .from('ProductionOrder')
+                .select('id, productionpathexpression, branchcode')
+                .eq('id', operation.productionorderid)
+                .single();
+
+            let expectedOpsCount = null;
+            try {
+                expectedOpsCount = await (async () => {
+                    // użyj tego samego helpera co w computeProductionStatusForOrder
+                    const tmp = { productionpathexpression: prodOrderRow?.productionpathexpression, branchcode: prodOrderRow?.branchcode };
+                    // computeExpectedOperationsCount jest wewnątrz computeProductionStatusForOrder,
+                    // więc powtarzamy prostą logikę wyliczenia bazując na ProductionPath.
+                    // (minimalny koszt; wykona się tylko przy completion)
+                    const { data: allPaths } = await supabase
+                        .from('ProductionPath')
+                        .select('*')
+                        .eq('isActive', true);
+                    const pathsByCode = {};
+                    (allPaths || []).forEach(p => { pathsByCode[p.code] = p; });
+                    const expr = tmp.productionpathexpression;
+                    if (!expr) return null;
+                    const parsed = parseProductionPathExpression(expr);
+                    if (!parsed || !Array.isArray(parsed.branches) || parsed.branches.length === 0) return null;
+                    const branchCode = tmp.branchcode || null;
+                    const branch = branchCode
+                        ? parsed.branches.find((b, idx) => {
+                            const code = parsed.branches.length > 1 ? String.fromCharCode(65 + idx) : null;
+                            return code === branchCode;
+                        })
+                        : parsed.branches[0];
+                    if (!branch || !Array.isArray(branch.pathCodes) || branch.pathCodes.length === 0) return null;
+                    let expected = 0;
+                    for (const pathCode of branch.pathCodes) {
+                        const pathDef = pathsByCode[pathCode];
+                        if (!pathDef) {
+                            expected += 1;
+                            continue;
+                        }
+                        const ops = pathDef.operations || [];
+                        expected += (Array.isArray(ops) && ops.length > 0) ? ops.length : 1;
+                    }
+                    return expected;
+                })();
+            } catch (e) {
+                expectedOpsCount = null;
+            }
+
+            const hasAllExpectedOps = expectedOpsCount ? ((allOps || []).length >= expectedOpsCount) : ((allOps || []).length > 0);
+            const allCompleted = hasAllExpectedOps && allOps && allOps.every(op => op.status === 'completed');
             
             if (allCompleted) {
                 // Zaktualizuj status zlecenia na completed
@@ -8973,6 +10727,13 @@ app.patch('/api/production/operations/:id/status', requireRole(['ADMIN', 'PRODUC
             
             if (prodOrder?.sourceorderid) {
                 await updateOrderStatusFromProduction(prodOrder.sourceorderid);
+                const productionStatus = await computeProductionStatusForOrder(prodOrder.sourceorderid);
+                broadcastSseEvent({
+                    type: 'productionStatusChanged',
+                    orderId: prodOrder.sourceorderid,
+                    productionStatus,
+                    at: Date.now()
+                });
             }
         }
         
@@ -9008,7 +10769,8 @@ app.patch('/api/production/operations/:id/status', requireRole(['ADMIN', 'PRODUC
 // ============================================
 
 // GET /api/production/orders/active - aktywne zlecenia dla panelu operatora
-// Zwraca zlecenia w statusach: planned, approved, in_progress
+// Zwraca zlecenia w statusach: planned, approved, in_progress (lub completed dla widoku 'completed')
+// Parametr workOrdersView: 'open' (domyślny), 'completed', 'all'
 // Sortowane: najpierw in_progress, potem wg priorytetu
 app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OPERATOR']), async (req, res) => {
     if (!supabase) {
@@ -9016,7 +10778,7 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
     }
 
     try {
-        const { workStationId, workCenterId, limit = 50 } = req.query;
+        const { workStationId, workCenterId, limit = 50, workOrdersView = 'open' } = req.query;
         const cookies = parseCookies(req);
         const userId = cookies.auth_id;
 
@@ -9048,12 +10810,28 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
                 allowedWorkCenterTypes = workCenters
                     .map(wc => wc.type)
                     .filter((t) => !!t);
+                
+                console.log('[PRODUCTION DEBUG] Pokój', userRoomId, 'gniazda:', workCenters, 'allowedTypes:', allowedWorkCenterTypes);
             } else {
                 allowedWorkCenterIds = []; // Pokój bez gniazd -> brak dostępnych operacji
                 allowedWorkCenterTypes = [];
             }
 
         }
+
+        // Określ statusy do pobrania w zależności od widoku
+        // workOrdersView: 'open' = tylko otwarte, 'completed' = tylko zakończone dziś, 'all' = wszystkie
+        let statusFilter = ['planned', 'approved', 'in_progress', 'paused'];
+        if (workOrdersView === 'completed') {
+            statusFilter = ['completed'];
+        } else if (workOrdersView === 'all') {
+            statusFilter = ['planned', 'approved', 'in_progress', 'paused', 'completed'];
+        }
+
+        // Dla widoku 'completed' i 'all' ograniczamy do dzisiaj
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayISO = today.toISOString();
 
         let query = supabase
             .from('ProductionOrder')
@@ -9073,12 +10851,17 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
                     projectName,
                     projectViewUrl:projectviewurl
                 ),
-                workOrder:ProductionWorkOrder!ProductionOrder_workOrderId_fkey(id, workOrderNumber, roomName, status, priority)
+                workOrder:ProductionWorkOrder!ProductionOrder_workOrderId_fkey(id, workOrderNumber, roomName, status, priority, updatedAt)
             `)
-            .in('status', ['planned', 'approved', 'in_progress'])
+            .in('status', statusFilter)
             .order('priority', { ascending: true })
             .order('createdat', { ascending: true })
             .limit(parseInt(limit, 10));
+
+        // Dla widoku 'completed' filtruj tylko zakończone dzisiaj
+        if (workOrdersView === 'completed') {
+            query = query.gte('actualenddate', todayISO);
+        }
 
         if (workStationId) {
             query = query.eq('assignedworkstationid', workStationId);
@@ -9123,49 +10906,80 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
         let filteredOrders = (orders || []).map(order => {
             const ops = operationsMap[order.id] || [];
             
-            // Sprawdź, czy zlecenie ma operacje w pokoju użytkownika
-            let hasOperationsInUserRoom = true;
-            if (userRoomId && Array.isArray(allowedWorkCenterTypes)) {
-                // Filtrowanie "po pokoju" działa tutaj w oparciu o typ operacji i typ gniazda.
-                // Dla pokoju CO2 bierzemy np. wszystkie gniazda typu 'laser_co2'
-                // i sprawdzamy, czy w zleceniu jest jakakolwiek operacja o operationType = 'laser_co2'.
-                hasOperationsInUserRoom = ops.some(op => {
+            // Auto-fix: jeśli zlecenie ma status in_progress/paused ale brak operacji → zmień na planned
+            if ((order.status === 'in_progress' || order.status === 'paused') && ops.length === 0) {
+                console.log(`[AUTO-FIX] Zlecenie ${order.ordernumber} (${order.id}): status ${order.status} ale brak operacji → zmiana na planned`);
+                supabase
+                    .from('ProductionOrder')
+                    .update({ status: 'planned', updatedAt: new Date().toISOString() })
+                    .eq('id', order.id)
+                    .then(() => console.log(`[AUTO-FIX] Zlecenie ${order.ordernumber} naprawione`))
+                    .catch(err => console.error(`[AUTO-FIX] Błąd naprawy ${order.ordernumber}:`, err));
+                order.status = 'planned';
+            }
+            
+            // Filtr R1: Pokaż tylko ZP z operacjami w pokoju użytkownika (tylko dla otwieranych/wszystkich)
+            // Nie stosuj dla widoku 'completed' - chcemy pokazać wszystkie zakończone dziś
+            const hasOperationsInUserRoom = workOrdersView === 'completed' ? true : (() => {
+                if (!userRoomId || !allowedWorkCenterIds || !allowedWorkCenterTypes) {
+                    return false;
+                }
+                
+                // Użyj już pobranych operacji z operationsMap
+                if (!ops || ops.length === 0) {
+                    return false;
+                }
+                
+                // Filtruj tylko operacje NIEZAKOŃCZONE (pending/active/paused)
+                const relevantOps = ops.filter(op => op.status !== 'completed' && op.status !== 'cancelled');
+                
+                // Jeśli nie ma nieukończonych operacji, zlecenie nie powinno być widoczne w "Do zrobienia"
+                if (relevantOps.length === 0) {
+                    return false;
+                }
+                
+                // Sprawdź, czy któraś z nieukończonych operacji pasuje do gniazd w pokoju
+                return relevantOps.some(op => {
                     const opType = op.operationtype || op.operationType;
                     const wcId = op.workCenterId;
                     
                     // Dopasowanie po typie operacji - obsługuje też prefix 'path_'
                     let matchesByType = false;
-                    if (opType) {
-                        matchesByType = allowedWorkCenterTypes.includes(opType) ||
-                            allowedWorkCenterTypes.some(t => opType === `path_${t}` || opType.includes(t));
+                    if (opType && allowedWorkCenterTypes.length > 0) {
+                        matchesByType = allowedWorkCenterTypes.some(t => opType === `path_${t}` || opType.includes(t));
                     }
                     
                     const matchesByCenter = wcId && allowedWorkCenterIds && allowedWorkCenterIds.includes(wcId);
                     return matchesByType || matchesByCenter;
                 });
-
-                console.log('[PRODUCTION DEBUG] order', order.id, 'ops:', ops.map(o => ({
-                    id: o.id,
-                    operationtype: o.operationtype,
-                    workCenterId: o.workCenterId
-                })), 'hasOpsInRoom:', hasOperationsInUserRoom);
-            }
+            })();
 
             // Oblicz postęp
             const completedOps = ops.filter(op => op.status === 'completed').length;
             const totalOps = ops.length;
-            const activeOp = ops.find(op => op.status === 'active');
+            const activeOp = ops.find(op => op.status === 'active') || ops.find(op => op.status === 'paused');
+            
+            // Znajdź pierwszą operację pending (następną do wykonania)
             const nextPendingOp = ops.find(op => op.status === 'pending');
 
             // Oblicz auto-priorytet na podstawie deliveryDate z powiązanego zamówienia
             const deliveryDate = order.sourceOrder?.deliveryDate || order.plannedenddate;
             const estimatedTimeMinutes = order.estimatedtime || 0;
             const timePriority = computeOrderTimePriority({ deliveryDate, estimatedTimeMinutes });
-            
+
+            const sourceOrderItem = order.sourceOrderItem || null;
+            const normalizedSourceOrderItem = sourceOrderItem
+                ? {
+                    ...sourceOrderItem,
+                    projectViewUrl: normalizeProjectViewUrl(sourceOrderItem.projectViewUrl || sourceOrderItem.projectviewurl)
+                }
+                : sourceOrderItem;
+
             return {
                 ...order,
+                sourceOrderItem: normalizedSourceOrderItem,
                 operations: ops,
-                hasOperationsInUserRoom, // Flaga pomocnicza
+                hasOperationsInUserRoom,
                 // Dane czasowe z auto-priorytetu
                 deliveryDate: deliveryDate || null,
                 timeToDeadlineMinutes: timePriority.timeToDeadlineMinutes,
@@ -9182,14 +10996,14 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
             };
         });
 
-        // Filtrowanie finalne - usuń zlecenia, które nie dotyczą pokoju użytkownika
-        if (userRoomId) {
+        // Nie stosuj dla widoku 'completed' - chcemy pokazać wszystkie zakończone dziś
+        if (userRoomId && workOrdersView !== 'completed') {
             filteredOrders = filteredOrders.filter(o => o.hasOperationsInUserRoom);
         }
 
         // Sortuj: najpierw in_progress, potem approved, potem planned
         // W ramach statusu: najpierw po deliveryDate (rosnąco), potem po computedPriority (1-4)
-        const statusOrder = { 'in_progress': 0, 'approved': 1, 'planned': 2 };
+        const statusOrder = { 'in_progress': 0, 'paused': 0, 'approved': 1, 'planned': 2 };
         filteredOrders.sort((a, b) => {
             const statusDiff = (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
             if (statusDiff !== 0) return statusDiff;
@@ -9203,9 +11017,100 @@ app.get('/api/production/orders/active', requireRole(['ADMIN', 'PRODUCTION', 'OP
             return (a.computedPriority || 3) - (b.computedPriority || 3);
         });
 
+        // Dla widoku 'open': dołącz completed pozycje do otwartych ZP
+        // Dzięki temu operator widzi postęp (co już zrobił) w ramach wciąż otwartego ZP
+        let allOrdersForWorkOrders = [...filteredOrders];
+        
+        if (workOrdersView === 'open' && filteredOrders.length > 0) {
+            // Zbierz workOrderIds z otwartych zleceń
+            const openWorkOrderIds = [...new Set(
+                filteredOrders
+                    .map(o => o.workOrderId || o.workorderid)
+                    .filter(id => id)
+            )];
+            
+            if (openWorkOrderIds.length > 0) {
+                // Pobierz completed pozycje dla tych samych workOrderIds
+                const { data: completedOrders } = await supabase
+                    .from('ProductionOrder')
+                    .select(`
+                        *,
+                        product:Product(id, name, code, identifier, imageUrl),
+                        sourceOrder:Order(id, orderNumber, customerId, deliveryDate, priority, customer:Customer(id, name)),
+                        sourceOrderItem:OrderItem(
+                            id,
+                            selectedProjects,
+                            projectQuantities,
+                            totalQuantity,
+                            productionNotes,
+                            source,
+                            quantity,
+                            locationName,
+                            projectName,
+                            projectViewUrl:projectviewurl
+                        ),
+                        workOrder:ProductionWorkOrder!ProductionOrder_workOrderId_fkey(id, workOrderNumber, roomName, status, priority, updatedAt)
+                    `)
+                    .in('workOrderId', openWorkOrderIds)
+                    .eq('status', 'completed');
+                
+                if (completedOrders && completedOrders.length > 0) {
+                    // Pobierz operacje dla completed zleceń
+                    const completedOrderIds = completedOrders.map(o => o.id);
+                    const { data: completedOps } = await supabase
+                        .from('ProductionOperation')
+                        .select(`
+                            *,
+                            workCenter:WorkCenter(id, name, code, type, roomId),
+                            workStation:WorkStation(id, name, code, type)
+                        `)
+                        .in('productionorderid', completedOrderIds)
+                        .order('operationnumber', { ascending: true });
+                    
+                    // Mapuj operacje do zleceń
+                    const completedOpsMap = {};
+                    if (completedOps) {
+                        completedOps.forEach(op => {
+                            if (!completedOpsMap[op.productionorderid]) {
+                                completedOpsMap[op.productionorderid] = [];
+                            }
+                            completedOpsMap[op.productionorderid].push(op);
+                        });
+                    }
+                    
+                    // Dodaj completed zlecenia do listy (z operacjami i progress)
+                    const processedCompletedOrders = completedOrders.map(order => {
+                        const ops = completedOpsMap[order.id] || [];
+                        const completedOpsCount = ops.filter(op => op.status === 'completed').length;
+                        
+                        return {
+                            ...order,
+                            operations: ops,
+                            hasOperationsInUserRoom: false, // completed nie są "do zrobienia"
+                            progress: {
+                                completed: completedOpsCount,
+                                total: ops.length,
+                                percent: ops.length > 0 ? Math.round((completedOpsCount / ops.length) * 100) : 100
+                            },
+                            currentOperation: null,
+                            nextOperation: null
+                        };
+                    });
+                    
+                    // Dodaj do listy (unikając duplikatów)
+                    const existingIds = new Set(filteredOrders.map(o => o.id));
+                    processedCompletedOrders.forEach(co => {
+                        if (!existingIds.has(co.id)) {
+                            allOrdersForWorkOrders.push(co);
+                        }
+                    });
+                }
+            }
+        }
+
         // Grupuj zlecenia po ProductionWorkOrder (Zbiorcze ZP)
         const workOrdersMap = new Map();
-        for (const order of filteredOrders) {
+        for (const order of allOrdersForWorkOrders) {
             const woId = order.workOrderId || order.workorderid;
             if (woId) {
                 if (!workOrdersMap.has(woId)) {
@@ -9339,6 +11244,20 @@ app.post('/api/production/operations/:id/start', requireRole(['ADMIN', 'PRODUCTI
             return res.status(400).json({ status: 'error', message: 'Operacja nie może być rozpoczęta (nieprawidłowy status)' });
         }
 
+        // Walidacja: sprawdź czy zlecenie ma operacje
+        const { data: allOps } = await supabase
+            .from('ProductionOperation')
+            .select('id')
+            .eq('productionorderid', operation.productionorderid);
+
+        if (!allOps || allOps.length === 0) {
+            console.error('[START] Zlecenie bez operacji:', operation.productionorderid);
+            return res.status(400).json({ 
+                status: 'error', 
+                message: 'To zlecenie nie ma zdefiniowanych operacji. Skontaktuj się z działem produkcji w celu naprawy zlecenia.' 
+            });
+        }
+
         // Aktualizuj operację
         const { data: updated, error: updateError } = await supabase
             .from('ProductionOperation')
@@ -9378,6 +11297,13 @@ app.post('/api/production/operations/:id/start', requireRole(['ADMIN', 'PRODUCTI
         // Zaktualizuj status zamówienia
         if (prodOrder?.sourceorderid) {
             await updateOrderStatusFromProduction(prodOrder.sourceorderid);
+            const productionStatus = await computeProductionStatusForOrder(prodOrder.sourceorderid);
+            broadcastSseEvent({
+                type: 'productionStatusChanged',
+                orderId: prodOrder.sourceorderid,
+                productionStatus,
+                at: Date.now()
+            });
         }
 
         // Zapisz log
@@ -9459,6 +11385,26 @@ app.post('/api/production/operations/:id/pause', requireRole(['ADMIN', 'PRODUCTI
             notes: reason ? `Pauza: ${reason}` : `Operacja #${operation.operationnumber} wstrzymana`
         });
 
+        // Aktualizuj status zamówienia po pauzie (na wypadek zmiany agregatu)
+        if (operation?.productionorderid) {
+            const { data: prodOrder } = await supabase
+                .from('ProductionOrder')
+                .select('sourceorderid')
+                .eq('id', operation.productionorderid)
+                .single();
+
+            if (prodOrder?.sourceorderid) {
+                await updateOrderStatusFromProduction(prodOrder.sourceorderid);
+                const productionStatus = await computeProductionStatusForOrder(prodOrder.sourceorderid);
+                broadcastSseEvent({
+                    type: 'productionStatusChanged',
+                    orderId: prodOrder.sourceorderid,
+                    productionStatus,
+                    at: Date.now()
+                });
+            }
+        }
+
         return res.json({ status: 'success', data: updated, message: 'Operacja wstrzymana' });
     } catch (error) {
         console.error('[POST /api/production/operations/:id/pause] Wyjątek:', error);
@@ -9468,6 +11414,9 @@ app.post('/api/production/operations/:id/pause', requireRole(['ADMIN', 'PRODUCTI
 
 // POST /api/production/operations/:id/complete - zakończenie operacji
 app.post('/api/production/operations/:id/complete', requireRole(['ADMIN', 'PRODUCTION', 'OPERATOR']), async (req, res) => {
+    const startTime = Date.now();
+    console.log(`[COMPLETE] Start operacji ${req.params.id}`);
+    
     if (!supabase) {
         return res.status(500).json({ status: 'error', message: 'Supabase nie jest skonfigurowany' });
     }
@@ -9478,29 +11427,34 @@ app.post('/api/production/operations/:id/complete', requireRole(['ADMIN', 'PRODU
         const cookies = parseCookies(req);
         const userId = cookies.auth_id;
 
+        console.log(`[COMPLETE] Pobieram operację ${id}...`);
         // Pobierz operację
         const { data: operation, error: getError } = await supabase
             .from('ProductionOperation')
             .select('id, productionorderid, status, operationnumber, starttime, actualtime')
             .eq('id', id)
             .single();
+        console.log(`[COMPLETE] Pobrano operację w ${Date.now() - startTime}ms`);
 
         if (getError || !operation) {
+            console.log(`[COMPLETE] Operacja nie znaleziona: ${getError?.message}`);
             return res.status(404).json({ status: 'error', message: 'Operacja nie znaleziona' });
         }
 
         if (operation.status !== 'active' && operation.status !== 'paused') {
+            console.log(`[COMPLETE] Nieprawidłowy status: ${operation.status}`);
             return res.status(400).json({ status: 'error', message: 'Operacja nie może być zakończona (nieprawidłowy status)' });
         }
 
         // Oblicz całkowity czas
         let actualTime = operation.actualtime || 0;
         if (operation.status === 'active' && operation.starttime) {
-            const startTime = new Date(operation.starttime);
+            const opStartTime = new Date(operation.starttime);
             const now = new Date();
-            actualTime += Math.round((now - startTime) / 60000); // minuty
+            actualTime += Math.round((now - opStartTime) / 60000); // minuty
         }
 
+        console.log(`[COMPLETE] Aktualizuję operację...`);
         // Aktualizuj operację
         const { data: updated, error: updateError } = await supabase
             .from('ProductionOperation')
@@ -9516,19 +11470,22 @@ app.post('/api/production/operations/:id/complete', requireRole(['ADMIN', 'PRODU
             .eq('id', id)
             .select()
             .single();
+        console.log(`[COMPLETE] Operacja zaktualizowana w ${Date.now() - startTime}ms`);
 
         if (updateError) {
-            console.error('[POST /api/production/operations/:id/complete] Błąd:', updateError);
+            console.error('[COMPLETE] Błąd aktualizacji:', updateError);
             return res.status(500).json({ status: 'error', message: 'Błąd zakończenia operacji' });
         }
 
         // Sprawdź czy wszystkie operacje zlecenia są zakończone
+        console.log(`[COMPLETE] Sprawdzam wszystkie operacje zlecenia...`);
         const { data: allOps } = await supabase
             .from('ProductionOperation')
             .select('id, status')
             .eq('productionorderid', operation.productionorderid);
 
         const allCompleted = allOps && allOps.every(op => op.status === 'completed');
+        console.log(`[COMPLETE] Wszystkie zakończone: ${allCompleted} (${Date.now() - startTime}ms)`);
 
         if (allCompleted) {
             // Zaktualizuj status zlecenia na completed
@@ -9542,7 +11499,7 @@ app.post('/api/production/operations/:id/complete', requireRole(['ADMIN', 'PRODU
                 })
                 .eq('id', operation.productionorderid);
 
-            console.log(`[POST /api/production/operations/:id/complete] Zlecenie ${operation.productionorderid} zakończone`);
+            console.log(`[COMPLETE] Zlecenie ${operation.productionorderid} zakończone`);
         }
 
         // Pobierz zlecenie dla aktualizacji zamówienia
@@ -9553,19 +11510,33 @@ app.post('/api/production/operations/:id/complete', requireRole(['ADMIN', 'PRODU
             .single();
 
         if (prodOrder?.sourceorderid) {
+            console.log(`[COMPLETE] Aktualizuję status zamówienia ${prodOrder.sourceorderid}...`);
             await updateOrderStatusFromProduction(prodOrder.sourceorderid);
+
+            const productionStatus = await computeProductionStatusForOrder(prodOrder.sourceorderid);
+            broadcastSseEvent({
+                type: 'productionStatusChanged',
+                orderId: prodOrder.sourceorderid,
+                productionStatus,
+                at: Date.now()
+            });
         }
 
-        // Zapisz log
-        await supabase.from('ProductionLog').insert({
+        // Zapisz log (nie czekaj na wynik - fire and forget)
+        supabase.from('ProductionLog').insert({
             productionOrderId: operation.productionorderid,
             action: 'operation_completed',
             previousStatus: operation.status,
             newStatus: 'completed',
             userId: userId,
             notes: `Operacja #${operation.operationnumber} zakończona. Wykonano: ${outputQuantity || 0}, braki: ${wasteQuantity || 0}`
+        }).then(() => {
+            console.log(`[COMPLETE] Log zapisany`);
+        }).catch(err => {
+            console.error(`[COMPLETE] Błąd zapisu logu:`, err);
         });
 
+        console.log(`[COMPLETE] Zakończono w ${Date.now() - startTime}ms`);
         return res.json({ 
             status: 'success', 
             data: updated, 
@@ -9573,7 +11544,7 @@ app.post('/api/production/operations/:id/complete', requireRole(['ADMIN', 'PRODU
             orderCompleted: allCompleted
         });
     } catch (error) {
-        console.error('[POST /api/production/operations/:id/complete] Wyjątek:', error);
+        console.error('[COMPLETE] Wyjątek:', error);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
@@ -9626,6 +11597,26 @@ app.post('/api/production/operations/:id/problem', requireRole(['ADMIN', 'PRODUC
             userId: userId,
             notes: `PROBLEM [${problemType}]: ${description || 'Brak opisu'}`
         });
+
+        // Emit do SSE (dla powiązanego zamówienia)
+        if (operation?.productionorderid) {
+            const { data: prodOrder } = await supabase
+                .from('ProductionOrder')
+                .select('sourceorderid')
+                .eq('id', operation.productionorderid)
+                .single();
+
+            if (prodOrder?.sourceorderid) {
+                await updateOrderStatusFromProduction(prodOrder.sourceorderid);
+                const productionStatus = await computeProductionStatusForOrder(prodOrder.sourceorderid);
+                broadcastSseEvent({
+                    type: 'productionStatusChanged',
+                    orderId: prodOrder.sourceorderid,
+                    productionStatus,
+                    at: Date.now()
+                });
+            }
+        }
 
         return res.json({ 
             status: 'success', 
@@ -9696,6 +11687,26 @@ app.post('/api/production/operations/:id/cancel', requireRole(['ADMIN', 'PRODUCT
         // Zaktualizuj status work order
         await updateWorkOrderStatusFromOperations(operation.productionorderid);
 
+        // Emit do SSE (dla powiązanego zamówienia)
+        if (operation?.productionorderid) {
+            const { data: prodOrder } = await supabase
+                .from('ProductionOrder')
+                .select('sourceorderid')
+                .eq('id', operation.productionorderid)
+                .single();
+
+            if (prodOrder?.sourceorderid) {
+                await updateOrderStatusFromProduction(prodOrder.sourceorderid);
+                const productionStatus = await computeProductionStatusForOrder(prodOrder.sourceorderid);
+                broadcastSseEvent({
+                    type: 'productionStatusChanged',
+                    orderId: prodOrder.sourceorderid,
+                    productionStatus,
+                    at: Date.now()
+                });
+            }
+        }
+
         return res.json({ status: 'success', data: updated, message: 'Operacja anulowana' });
     } catch (error) {
         console.error('[POST /api/production/operations/:id/cancel] Wyjątek:', error);
@@ -9752,7 +11763,7 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
         const { data: orders } = await supabase
             .from('ProductionOrder')
             .select('id, status, actualenddate')
-            .in('status', ['planned', 'approved', 'in_progress', 'completed']);
+            .in('status', ['planned', 'approved', 'in_progress', 'paused', 'completed']);
 
         // Jeśli operator ma przypisany pokój, filtruj zlecenia po typie operacji
         // Dla ADMIN/PRODUCTION_MANAGER bez pokoju - pokaż wszystkie
@@ -9779,7 +11790,10 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
                 // Filtruj zlecenia, które mają operacje z dozwolonymi typami
                 filteredOrders = filteredOrders.filter(order => {
                     const opTypes = orderOpsMap[order.id] || [];
-                    return opTypes.some(t => allowedWorkCenterTypes.includes(t));
+                    return opTypes.some(opType => {
+                        if (!opType) return false;
+                        return allowedWorkCenterTypes.some(t => opType === `path_${t}` || opType.includes(t));
+                    });
                 });
             }
         }
@@ -9793,7 +11807,7 @@ app.get('/api/production/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'O
         };
 
         filteredOrders.forEach(order => {
-            if (order.status === 'in_progress') {
+            if (order.status === 'in_progress' || order.status === 'paused') {
                 stats.active++;
             } else if (order.status === 'planned' || order.status === 'approved') {
                 stats.queue++;
@@ -11121,6 +13135,7 @@ async function isRoomManagerOrAdmin(userId, userRole, roomId) {
 
 /**
  * Sprawdza czy użytkownik jest przypisany do danego pokoju (jako operator)
+ * Obsługuje multiroom przez UserProductionRoom oraz legacy productionroomid
  * @param {string} userId - ID użytkownika
  * @param {number} roomId - ID pokoju produkcyjnego
  * @returns {Promise<boolean>}
@@ -11128,6 +13143,17 @@ async function isRoomManagerOrAdmin(userId, userRole, roomId) {
 async function isUserAssignedToRoom(userId, roomId) {
     if (!supabase || !userId || !roomId) return false;
     
+    // Sprawdź w tabeli UserProductionRoom (multiroom)
+    const { data: assignment } = await supabase
+        .from('UserProductionRoom')
+        .select('id')
+        .eq('userId', userId)
+        .eq('roomId', roomId)
+        .single();
+    
+    if (assignment) return true;
+    
+    // Fallback: sprawdź legacy productionroomid
     const { data: user } = await supabase
         .from('User')
         .select('productionroomid')
@@ -11630,15 +13656,17 @@ process.on('unhandledRejection', (err) => {
 });
 
 // Start serwera
-const server = app.listen(PORT, () => {
-    console.log(`Serwer działa na porcie ${PORT}`);    
-    console.log(`Środowisko: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Adres testowy: http://localhost:${PORT}/api/health`);
-});
+if (require.main === module) {
+    const server = app.listen(PORT, () => {
+        console.log(`Serwer działa na porcie ${PORT}`);    
+        console.log(`Środowisko: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`Adres testowy: http://localhost:${PORT}/api/health`);
+    });
 
-server.on('error', (err) => {
-    console.error('Błąd serwera:', err);
-});
+    server.on('error', (err) => {
+        console.error('Błąd serwera:', err);
+    });
 
-// Utrzymaj proces przy życiu
-process.stdin.resume();
+    // Utrzymaj proces przy życiu
+    process.stdin.resume();
+}

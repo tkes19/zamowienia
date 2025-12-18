@@ -10,49 +10,94 @@
   <main class="layout">
     <header>
       <h1>Zaloguj się do systemu</h1>
-      <p class="tagline">Wprowadź dane, aby przejść do panelu administracyjnego lub formularza zamówień.</p>
-      <p style="margin-top: 0.75rem;">
+      <p class="tagline" id="login-tagline">Wprowadź dane, aby przejść do panelu administracyjnego lub formularza zamówień.</p>
+      <p id="back-to-form-wrapper" style="margin-top: 0.75rem;">
         <a href="/" class="btn btn--link">&larr; Wróć do formularza</a>
       </p>
     </header>
 
-    <section class="panel">
-      <h2>Logowanie</h2>
-      <p class="panel__hint">Użyj swojego firmowego adresu e-mail i hasła.</p>
+    <div class="login-split" id="login-split">
+      <section class="panel login-panel login-panel--kiosk" id="kiosk-panel">
+        <h2>Produkcja (kiosk)</h2>
+        <p class="panel__hint">Wybierz pokój oraz operatora i podaj PIN (6 cyfr).</p>
 
-      <form id="login-form" autocomplete="on">
-        <div class="field">
-          <label class="field__label" for="login-email">Email</label>
-          <input
-            id="login-email"
-            class="field__input"
-            type="email"
-            name="email"
-            required
-            autocomplete="username"
-            placeholder="twoj@email.com"
-          />
+        <div id="kiosk-room-indicator" class="kiosk-room-indicator" hidden>
+          <span class="kiosk-room-indicator__label">Ostatnio wybrany pokój:</span>
+          <strong id="kiosk-room-indicator-value" class="kiosk-room-indicator__value"></strong>
         </div>
 
-        <div class="field">
-          <label class="field__label" for="login-password">Hasło</label>
-          <input
-            id="login-password"
-            class="field__input"
-            type="password"
-            name="password"
-            required
-            autocomplete="current-password"
-          />
-        </div>
+        <form id="kiosk-login-form" autocomplete="off">
+          <div class="field" id="kiosk-room-field">
+            <label class="field__label" for="kiosk-room">Pokój</label>
+            <select id="kiosk-room" class="field__input"></select>
+          </div>
 
-        <div class="field" style="margin-top: 1rem; text-align: left;">
-          <button type="submit" class="btn btn--primary">Zaloguj się</button>
-        </div>
+          <div class="field" id="kiosk-operator-field" hidden>
+            <label class="field__label" for="kiosk-operator">Operator</label>
+            <select id="kiosk-operator" class="field__input"></select>
+          </div>
 
-        <p id="login-error" class="status status--error status--compact" hidden></p>
-      </form>
-    </section>
+          <div class="field" id="kiosk-pin-field" hidden>
+            <label class="field__label" for="kiosk-pin">PIN</label>
+            <input
+              id="kiosk-pin"
+              class="field__input"
+              type="password"
+              inputmode="numeric"
+              pattern="\d{6}"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="np. 123456"
+            />
+          </div>
+
+          <div class="field" style="margin-top: 1rem; text-align: left;">
+            <button type="submit" class="btn btn--primary" id="kiosk-submit">Zaloguj (Produkcja)</button>
+            <button type="button" class="btn btn--secondary" id="kiosk-change-room" hidden style="margin-left: 0.5rem;">Zmień pokój</button>
+          </div>
+
+          <p id="kiosk-error" class="status status--error status--compact" hidden></p>
+        </form>
+      </section>
+
+      <section class="panel login-panel login-panel--company" id="company-panel">
+        <h2>Logowanie firmowe</h2>
+        <p class="panel__hint">Dla administracji, sprzedaży, magazynu i pozostałych ról.</p>
+
+        <form id="company-login-form" autocomplete="on">
+          <div class="field" id="login-field-email">
+            <label class="field__label" for="login-email">Email</label>
+            <input
+              id="login-email"
+              class="field__input"
+              type="email"
+              name="email"
+              required
+              autocomplete="username"
+              placeholder="twoj@email.com"
+            />
+          </div>
+
+          <div class="field" id="login-field-password">
+            <label class="field__label" for="login-password">Hasło</label>
+            <input
+              id="login-password"
+              class="field__input"
+              type="password"
+              name="password"
+              required
+              autocomplete="current-password"
+            />
+          </div>
+
+          <div class="field" style="margin-top: 1rem; text-align: left;">
+            <button type="submit" class="btn btn--primary" id="company-submit">Zaloguj (Firma)</button>
+          </div>
+
+          <p id="company-error" class="status status--error status--compact" hidden></p>
+        </form>
+      </section>
+    </div>
   </main>
 
   <script type="module" src="scripts/login.js"></script>

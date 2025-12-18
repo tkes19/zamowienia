@@ -20,12 +20,38 @@ let productionSse = null;
 let productionSseReconnectTimer = null;
 let productionSseRefreshTimer = null;
 
+let inactivityLogoutTimer = null;
+const INACTIVITY_LOGOUT_MS = 20 * 60 * 1000;
+
 function scheduleProductionSseReconnect() {
     if (productionSseReconnectTimer) return;
     productionSseReconnectTimer = setTimeout(() => {
         productionSseReconnectTimer = null;
         startProductionSse();
     }, 3000);
+}
+
+function scheduleInactivityLogout() {
+    if (inactivityLogoutTimer) {
+        clearTimeout(inactivityLogoutTimer);
+    }
+
+    inactivityLogoutTimer = setTimeout(async () => {
+        try {
+            await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+        } catch (e) {
+            // ignore
+        }
+        window.location.href = '/kiosk';
+    }, INACTIVITY_LOGOUT_MS);
+}
+
+function setupInactivityLogout() {
+    const handler = () => scheduleInactivityLogout();
+    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(evt => {
+        document.addEventListener(evt, handler, { passive: true });
+    });
+    scheduleInactivityLogout();
 }
 
 function scheduleProductionSseRefresh() {
@@ -347,6 +373,8 @@ document.addEventListener('DOMContentLoaded', () => {
     startProductionSse();
     loadOrders(true);
     loadStats();
+
+    setupInactivityLogout();
     
     // Szybki polling przez pierwsze 2 minuty (co 5s), potem normalny (co 30s)
     startFastPolling();
@@ -706,6 +734,11 @@ function orderMatchesSelectedMachine(order) {
 // ============================================
 // AUTORYZACJA
 // ============================================
+
+// Multiroom - dostępne pokoje użytkownika
+let availableRooms = [];
+let activeRoomId = null;
+
 function checkAuth() {
     // Ciasteczka są HttpOnly, więc nie możemy ich sprawdzić w JS przez document.cookie.
     // Musimy zaufać, że przeglądarka je wyśle i sprawdzić odpowiedź z API.
@@ -767,22 +800,50 @@ function checkAuth() {
                 prodNavAssignments.style.display = 'flex';
             }
 
-            // Wyświetl nazwę pokoju produkcyjnego
-            const roomName = data.productionRoomName;
+            // Multiroom: zapisz dostępne pokoje
+            availableRooms = data.productionRooms || [];
+            const hasMultipleRooms = data.hasMultipleRooms || availableRooms.length > 1;
+
+            // Sprawdź czy jest zapisany aktywny pokój w localStorage
+            const savedRoomId = localStorage.getItem('activeProductionRoomId');
+            const savedRoomValid = savedRoomId && availableRooms.some(r => r.id === parseInt(savedRoomId, 10));
+
+            // Ustal aktywny pokój
+            if (savedRoomValid) {
+                activeRoomId = parseInt(savedRoomId, 10);
+            } else if (data.productionroomid) {
+                activeRoomId = parseInt(data.productionroomid, 10);
+            } else if (availableRooms.length > 0) {
+                const primaryRoom = availableRooms.find(r => r.isPrimary) || availableRooms[0];
+                activeRoomId = primaryRoom.id;
+            }
+
+            // Zapisz aktywny pokój
+            if (activeRoomId) {
+                localStorage.setItem('activeProductionRoomId', activeRoomId);
+            }
+
+            // Wyświetl badge pokoju lub selector multiroom
             const roomBadge = document.getElementById('roomBadge');
             const roomNameEl = document.getElementById('roomName');
-            if (roomName && roomBadge && roomNameEl) {
-                roomNameEl.textContent = roomName;
-                roomBadge.style.display = 'flex';
+
+            if (hasMultipleRooms && roomBadge) {
+                // Multiroom: pokaż dropdown zamiast statycznego badge
+                renderRoomSelector(roomBadge, availableRooms, activeRoomId);
+            } else if (roomBadge && roomNameEl) {
+                // Pojedynczy pokój: statyczny badge
+                const activeRoom = availableRooms.find(r => r.id === activeRoomId);
+                const roomName = activeRoom?.name || data.productionRoomName;
+                if (roomName) {
+                    roomNameEl.textContent = roomName;
+                    roomBadge.style.display = 'flex';
+                }
             }
 
             // Zapamiętaj pokój produkcyjny operatora i wczytaj maszyny w pokoju
-            if (data.productionroomid !== undefined && data.productionroomid !== null) {
-                const parsedRoomId = parseInt(data.productionroomid, 10);
-                if (!Number.isNaN(parsedRoomId)) {
-                    currentRoomId = parsedRoomId;
-                    loadRoomMachines();
-                }
+            if (activeRoomId) {
+                currentRoomId = activeRoomId;
+                loadRoomMachines();
             }
         })
         .catch((err) => {
@@ -794,6 +855,86 @@ function checkAuth() {
                 userNameEl.textContent = 'Offline?';
             }
         });
+}
+
+/**
+ * Renderuje selector pokoju produkcyjnego (multiroom)
+ */
+function renderRoomSelector(container, rooms, selectedRoomId) {
+    const selectedRoom = rooms.find(r => r.id === selectedRoomId) || rooms[0];
+    
+    container.innerHTML = `
+        <div class="room-selector" style="position: relative;">
+            <button id="roomSelectorBtn" class="room-selector-btn" title="Zmień pokój produkcyjny">
+                <i class="fas fa-door-open"></i>
+                <span id="roomName">${escapeHtml(selectedRoom?.name || 'Wybierz pokój')}</span>
+                <i class="fas fa-chevron-down" style="font-size: 10px; margin-left: 4px;"></i>
+            </button>
+            <div id="roomSelectorDropdown" class="room-selector-dropdown hidden">
+                ${rooms.map(room => `
+                    <div class="room-selector-item ${room.id === selectedRoomId ? 'active' : ''}" 
+                         data-room-id="${room.id}">
+                        <span>${escapeHtml(room.name)}</span>
+                        ${room.isPrimary ? '<i class="fas fa-star" style="color: #f59e0b; font-size: 10px;"></i>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+    container.style.display = 'flex';
+
+    // Event listeners
+    const btn = document.getElementById('roomSelectorBtn');
+    const dropdown = document.getElementById('roomSelectorDropdown');
+
+    btn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown?.classList.toggle('hidden');
+    });
+
+    dropdown?.querySelectorAll('.room-selector-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            const roomId = parseInt(item.dataset.roomId, 10);
+            if (roomId && roomId !== activeRoomId) {
+                switchProductionRoom(roomId);
+            }
+            dropdown.classList.add('hidden');
+        });
+    });
+
+    // Zamknij dropdown po kliknięciu poza
+    document.addEventListener('click', () => {
+        dropdown?.classList.add('hidden');
+    });
+}
+
+/**
+ * Przełącza aktywny pokój produkcyjny
+ */
+function switchProductionRoom(newRoomId) {
+    activeRoomId = newRoomId;
+    currentRoomId = newRoomId;
+    localStorage.setItem('activeProductionRoomId', newRoomId);
+
+    // Aktualizuj UI
+    const selectedRoom = availableRooms.find(r => r.id === newRoomId);
+    const roomNameEl = document.getElementById('roomName');
+    if (roomNameEl && selectedRoom) {
+        roomNameEl.textContent = selectedRoom.name;
+    }
+
+    // Aktualizuj aktywną klasę w dropdown
+    document.querySelectorAll('.room-selector-item').forEach(item => {
+        item.classList.toggle('active', parseInt(item.dataset.roomId, 10) === newRoomId);
+    });
+
+    // Przeładuj maszyny dla nowego pokoju
+    loadRoomMachines();
+
+    // Opcjonalnie: przeładuj zlecenia (jeśli są filtrowane po pokoju)
+    loadOrders(true);
+
+    console.log(`[PRODUCTION] Przełączono na pokój: ${selectedRoom?.name} (ID: ${newRoomId})`);
 }
 
 // ============================================

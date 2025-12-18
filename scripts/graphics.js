@@ -1113,9 +1113,51 @@ window.printGraphicsTask = printGraphicsTask;
 // Product Image Modal Functions
 // ==========================================
 
+function normalizeProjectViewUrlForImage(value) {
+    if (value === null || value === undefined) return value;
+    if (typeof value !== 'string') return value;
+
+    const raw = value.trim();
+    if (!raw) return raw;
+
+    if (raw === '/') {
+        return null;
+    }
+
+    try {
+        const parsed = new URL(raw);
+        const pathname = parsed.pathname || '';
+        const search = parsed.search || '';
+
+        if ((pathname === '' || pathname === '/') && !search) {
+            return null;
+        }
+
+        if (pathname.startsWith('/api/gallery/')) {
+            return `${pathname}${search}`;
+        }
+
+        return raw;
+    } catch (e) {
+        // Nie jest absolutnym URL-em (np. już jest względny)
+    }
+
+    if (raw.startsWith('/api/gallery/')) {
+        return raw;
+    }
+
+    if (raw.startsWith('api/gallery/')) {
+        return `/${raw}`;
+    }
+
+    return raw;
+}
+
 // Pokaż obrazek produktu w modalu
 function showProductImage(imageUrl, productName = '', productIdentifier = '', locationName = '') {
+    const normalizedUrl = normalizeProjectViewUrlForImage(imageUrl);
     console.log('[showProductImage] URL received:', imageUrl);
+    console.log('[showProductImage] URL normalized:', normalizedUrl);
     
     // Debug: Check if modal elements exist
     console.log('[showProductImage] Modal elements available:', {
@@ -1125,8 +1167,9 @@ function showProductImage(imageUrl, productName = '', productIdentifier = '', lo
         content: !!productImageContent
     });
     
-    if (!imageUrl) {
+    if (!normalizedUrl) {
         console.log('[showProductImage] No URL provided');
+        showNotification('Brak podglądu produktu', 'info');
         return;
     }
     
@@ -1145,26 +1188,26 @@ function showProductImage(imageUrl, productName = '', productIdentifier = '', lo
     productImageTitle.textContent = title;
     productImageDetails.textContent = details.join(' | ') || '';
     
-    console.log('[showProductImage] Setting image src to:', imageUrl);
+    console.log('[showProductImage] Setting image src to:', normalizedUrl);
     
     // Clear previous handlers and set new ones with addEventListener
     const newImage = new Image();
     
     newImage.addEventListener('load', function() {
         console.log('[showProductImage] Image loaded successfully');
-        productImageContent.src = imageUrl;
+        productImageContent.src = normalizedUrl;
         console.log('[showProductImage] Setting modal display to flex');
         productImageModal.style.display = 'flex';
         console.log('[showProductImage] Modal display set to:', productImageModal.style.display);
     }, { once: true });
     
     newImage.addEventListener('error', function() {
-        console.error('[showProductImage] Failed to load image:', imageUrl);
+        console.error('[showProductImage] Failed to load image:', normalizedUrl);
         showNotification('Błąd ładowania obrazka produktu', 'error');
     }, { once: true });
     
     // Start loading the image
-    newImage.src = imageUrl;
+    newImage.src = normalizedUrl;
     
     // Reset zoom state
     productImageContent.style.transform = 'scale(1)';

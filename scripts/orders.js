@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const ordersDateFrom = document.getElementById('orders-date-from');
     const ordersDateTo = document.getElementById('orders-date-to');
     const ordersBelowStockOnly = document.getElementById('orders-below-stock-only');
+    const ordersShowProduction = document.getElementById('orders-show-production');
     const refreshOrdersBtn = document.getElementById('refresh-orders-btn');
     const logoutBtn = document.getElementById('logout-btn');
     const adminLink = document.getElementById('admin-link');
@@ -37,6 +38,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let allSalesReps = [];
     const loadingOrders = new Set(); // Blokada podczas ładowania
     const ordersInEditMode = new Set(); // Zamówienia w trybie edycji
+    let showProductionColumn = localStorage.getItem('orders-show-production') === 'true';
+    let ordersSse = null;
+    let ordersSseReconnectTimer = null;
 
     // Pokazywanie linków nawigacji na podstawie roli
     function setupOrdersNavigation(role) {
@@ -80,6 +84,149 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function getProductionBadgeClass(productionStatus) {
+        const status = productionStatus?.status;
+        return {
+            'NOT_STARTED': 'bg-gray-100 text-gray-600',
+            'PENDING': 'bg-blue-100 text-blue-700',
+            'IN_PROGRESS': 'bg-yellow-100 text-yellow-700',
+            'COMPLETED': 'bg-green-100 text-green-700'
+        }[status] || 'bg-gray-100 text-gray-600';
+    }
+
+    async function refreshOrderProductionStatus(orderId) {
+        if (!orderId) return;
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/production-status`, {
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                return;
+            }
+
+            const result = await response.json();
+            if (result.status !== 'success') {
+                return;
+            }
+
+            const productionStatus = result.data || { status: 'NOT_STARTED', label: 'Nie uruchomione' };
+            const orderStatus = result.orderStatus || null;
+
+            const orderIndex = allOrders.findIndex(o => o.id === orderId);
+            if (orderIndex !== -1) {
+                allOrders[orderIndex].productionStatus = productionStatus;
+                if (orderStatus) {
+                    allOrders[orderIndex].status = orderStatus;
+                }
+            }
+
+            // Aktualizuj tylko komórkę w tabeli
+            const rowEl = document.querySelector(`tr.order-row[data-order-id="${orderId}"]`);
+            if (!rowEl) return;
+            const cell = rowEl.querySelector('td.production-column');
+            if (!cell) return;
+
+            const badgeClass = getProductionBadgeClass(productionStatus);
+            const label = escapeHtml(productionStatus.label || '');
+            cell.innerHTML = `
+                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${badgeClass}" title="${label}">
+                    ${label}
+                </span>
+            `;
+
+            // Aktualizacja kolumny STATUS (pigułki/select/span)
+            if (orderStatus) {
+                const statusTd = rowEl.querySelector('td[data-order-status-cell="1"]') || rowEl.querySelector('td.order-status-cell');
+                const statusCell = statusTd || (showProductionColumn ? rowEl.querySelectorAll('td')[showProductionColumn ? (['ADMIN', 'SALES_DEPT'].includes(currentUserRole) ? 4 : 3) : (['ADMIN', 'SALES_DEPT'].includes(currentUserRole) ? 4 : 3)] : null);
+                const container = statusCell || rowEl.querySelectorAll('td')[showProductionColumn ? (['ADMIN', 'SALES_DEPT'].includes(currentUserRole) ? 4 : 3) : (['ADMIN', 'SALES_DEPT'].includes(currentUserRole) ? 4 : 3)];
+                if (container) {
+                    const staticSpan = container.querySelector('.status-pill-static');
+                    if (staticSpan) {
+                        staticSpan.dataset.status = orderStatus;
+                        staticSpan.textContent = STATUS_LABELS[orderStatus] || orderStatus;
+                    }
+
+                    const select = container.querySelector('select.order-status-select');
+                    if (select) {
+                        select.dataset.status = orderStatus;
+                        select.dataset.originalStatus = orderStatus;
+                        select.value = orderStatus;
+                    }
+
+                    const pills = container.querySelector('.order-status-switch');
+                    if (pills) {
+                        pills.querySelectorAll('button[data-status]').forEach(btn => {
+                            btn.classList.toggle('project-filter__option--active', btn.dataset.status === orderStatus);
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            // bez toastów - ciche odświeżenie
+        }
+    }
+
+    function scheduleOrdersSseReconnect() {
+        if (ordersSseReconnectTimer) return;
+        ordersSseReconnectTimer = setTimeout(() => {
+            ordersSseReconnectTimer = null;
+            startOrdersSse();
+        }, 3000);
+    }
+
+    function startOrdersSse() {
+        if (ordersSse) {
+            try { ordersSse.close(); } catch (e) {}
+            ordersSse = null;
+        }
+
+        try {
+            ordersSse = new EventSource('/api/events');
+
+            ordersSse.addEventListener('ready', () => {
+                // połączenie OK
+            });
+
+            ordersSse.addEventListener('message', (ev) => {
+                try {
+                    const payload = JSON.parse(ev.data || '{}');
+                    if (payload?.type === 'productionStatusChanged' && payload.orderId) {
+                        refreshOrderProductionStatus(payload.orderId);
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            });
+
+            ordersSse.addEventListener('error', () => {
+                scheduleOrdersSseReconnect();
+            });
+        } catch (e) {
+            scheduleOrdersSseReconnect();
+        }
+    }
+
+    function toggleProductionColumn(event) {
+        if (event && event.target) {
+            showProductionColumn = event.target.checked;
+        }
+        localStorage.setItem('orders-show-production', showProductionColumn);
+        
+        // Przerenderuj tabelę, aby komórki miały odpowiednią zawartość
+        renderOrdersTable();
+
+        // Toggle kolumny w nagłówku i wierszach
+        document.querySelectorAll('.production-column').forEach(el => {
+            if (showProductionColumn) {
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        });
     }
 
     function sanitizeProjectsValue(value) {
@@ -604,7 +751,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const isAuthorized = await checkAuth();
         if (!isAuthorized) return;
 
+        // Ustaw początkowy stan kolumny produkcji
+        if (showProductionColumn) {
+            document.querySelectorAll('.production-column').forEach(el => {
+                el.classList.remove('hidden');
+            });
+        }
+
         fetchOrders();
+
+        // Realtime status produkcji (SSE)
+        startOrdersSse();
     }
 
     // Event listenery z debounce dla filtrów
@@ -617,6 +774,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (ordersBelowStockOnly) {
         ordersBelowStockOnly.addEventListener('change', debouncedFetchOrders);
+    }
+
+    if (ordersShowProduction) {
+        ordersShowProduction.checked = showProductionColumn;
+        ordersShowProduction.addEventListener('change', toggleProductionColumn);
     }
 
     if (ordersUserFilter) {
@@ -876,6 +1038,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const showUserColumn = ['ADMIN', 'SALES_DEPT'].includes(currentUserRole);
         const canCurrentRoleChangeStatus = ['ADMIN', 'SALES_DEPT', 'WAREHOUSE', 'PRODUCTION', 'SALES_REP'].includes(currentUserRole);
+        const showProduction = showProductionColumn;
 
         ordersTableBody.innerHTML = allOrders.map(order => {
             const date = new Date(order.createdAt).toLocaleDateString('pl-PL', {
@@ -946,6 +1109,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? `<td class="p-4">${userDisplaySafe}</td>`
                 : '';
 
+            const productionStatus = order.productionStatus || { status: 'NOT_STARTED', label: 'Nie uruchomione' };
+            const productionBadgeClass = {
+                'NOT_STARTED': 'bg-gray-100 text-gray-600',
+                'PENDING': 'bg-blue-100 text-blue-700',
+                'IN_PROGRESS': 'bg-yellow-100 text-yellow-700',
+                'COMPLETED': 'bg-green-100 text-green-700'
+            }[productionStatus.status] || 'bg-gray-100 text-gray-600';
+
+            const productionCell = showProduction
+                ? `<td class="p-4 production-column">
+                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${productionBadgeClass}" title="${escapeHtml(productionStatus.label)}">
+                        ${escapeHtml(productionStatus.label)}
+                    </span>
+                </td>`
+                : '';
+
             return `
                 <tr class="hover:bg-gray-50 transition-colors cursor-pointer order-row" data-order-id="${order.id}">
                     <td class="p-4">
@@ -962,6 +1141,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-4">
                         ${statusContent}
                     </td>
+                    ${productionCell}
                     <td class="p-4 text-right font-semibold text-gray-900">${(order.total || 0).toFixed(2)} zł</td>
                     <td class="p-4 text-right">
                         <i class="fas fa-eye text-gray-400"></i>
@@ -2305,12 +2485,55 @@ document.addEventListener('DOMContentLoaded', () => {
         orderDetailsModal.classList.add('hidden');
     }
 
+    function normalizeProjectViewUrlForImage(value) {
+        if (value === null || value === undefined) return value;
+        if (typeof value !== 'string') return value;
+
+        const raw = value.trim();
+        if (!raw) return raw;
+
+        if (raw === '/') {
+            return null;
+        }
+
+        try {
+            const parsed = new URL(raw);
+            const pathname = parsed.pathname || '';
+            const search = parsed.search || '';
+
+            if ((pathname === '' || pathname === '/') && !search) {
+                return null;
+            }
+
+            if (pathname.startsWith('/api/gallery/')) {
+                return `${pathname}${search}`;
+            }
+
+            return raw;
+        } catch (e) {
+            // Nie jest absolutnym URL-em (np. już jest względny)
+        }
+
+        if (raw.startsWith('/api/gallery/')) {
+            return raw;
+        }
+
+        if (raw.startsWith('api/gallery/')) {
+            return `/${raw}`;
+        }
+
+        return raw;
+    }
+
     // Pokaż obrazek produktu w modalu
     function showProductImage(imageUrl, productName = '', productIdentifier = '', locationName = '') {
+        const normalizedUrl = normalizeProjectViewUrlForImage(imageUrl);
         console.log('[showProductImage] URL received:', imageUrl);
+        console.log('[showProductImage] URL normalized:', normalizedUrl);
         
-        if (!imageUrl) {
+        if (!normalizedUrl) {
             console.log('[showProductImage] No URL provided');
+            showToast('Brak podglądu produktu', 'info');
             return;
         }
         
@@ -2323,24 +2546,24 @@ document.addEventListener('DOMContentLoaded', () => {
         productImageTitle.textContent = title;
         productImageDetails.textContent = details.join(' | ') || '';
         
-        console.log('[showProductImage] Setting image src to:', imageUrl);
+        console.log('[showProductImage] Setting image src to:', normalizedUrl);
         
         // Clear previous handlers and set new ones with addEventListener
         const newImage = new Image();
         
         newImage.addEventListener('load', function() {
             console.log('[showProductImage] Image loaded successfully');
-            productImageContent.src = imageUrl;
+            productImageContent.src = normalizedUrl;
             productImageModal.classList.remove('hidden');
         }, { once: true });
         
         newImage.addEventListener('error', function() {
-            console.error('[showProductImage] Failed to load image:', imageUrl);
+            console.error('[showProductImage] Failed to load image:', normalizedUrl);
             showToast('Błąd ładowania obrazka produktu', 'error');
         }, { once: true });
         
         // Start loading the image
-        newImage.src = imageUrl;
+        newImage.src = normalizedUrl;
         
         // Reset zoom state
         productImageContent.style.transform = 'scale(1)';

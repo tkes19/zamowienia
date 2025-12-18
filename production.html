@@ -53,6 +53,57 @@
             overflow-x: hidden;
         }
         
+        /* Minimalne utility klasy dla modala podglądu (w Zamówieniach daje to Tailwind) */
+        .hidden { display: none !important; }
+        .fixed { position: fixed; }
+        .relative { position: relative; }
+        .inset-0 { top: 0; right: 0; bottom: 0; left: 0; }
+        .z-50 { z-index: 50; }
+        .flex { display: flex; }
+        .items-center { align-items: center; }
+        .justify-center { justify-content: center; }
+        .justify-between { justify-content: space-between; }
+        .w-full { width: 100%; }
+        .max-w-6xl { max-width: 72rem; }
+        .mx-4 { margin-left: 1rem; margin-right: 1rem; }
+        .gap-2 { gap: 0.5rem; }
+        .gap-4 { gap: 1rem; }
+        .p-4 { padding: 1rem; }
+        .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+        .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        .rounded-lg { border-radius: 0.5rem; }
+        .rounded-t-lg { border-top-left-radius: 0.5rem; border-top-right-radius: 0.5rem; }
+        .rounded-b-lg { border-bottom-left-radius: 0.5rem; border-bottom-right-radius: 0.5rem; }
+        .text-white { color: #fff; }
+        .text-gray-300 { color: #d1d5db; }
+        .text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+        .text-lg { font-size: 1.125rem; line-height: 1.75rem; }
+        .font-semibold { font-weight: 600; }
+        .bg-black { background-color: #000; }
+        .bg-gray-900 { background-color: #111827; }
+        .bg-gray-800 { background-color: #1f2937; }
+        .bg-gray-700 { background-color: #374151; }
+        .bg-gray-600 { background-color: #4b5563; }
+        .bg-blue-600 { background-color: #2563eb; }
+        .bg-blue-700 { background-color: #1d4ed8; }
+        .bg-red-600 { background-color: #dc2626; }
+        .bg-red-700 { background-color: #b91c1c; }
+        .bg-opacity-90 { background-color: rgba(0, 0, 0, 0.9); }
+        .overflow-auto { overflow: auto; }
+
+        .cursor-zoom-in { cursor: zoom-in; }
+        .cursor-zoom-out { cursor: zoom-out; }
+        .transition-transform { transition: transform 0.3s ease; }
+        .duration-300 { transition-duration: 300ms; }
+        .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45); }
+        .rounded { border-radius: 0.25rem; }
+
+        /* Hover stany przycisków modala */
+        .bg-blue-600:hover { background-color: #1d4ed8; }
+        .bg-gray-700:hover { background-color: #4b5563; }
+        .bg-red-600:hover { background-color: #b91c1c; }
+        .transition-colors { transition: background-color 0.2s ease; }
+
         /* ============================================
            NAGŁÓWEK - KOMPAKTOWY
            ============================================ */
@@ -101,6 +152,69 @@
         
         .prod-room-badge i {
             font-size: 12px;
+        }
+
+        /* Multiroom - selector pokoju produkcyjnego */
+        .room-selector {
+            position: relative;
+        }
+
+        .room-selector-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--prod-accent);
+            border: 1px solid var(--prod-text-muted);
+            color: var(--prod-text);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .room-selector-btn:hover {
+            background: var(--prod-card-active);
+            border-color: var(--status-approved);
+        }
+
+        .room-selector-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 4px;
+            background: var(--prod-card);
+            border: 1px solid var(--prod-text-muted);
+            border-radius: 6px;
+            min-width: 180px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 200;
+            overflow: hidden;
+        }
+
+        .room-selector-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--prod-text);
+            transition: background 0.15s;
+        }
+
+        .room-selector-item:hover {
+            background: var(--prod-accent);
+        }
+
+        .room-selector-item.active {
+            background: var(--status-approved);
+            color: #fff;
+        }
+
+        .room-selector-item.active:hover {
+            background: #2563eb;
         }
         
         .prod-header-right {
@@ -372,6 +486,51 @@
         }
         
         /* ============================================
+           PRZEŁĄCZNIK WIDOKU ZP
+           ============================================ */
+        .wo-view-switcher {
+            display: flex;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 3px;
+            gap: 2px;
+        }
+        
+        .wo-view-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--prod-text-muted);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+        
+        .wo-view-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: var(--prod-text);
+        }
+        
+        .wo-view-btn.active {
+            background: var(--status-approved);
+            color: #fff;
+        }
+        
+        .wo-view-btn[data-view="completed"].active {
+            background: var(--status-completed);
+        }
+        
+        .wo-view-btn[data-view="all"].active {
+            background: var(--status-in-progress);
+        }
+        
+        /* ============================================
            KAFELEK ZLECENIA - KOMPAKTOWY ALE CZYTELNY
            ============================================ */
         .prod-order-card {
@@ -489,6 +648,40 @@
         .prod-priority-badge.p2 { background: var(--priority-high); }
         .prod-priority-badge.p3 { background: var(--priority-normal); }
         .prod-priority-badge.p4 { background: var(--priority-low); }
+        
+        /* Badge SLA/termin */
+        .sla-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 6px;
+        }
+        
+        .sla-badge.sla-overdue {
+            background: #ef4444;
+            color: #fff;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        .sla-badge.sla-today {
+            background: #f59e0b;
+            color: #000;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        .sla-badge.sla-tomorrow {
+            background: #3b82f6;
+            color: #fff;
+        }
+        
+        .sla-badge.sla-soon {
+            background: #6b7280;
+            color: #fff;
+        }
         
         /* Treść kafelka */
         .prod-order-body {
@@ -1076,6 +1269,7 @@
                 grid-template-columns: repeat(2, 1fr);
                 gap: 16px;
                 padding: 16px;
+                align-items: start; /* Zapobiega stretchowaniu wysokości kafelków */
             }
             
             .prod-section-title {
@@ -1086,6 +1280,7 @@
         @media (min-width: 1200px) {
             .prod-main {
                 grid-template-columns: repeat(3, 1fr);
+                align-items: start; /* Zapobiega stretchowaniu wysokości kafelków */
             }
         }
         
@@ -1389,6 +1584,12 @@
         
         .wo-details {
             padding: 0 16px 16px;
+            display: none;
+            overflow: hidden;
+        }
+        
+        .wo-details.open {
+            display: block;
         }
         
         .wo-order-item {
@@ -1481,6 +1682,177 @@
         .prod-btn-sm.prod-btn-view {
             background: var(--status-approved);
             color: #fff;
+        }
+        
+        /* ============================================
+           KOMPAKTOWY KAFELEK ZP - NOWY DESIGN
+           ============================================ */
+        .wo-body-compact {
+            padding: 12px 16px;
+        }
+        
+        .wo-metrics {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        
+        .wo-metric {
+            color: var(--prod-text-muted);
+        }
+        
+        .wo-metric strong {
+            color: var(--prod-text);
+            font-weight: 700;
+        }
+        
+        .wo-metric.active strong {
+            color: var(--status-in-progress);
+        }
+        
+        .wo-metric-sep {
+            color: var(--prod-text-muted);
+            opacity: 0.5;
+        }
+        
+        .wo-product-preview {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 6px;
+            margin: 8px 0;
+        }
+        
+        .wo-product-name-short {
+            color: var(--prod-text);
+            font-weight: 500;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .wo-more-badge {
+            background: var(--status-approved);
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .wo-progress-compact {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .wo-progress-compact .wo-progress-bar {
+            flex: 1;
+            height: 6px;
+        }
+        
+        .wo-progress-label {
+            font-size: 12px;
+            color: var(--prod-text-muted);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        
+        .wo-progress-fill.completed {
+            background: var(--status-completed);
+        }
+        
+        /* Przycisk Zakończ ZP */
+        .prod-btn-finish {
+            background: linear-gradient(135deg, var(--status-completed), #16a34a);
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        
+        .prod-btn-finish:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+        }
+        
+        /* Kafelek ZP w 100% ukończony */
+        .prod-workorder-card.all-completed {
+            border-color: var(--status-completed);
+            background: linear-gradient(135deg, var(--prod-card) 0%, rgba(34, 197, 94, 0.1) 100%);
+        }
+        
+        .prod-workorder-card.all-completed .wo-header {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.3) 0%, var(--prod-card) 100%);
+        }
+        
+        /* ============================================
+           POZYCJA COMPLETED W SZCZEGÓŁACH ZP
+           ============================================ */
+        .wo-order-item.item-completed {
+            opacity: 0.6;
+            background: rgba(34, 197, 94, 0.1);
+            border-left-color: var(--status-completed);
+        }
+        
+        .wo-completed-check {
+            color: var(--status-completed);
+            font-size: 16px;
+        }
+        
+        .wo-order-item-completed-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--status-completed);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 6px 12px;
+            background: rgba(34, 197, 94, 0.15);
+            border-radius: 6px;
+            margin-top: 8px;
+        }
+        
+        /* Numer matrycy */
+        .wo-order-item-matrix {
+            color: var(--status-approved);
+            font-size: 13px;
+            margin-top: 4px;
+        }
+        
+        .wo-order-item-matrix i {
+            margin-right: 4px;
+        }
+        
+        /* Źródło ilości (wg projektów / suma całkowita) */
+        .wo-qty-source {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .wo-qty-source.projekty {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--status-approved);
+        }
+        
+        .wo-qty-source.suma {
+            background: rgba(251, 191, 36, 0.2);
+            color: #fbbf24;
         }
         
         /* Rozszerzone style dla pozycji ZP */
@@ -1801,7 +2173,7 @@
         }
         
         /* Wyraźniejsze rozdzielenie sekcji */
-        .wo-details {
+        .wo-details.open {
             border-top: 1px solid rgba(255,255,255,0.1);
             margin-top: 12px;
             padding-top: 12px;
@@ -2315,9 +2687,17 @@
             <button class="prod-tool-btn" onclick="refreshOrders()" title="Odśwież">
                 <i class="fas fa-sync-alt"></i>
             </button>
-            <button class="prod-tool-btn" onclick="toggleDisplayMode()" id="displayModeBtn" title="Przełącz widok: Pozycje / Zbiorcze ZP (grupuje produkty z jednego zamówienia)">
-                <i class="fas fa-list-ul"></i> ZP
-            </button>
+            
+            <!-- Przełącznik widoku ZP: Do zrobienia / Wykonane -->
+            <div class="wo-view-switcher">
+                <button class="wo-view-btn active" data-view="open" onclick="setWorkOrdersView('open')" title="Zlecenia do wykonania">
+                    <i class="fas fa-clipboard-list"></i> Do zrobienia
+                </button>
+                <button class="wo-view-btn" data-view="completed" onclick="setWorkOrdersView('completed')" title="Zlecenia wykonane dzisiaj">
+                    <i class="fas fa-check-circle"></i> Wykonane
+                </button>
+            </div>
+            
             <button class="prod-tool-btn" onclick="toggleViewMode()" id="viewModeBtn" title="Zmień układ (siatka/lista)">
                 <i class="fas fa-th-large"></i>
             </button>
@@ -2384,6 +2764,10 @@
                         <input type="number" class="prod-number-value" id="wasteQuantity" value="0" min="0">
                         <button class="prod-number-btn" onclick="adjustQuantity('wasteQuantity', 1)">+1</button>
                     </div>
+                </div>
+                <div class="prod-form-group">
+                    <label class="prod-form-label"><i class="fas fa-hashtag"></i> Numer matrycy (opcjonalnie):</label>
+                    <input type="text" class="prod-form-input" id="matrixNumber" placeholder="Np. 12345">
                 </div>
                 <div class="prod-form-group">
                     <label class="prod-form-label">Uwagi (opcjonalnie):</label>
@@ -2467,14 +2851,17 @@
                     </div>
                 </div>
                 <div class="flex gap-2">
-                    <button id="product-image-download" class="bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg text-sm transition-colors" title="Pobierz obrazek">
+                    <button id="product-image-download" class="bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2" title="Pobierz obrazek">
                         <i class="fas fa-download"></i>
+                        <span class="modal-action-label">Pobierz</span>
                     </button>
-                    <button id="product-image-zoom" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm transition-colors" title="Powiększenie">
+                    <button id="product-image-zoom" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2" title="Powiększenie">
                         <i class="fas fa-search-plus"></i>
+                        <span class="modal-action-label">Zoom</span>
                     </button>
-                    <button id="product-image-close" class="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm transition-colors" title="Zamknij">
+                    <button id="product-image-close" class="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2" title="Zamknij">
                         <i class="fas fa-times"></i>
+                        <span class="modal-action-label">Zamknij</span>
                     </button>
                 </div>
             </div>
@@ -2497,6 +2884,6 @@
         <div><kbd>ESC</kbd> Zamknij</div>
     </div>
 
-    <script src="scripts/production.js"></script>
-</body>
-</html>
+    <script src="scripts/production.js?v=20251216-1"></script>
+ </body>
+ </html>

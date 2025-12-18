@@ -94,9 +94,30 @@ System zamówień służy do obsługi sprzedaży pamiątek i gadżetów w firmie
 
 ### 3.1. Ekran logowania
 
-1. Otwórz stronę systemu
-2. Wprowadź **email** i **hasło**
-3. System automatycznie rozpozna Twoją rolę
+Ekran logowania jest podzielony na dwie sekcje:
+
+- **Produkcja (kiosk)** – szybkie logowanie na hali przez wybór pokoju, operatora i PIN.
+- **Logowanie firmowe** – standardowe logowanie email + hasło dla pozostałych ról.
+
+#### Logowanie produkcyjne (kiosk)
+
+1. Otwórz `/kiosk` (na stanowisku produkcyjnym) lub `/login` (lewa strona „Produkcja”).
+2. Wybierz **pokój**.
+3. Wybierz **operatora**.
+4. Wpisz **PIN (6 cyfr)** i kliknij „Zaloguj (Produkcja)”.
+
+Ułatwienia:
+
+- System zapamiętuje ostatnio wybrany pokój (na tym samym urządzeniu).
+- W każdej chwili możesz kliknąć „Zmień pokój”, aby wybrać inny.
+
+#### Logowanie firmowe
+
+1. Otwórz `/login` (prawa strona „Logowanie firmowe”).
+2. Wprowadź **email** i **hasło**.
+3. Kliknij „Zaloguj (Firma)”.
+
+System automatycznie rozpozna Twoją rolę i przekieruje do właściwego panelu.
 
 ### 3.2. Nawigacja
 

@@ -55,6 +55,30 @@
 
 Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
+#### ✅ Ukończone (2025-12-18)
+- [x] **Multiroom dla operatorów produkcji** – przypisywanie użytkowników do wielu pokoi produkcyjnych
+  - Migracja SQL: tabela `UserProductionRoom` (userId, roomId, isPrimary, notes, assignedBy)
+  - Trigger synchronizacji: `User.productionroomid` jako cache pokoju głównego
+  - Backend: endpointy CRUD `/api/admin/user-production-rooms`
+  - Backend: rozszerzenie `/api/auth/me` o `productionRooms[]` i `hasMultipleRooms`
+  - Backend: rozszerzenie `/api/kiosk/operators` o obsługę multiroom
+  - Backend: rozszerzenie `/api/admin/users` o `productionRooms[]`
+  - Backend: helper `isUserAssignedToRoom()` z obsługą multiroom
+  - UI Admin: kolumna "Pokoje prod." w tabeli użytkowników
+  - UI Admin: modal zarządzania pokojami (dodawanie, usuwanie, ustawianie głównego)
+  - UI Produkcja: dropdown selector pokoju dla użytkowników z wieloma pokojami
+  - Persystencja aktywnego pokoju w `localStorage`
+
+#### ✅ Ukończone (2025-12-14)
+- [x] **Refaktoryzacja UX panelu operatora** – płynne działanie bez przeładowań
+  - Kafelki ZP: naprawiony glitch „pół-otwartego" kafelka (CSS `.wo-details.open`)
+  - Stan otwarcia kafelków zapisywany w `localStorage`
+  - Akcje Start/Pauza/Zakończ bez przeładowania strony (optymistyczne update'y)
+  - Szybki polling na start (5s przez 2 min, potem 30s)
+  - Badge SLA/termin na kafelkach (Dziś!/Jutro/Przeterminowane)
+  - Usunięto filtr „Wszystkie" – zostały tylko „Do zrobienia" / „Wykonane"
+  - Testy jednostkowe: `backend/workorders-view.test.js` (badge SLA, optymistyczne aktualizacje, stan kafelków)
+
 #### ✅ Ukończone (2025-12-10)
 - [x] **Refaktoryzacja ról i uprawnień MES** – zgodność z best practices MES
   - Rozszerzenie enum `UserRole` o nowe role produkcyjne (OPERATOR, PRODUCTION_MANAGER, GRAPHIC_DESIGNER)
@@ -78,6 +102,39 @@ Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
   - Automatyczne ładowanie list (nadzorcy, pokoje, gniazda)
 
 ---
+
+### 🧾 Do przejrzenia później (pending review)
+
+Poniższa lista to zmiany obecne w workspace (status `git diff` / pliki nieśledzone), które nie są bezpośrednio związane z bieżącym wątkiem i wymagają późniejszego przeglądu (czy zostają, czy cofamy / rozdzielamy na osobne commity).
+
+#### Zmodyfikowane pliki (M)
+- `README.md`
+- `assets/styles.css`
+- `backend/server.js`
+- `index.html`
+- `login.html`
+- `orders.html`
+- `production.html`
+- `scripts/app.js`
+- `scripts/graphics.js`
+- `scripts/login.js`
+- `scripts/orders.js`
+- `scripts/production.js`
+- `admin/index.html`
+- `admin/admin.js`
+- `docs/SPEC.md`
+- `docs/SPEC_PRODUCTION_PANEL.md`
+- `docs/USER_MANUAL.md`
+
+#### Pliki nieśledzone (??)
+- `backend/debug_production_orders.js`
+- `backend/diagnose_by_source_order.js`
+- `backend/diagnose_new_orders.js`
+- `backend/diagnose_today_orders.js`
+- `backend/fix_orphaned_orders.js`
+- `backend/normalize-project-view-url.test.js`
+- `backend/order-number.test.js`
+- `backend/workorders-view.test.js`
 
 ### 📋 Planowane (niski priorytet)
 

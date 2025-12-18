@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel Administratora - Rezon</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../assets/tailwind.generated.css">
     <link rel="stylesheet" href="../assets/vendor/fontawesome/all.min.css">
     <link rel="stylesheet" href="../assets/styles.css">
     <style>
@@ -44,18 +44,6 @@
             }
         }
     </style>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        primary: '#3b82f6',
-                        secondary: '#64748b',
-                    }
-                }
-            }
-        }
-    </script>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans">
     <div class="flex h-screen overflow-hidden">
@@ -359,8 +347,75 @@
             </div>
             <!-- Koniec widoku: Zamówienia -->
 
+            <!-- Widok: Ustawienia Workflow Zamówień -->
+            <div id="view-settings" class="view-container hidden">
+                <header class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">Ustawienia Workflow Zamówień</h2>
+                        <p class="text-gray-600 mt-0.5 text-sm">Konfiguracja automatycznego zatwierdzania i wysyłania zamówień na produkcję</p>
+                    </div>
+                </header>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                    <div class="max-w-2xl">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4">Automatyczne wysyłanie na produkcję</h3>
+                        
+                        <div class="space-y-4">
+                            <!-- Opcja 1: NONE -->
+                            <label class="flex items-start gap-4 p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                <input type="radio" name="autoReleaseMode" value="NONE" class="mt-1 text-blue-600 focus:ring-blue-500">
+                                <div>
+                                    <div class="font-medium text-gray-900">Ręczna kontrola (zalecane)</div>
+                                    <div class="text-sm text-gray-600 mt-1">Każde zamówienie wymaga ręcznego zatwierdzenia przez dział sprzedaży przed wysłaniem na produkcję.</div>
+                                </div>
+                            </label>
+
+                            <!-- Opcja 2: ALL -->
+                            <label class="flex items-start gap-4 p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                <input type="radio" name="autoReleaseMode" value="ALL" class="mt-1 text-blue-600 focus:ring-blue-500">
+                                <div>
+                                    <div class="font-medium text-gray-900">Automatycznie wszystko</div>
+                                    <div class="text-sm text-gray-600 mt-1">Wszystkie nowe zamówienia są automatycznie wysyłane na produkcję (ignoruje stan magazynowy).</div>
+                                </div>
+                            </label>
+
+                            <!-- Opcja 3: IN_STOCK_ONLY -->
+                            <label class="flex items-start gap-4 p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                <input type="radio" name="autoReleaseMode" value="IN_STOCK_ONLY" class="mt-1 text-blue-600 focus:ring-blue-500">
+                                <div>
+                                    <div class="font-medium text-gray-900">Tylko pozycje ze stanem</div>
+                                    <div class="text-sm text-gray-600 mt-1">Automatycznie wysyłaj na produkcję tylko pozycje z pełnym stanem magazynowym. Pozycje ponad stan wymagają ręcznej decyzji.</div>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="mt-6 flex items-center justify-between">
+                            <div id="settings-status" class="text-sm text-gray-600"></div>
+                            <div class="flex gap-3">
+                                <button id="save-settings-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors">
+                                    Zapisz ustawienia
+                                </button>
+                                <button id="reset-settings-btn" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium transition-colors">
+                                    Resetuj
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Informacja o ostatniej zmianie -->
+                <div class="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div class="flex items-start gap-3">
+                        <i class="fas fa-info-circle text-blue-600 mt-0.5"></i>
+                        <div class="text-sm text-blue-800">
+                            <strong>Uwaga:</strong> Zmiana tych ustawień wpływa na wszystkie nowe zamówienia. Istniejące zamówienia zachowują swój aktualny status.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Print Preview Modal -->
-            <div id="admin-print-preview-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+            <div id="admin-print-preview-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
                 <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl border border-gray-200 max-h-[95vh] overflow-hidden flex flex-col">
                     <div class="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
                         <h3 class="text-lg font-semibold text-gray-800">Podgląd wydruku</h3>
@@ -378,23 +433,31 @@
             </div>
 
             <!-- Delete Confirm Modal -->
-            <div id="delete-order-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-                <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
-                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Potwierdź usunięcie</h3>
-                    <p class="text-gray-600 mb-6">Czy na pewno chcesz usunąć zamówienie <strong id="delete-order-number"></strong>? Ta operacja jest nieodwracalna.</p>
-                    <div class="flex gap-3 justify-end">
-                        <button id="delete-order-cancel" class="px-3 py-1.5 bg-gray-300 text-gray-700 rounded-full hover:bg-gray-400 text-sm font-medium transition-colors">
+            <div id="delete-order-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-md border border-gray-200 flex flex-col max-h-[90vh] mx-auto">
+                    <div class="flex justify-between items-center px-6 py-4 border-b">
+                        <h3 class="text-lg font-semibold text-gray-800">Potwierdź usunięcie</h3>
+                        <button type="button" class="text-gray-400 hover:text-gray-600" aria-label="Zamknij" id="delete-order-close">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto px-6 py-4">
+                        <p class="text-gray-600">Czy na pewno chcesz usunąć zamówienie <strong id="delete-order-number"></strong>? Ta operacja jest nieodwracalna.</p>
+                    </div>
+                    <div class="flex gap-3 justify-end px-6 py-4 border-t bg-gray-50">
+                        <button id="delete-order-cancel" class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 text-sm font-medium transition-colors">
                             Anuluj
                         </button>
-                        <button id="delete-order-confirm" class="px-3 py-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 text-sm font-medium transition-colors">
-                            <i class="fas fa-trash"></i> Usuń
+                        <button id="delete-order-confirm" class="px-3 py-1.5 bg-red-600 text-white rounded-full hover:bg-red-700 text-sm font-medium transition-colors flex items-center gap-2">
+                            <i class="fas fa-trash"></i>
+                            Usuń
                         </button>
                     </div>
                 </div>
             </div>
 
             <!-- Edit Order Modal -->
-            <div id="edit-order-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+            <div id="edit-order-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
                 <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col">
                     <div class="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
                         <h3 class="text-lg font-semibold text-gray-800">Edytuj zamówienie <span id="edit-order-number"></span></h3>
@@ -448,20 +511,21 @@
                 <div class="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse">
-                            <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
+                            <thead id="users-table-head" class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
                                 <tr>
-                                    <th class="p-2">Imię i nazwisko</th>
-                                    <th class="p-2">Email</th>
-                                    <th class="p-2">Rola</th>
-                                    <th class="p-2">Dział</th>
-                                    <th class="p-2 text-center">Status</th>
-                                    <th class="p-2 text-center">Data utworzenia</th>
+                                    <th class="p-2 sortable-header cursor-pointer hover:bg-gray-100" data-sort="name">Imię i nazwisko <i class="fas fa-sort sort-icon ml-1 opacity-50"></i></th>
+                                    <th class="p-2 sortable-header cursor-pointer hover:bg-gray-100" data-sort="email">Email <i class="fas fa-sort sort-icon ml-1 opacity-50"></i></th>
+                                    <th class="p-2 sortable-header cursor-pointer hover:bg-gray-100" data-sort="role">Rola <i class="fas fa-sort sort-icon ml-1 opacity-50"></i></th>
+                                    <th class="p-2 sortable-header cursor-pointer hover:bg-gray-100" data-sort="department">Dział <i class="fas fa-sort sort-icon ml-1 opacity-50"></i></th>
+                                    <th class="p-2">Pokoje prod.</th>
+                                    <th class="p-2 text-center sortable-header cursor-pointer hover:bg-gray-100" data-sort="status">Status <i class="fas fa-sort sort-icon ml-1 opacity-50"></i></th>
+                                    <th class="p-2 text-center sortable-header cursor-pointer hover:bg-gray-100" data-sort="createdAt">Data utworzenia <i class="fas fa-sort-down sort-icon ml-1 active"></i></th>
                                     <th class="p-2 text-right">Akcje</th>
                                 </tr>
                             </thead>
                             <tbody id="users-table-body" class="divide-y divide-gray-100 text-sm">
                                 <tr>
-                                    <td colspan="7" class="p-4 text-center text-gray-500">
+                                    <td colspan="8" class="p-4 text-center text-gray-500">
                                         <div class="flex flex-col items-center gap-2">
                                             <i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i>
                                             <span>Ładowanie danych...</span>
@@ -1039,9 +1103,9 @@
             <!-- Koniec widoku: Presety terminów dostawy -->
 
             <!-- Modal: Dodaj/Edytuj preset terminu dostawy -->
-            <div id="delivery-preset-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-                <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-                    <div class="bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-3">
+            <div id="delivery-preset-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-auto overflow-hidden flex flex-col max-h-[90vh]">
+                    <div class="bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-3 sticky top-0 z-10">
                         <div class="flex justify-between items-center">
                             <h3 id="delivery-preset-modal-title" class="text-lg font-bold text-white flex items-center gap-2">
                                 <i class="fas fa-calendar-alt text-sm"></i> Nowy preset terminu
@@ -1051,7 +1115,7 @@
                             </button>
                         </div>
                     </div>
-                    <form id="delivery-preset-form" class="p-4 space-y-4">
+                    <form id="delivery-preset-form" class="flex-1 overflow-y-auto p-6 space-y-4">
                         <input type="hidden" name="id" value="">
 
                         <div>
@@ -1275,6 +1339,24 @@
                     </div>
                 </div>
 
+                <!-- Sticky toolbar z wyszukiwarką -->
+                <div class="sticky top-0 z-10 bg-gray-50 py-4 -mx-4 px-4 mb-4 border-b border-gray-200">
+                    <div class="flex flex-wrap gap-3 items-center">
+                        <div class="relative flex-1 min-w-[200px]">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                            <input type="text" id="rooms-search" placeholder="Szukaj pokoju..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+                        </div>
+                        <select id="rooms-manager-filter" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500">
+                            <option value="">Wszyscy menedżerowie</option>
+                            <option value="has">Z menedżerem</option>
+                            <option value="none">Bez menedżera</option>
+                        </select>
+                        <button id="rooms-clear-filters" class="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors">
+                            <i class="fas fa-times mr-1"></i> Wyczyść
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Siatka pokoi -->
                 <div id="production-rooms-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
@@ -1382,9 +1464,9 @@
             <!-- Koniec widoku: Produkcja - Typy operacji -->
 
             <!-- Modal: Dodaj/Edytuj Typ Gniazda -->
-            <div id="work-center-type-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-                    <div class="bg-gradient-to-r from-purple-500 to-purple-600 px-6 py-4">
+            <div id="work-center-type-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-auto overflow-hidden flex flex-col max-h-[90vh]">
+                    <div class="bg-gradient-to-r from-purple-500 to-purple-600 px-6 py-4 sticky top-0 z-10">
                         <div class="flex justify-between items-center">
                             <h3 id="work-center-type-modal-title" class="text-xl font-bold text-white flex items-center gap-2">
                                 <i class="fas fa-tags"></i> Nowy typ gniazda
@@ -1394,7 +1476,7 @@
                             </button>
                         </div>
                     </div>
-                    <form id="work-center-type-form" class="p-6 space-y-5">
+                    <form id="work-center-type-form" class="flex-1 overflow-y-auto p-6 space-y-5">
                         <input type="hidden" name="id" value="">
                         
                         <div class="grid grid-cols-2 gap-4">
@@ -1450,9 +1532,9 @@
             </div>
 
             <!-- Modal: Dodaj/Edytuj Typ Operacji -->
-            <div id="operation-type-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-                    <div class="bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-4">
+            <div id="operation-type-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-auto overflow-hidden flex flex-col max-h-[90vh]">
+                    <div class="bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-4 sticky top-0 z-10">
                         <div class="flex justify-between items-center">
                             <h3 id="operation-type-modal-title" class="text-xl font-bold text-white flex items-center gap-2">
                                 <i class="fas fa-tasks"></i> Nowy typ operacji
@@ -1462,7 +1544,7 @@
                             </button>
                         </div>
                     </div>
-                    <form id="operation-type-form" class="p-6 space-y-5">
+                    <form id="operation-type-form" class="flex-1 overflow-y-auto p-6 space-y-5">
                         <input type="hidden" name="id" value="">
 
                         <div class="grid grid-cols-2 gap-4">
@@ -1534,13 +1616,19 @@
                     </div>
                 </header>
 
-                <!-- Filtr po pokoju -->
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
-                    <div class="flex items-center gap-4">
-                        <label class="text-sm font-medium text-gray-700">Filtruj po pokoju:</label>
-                        <select id="work-centers-room-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700">
+                <!-- Sticky toolbar z wyszukiwarką -->
+                <div class="sticky top-0 z-10 bg-gray-50 py-4 -mx-4 px-4 mb-4 border-b border-gray-200">
+                    <div class="flex flex-wrap gap-3 items-center">
+                        <div class="relative flex-1 min-w-[200px]">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                            <input type="text" id="work-centers-search" placeholder="Szukaj gniazda..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <select id="work-centers-room-filter" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
                             <option value="">Wszystkie pokoje</option>
                         </select>
+                        <button id="work-centers-clear-filters" class="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors">
+                            <i class="fas fa-times mr-1"></i> Wyczyść
+                        </button>
                     </div>
                 </div>
 
@@ -1571,25 +1659,26 @@
                     </div>
                 </header>
 
-                <!-- Filtry -->
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
-                    <div class="flex flex-wrap items-center gap-4">
-                        <div>
-                            <label class="text-sm font-medium text-gray-700 mr-2">Gniazdo:</label>
-                            <select id="work-stations-center-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-700">
-                                <option value="">Wszystkie gniazda</option>
-                            </select>
+                <!-- Sticky toolbar z wyszukiwarką -->
+                <div class="sticky top-0 z-10 bg-gray-50 py-4 -mx-4 px-4 mb-4 border-b border-gray-200">
+                    <div class="flex flex-wrap gap-3 items-center">
+                        <div class="relative flex-1 min-w-[200px]">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                            <input type="text" id="work-stations-search" placeholder="Szukaj maszyny..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500">
                         </div>
-                        <div>
-                            <label class="text-sm font-medium text-gray-700 mr-2">Status:</label>
-                            <select id="work-stations-status-filter" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-700">
-                                <option value="">Wszystkie statusy</option>
-                                <option value="available">🟢 Dostępna</option>
-                                <option value="in_use">🟠 W użyciu</option>
-                                <option value="maintenance">🔵 Konserwacja</option>
-                                <option value="breakdown">🔴 Awaria</option>
-                            </select>
-                        </div>
+                        <select id="work-stations-center-filter" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500">
+                            <option value="">Wszystkie gniazda</option>
+                        </select>
+                        <select id="work-stations-status-filter" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500">
+                            <option value="">Wszystkie statusy</option>
+                            <option value="available">🟢 Dostępna</option>
+                            <option value="in_use">🟠 W użyciu</option>
+                            <option value="maintenance">🔵 Konserwacja</option>
+                            <option value="breakdown">🔴 Awaria</option>
+                        </select>
+                        <button id="work-stations-clear-filters" class="px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors">
+                            <i class="fas fa-times mr-1"></i> Wyczyść
+                        </button>
                     </div>
                 </div>
 
@@ -1801,15 +1890,15 @@
     </div>
 
     <!-- Modal przypisania miejscowości -->
-    <div id="city-access-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200">
-            <div class="flex justify-between items-center px-6 py-4 border-b">
+    <div id="city-access-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200 flex flex-col max-h-[90vh] mx-auto">
+            <div class="flex justify-between items-center px-6 py-4 border-b sticky top-0 bg-white z-10">
                 <h3 id="city-access-modal-title" class="text-lg font-semibold text-gray-800">Nowe przypisanie miejscowości</h3>
                 <button id="city-access-modal-close" class="text-gray-400 hover:text-gray-600">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <form id="city-access-form" class="px-6 py-4 space-y-4">
+            <form id="city-access-form" class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 <input type="hidden" name="id" value="">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Użytkownik *</label>
@@ -1842,15 +1931,15 @@
     </div>
 
     <!-- Modal przypisania folderu -->
-    <div id="folder-access-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200">
-            <div class="flex justify-between items-center px-6 py-4 border-b">
+    <div id="folder-access-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200 flex flex-col max-h-[90vh] mx-auto">
+            <div class="flex justify-between items-center px-6 py-4 border-b sticky top-0 bg-white z-10">
                 <h3 id="folder-access-modal-title" class="text-lg font-semibold text-gray-800">Nowe przypisanie folderu</h3>
                 <button id="folder-access-modal-close" class="text-gray-400 hover:text-gray-600">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <form id="folder-access-form" class="px-6 py-4 space-y-4">
+            <form id="folder-access-form" class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 <input type="hidden" name="id" value="">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Użytkownik *</label>
@@ -1883,15 +1972,15 @@
     </div>
 
     <!-- Modal przypisania produktu do projektu graficznego -->
-    <div id="pm-add-product-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200">
-            <div class="flex justify-between items-center px-6 py-4 border-b">
+    <div id="pm-add-product-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-lg border border-gray-200 flex flex-col max-h-[90vh] mx-auto">
+            <div class="flex justify-between items-center px-6 py-4 border-b sticky top-0 bg-white z-10">
                 <h3 class="text-lg font-semibold text-gray-800">Przypisz produkt do projektu</h3>
                 <button id="pm-modal-close" class="text-gray-400 hover:text-gray-600">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <div class="px-6 py-4 space-y-4">
+            <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Projekt graficzny</label>
                     <input type="text" id="pm-modal-project-name" readonly class="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-700">
@@ -1917,15 +2006,15 @@
     </div>
 
     <!-- Modal formularza produktu -->
-    <div id="product-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl border border-gray-200">
-            <div class="flex justify-between items-center px-6 py-4 border-b">
+    <div id="product-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl border border-gray-200 flex flex-col max-h-[90vh] mx-auto">
+            <div class="flex justify-between items-center px-6 py-4 border-b sticky top-0 bg-white z-10">
                 <h3 id="product-modal-title" class="text-lg font-semibold text-gray-800">Nowy produkt</h3>
                 <button id="product-modal-close" class="text-gray-400 hover:text-gray-600">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <form id="product-form" class="px-6 py-4 space-y-4">
+            <form id="product-form" class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Identyfikator *</label>
@@ -2009,15 +2098,15 @@
     </div>
 
     <!-- Modal edycji stanów magazynowych -->
-    <div id="inventory-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-xl border border-gray-200">
-            <div class="flex justify-between items-center px-6 py-4 border-b">
+    <div id="inventory-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-xl border border-gray-200 flex flex-col max-h-[90vh] mx-auto">
+            <div class="flex justify-between items-center px-6 py-4 border-b sticky top-0 bg-white z-10">
                 <h3 id="inventory-modal-title" class="text-lg font-semibold text-gray-800">Stany magazynowe</h3>
                 <button id="inventory-modal-close" class="text-gray-400 hover:text-gray-600">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <form id="inventory-form" class="px-6 py-4 space-y-4">
+            <form id="inventory-form" class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Stan (stock)</label>
@@ -2052,22 +2141,22 @@
     </div>
 
     <!-- Modal dodawania/edycji użytkownika -->
-    <div id="user-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-xl border border-gray-200">
+    <div id="user-modal" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-xl border border-gray-200 max-h-[90vh] overflow-hidden flex flex-col">
             <div class="flex justify-between items-center px-6 py-4 border-b">
                 <h3 id="user-modal-title" class="text-lg font-semibold text-gray-800">Dodaj nowego użytkownika</h3>
                 <button id="user-modal-close" class="text-gray-400 hover:text-gray-600">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <form id="user-form" class="px-6 py-4 space-y-4">
+            <form id="user-form" class="px-6 py-4 space-y-4 flex-1 overflow-y-auto">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Imię i nazwisko *</label>
                     <input type="text" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Jan Kowalski">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>
-                    <input type="email" name="email" autocomplete="username" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="jan.kowalski@firma.pl">
+                    <input type="email" name="email" autocomplete="username" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="jan.kowalski@firma.pl">
                 </div>
                 <div id="user-password-field">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Hasło *</label>
@@ -2145,19 +2234,49 @@
                     </select>
                     <p class="mt-1 text-xs text-gray-500">Dla operatorów: określa widoczność zleceń.</p>
                 </div>
+
+                <div id="kiosk-auth-field" class="hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Kiosk</label>
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" name="isKioskEnabled" id="field-user-isKioskEnabled" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
+                        <label for="field-user-isKioskEnabled" class="text-sm text-gray-700">Włącz logowanie PIN (kiosk)</label>
+                    </div>
+
+                    <div class="mt-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">PIN kiosku (6 cyfr)</label>
+                        <input type="password" name="kioskPin" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="np. 123456">
+                        <p class="mt-1 text-xs text-gray-500">Ustaw PIN aby operator mógł logować się na /kiosk. PIN nie jest wyświetlany po zapisaniu.</p>
+                    </div>
+                </div>
+
+                <div id="production-setup-hint" class="hidden text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <div class="font-semibold mb-1">Wymagana konfiguracja dla produkcji / kiosku</div>
+                    <div class="text-amber-800">
+                        Po utworzeniu operatora upewnij się, że system ma skonfigurowane elementy produkcji:
+                    </div>
+                    <ul class="list-disc pl-5 mt-2 space-y-1 text-amber-800">
+                        <li>Przypisz użytkownikowi <strong>Pokój produkcyjny</strong> (dla widoczności zleceń).</li>
+                        <li>Upewnij się, że istnieją <strong>Maszyny/stanowiska</strong> w systemie.</li>
+                        <li>Dla logowania na kiosku: włącz <strong>Kiosk</strong> i ustaw <strong>PIN</strong>.</li>
+                    </ul>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                        <a href="#" class="text-amber-700 hover:text-amber-800 underline" data-admin-jump="production-rooms">Przejdź do: Pokoje</a>
+                        <a href="#" class="text-amber-700 hover:text-amber-800 underline" data-admin-jump="production-work-stations">Przejdź do: Maszyny</a>
+                    </div>
+                </div>
                 <div class="flex items-center gap-2">
                     <input type="checkbox" name="isActive" id="field-user-isActive" class="h-4 w-4 text-blue-600 border-gray-300 rounded" checked>
                     <label for="field-user-isActive" class="text-sm text-gray-700">Konto aktywne</label>
                 </div>
                 <div id="user-form-error" class="text-sm text-red-600 mt-2 hidden"></div>
-                <div class="flex justify-end gap-3 pt-2 border-t mt-4">
-                    <button type="button" id="user-form-cancel" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Anuluj</button>
-                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
-                        <i class="fas fa-save"></i>
-                        <span>Utwórz użytkownika</span>
-                    </button>
-                </div>
             </form>
+            <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+                <button type="button" id="user-form-cancel" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Anuluj</button>
+                <button type="submit" form="user-form" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
+                    <i class="fas fa-save"></i>
+                    <span id="user-form-submit-text">Utwórz użytkownika</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -2218,9 +2337,9 @@
     <div id="admin-toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
 
     <!-- Modal: Dodaj/Edytuj Pokój Produkcyjny -->
-    <div id="production-room-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-            <div class="bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-4">
+    <div id="production-room-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-auto overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-4 sticky top-0 z-10">
                 <div class="flex justify-between items-center">
                     <h3 id="production-room-modal-title" class="text-xl font-bold text-white flex items-center gap-2">
                         <i class="fas fa-door-open"></i> Nowy pokój produkcyjny
@@ -2230,7 +2349,7 @@
                     </button>
                 </div>
             </div>
-            <form id="production-room-form" class="p-6 space-y-5">
+            <form id="production-room-form" class="flex-1 overflow-y-auto p-6 space-y-5">
                 <input type="hidden" name="id" value="">
                 
                 <div>
@@ -2314,9 +2433,9 @@
     </div>
 
     <!-- Modal: Dodaj/Edytuj Gniazdo Produkcyjne -->
-    <div id="work-center-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-            <div class="bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-4">
+    <div id="work-center-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-auto overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-4 sticky top-0 z-10">
                 <div class="flex justify-between items-center">
                     <h3 id="work-center-modal-title" class="text-xl font-bold text-white flex items-center gap-2">
                         <i class="fas fa-cogs"></i> Nowe gniazdo produkcyjne
@@ -2326,7 +2445,7 @@
                     </button>
                 </div>
             </div>
-            <form id="work-center-form" class="p-6 space-y-5">
+            <form id="work-center-form" class="flex-1 overflow-y-auto p-6 space-y-5">
                 <input type="hidden" name="id" value="">
                 
                 <div>
@@ -2385,9 +2504,9 @@
     </div>
 
     <!-- Modal: Dodaj/Edytuj Maszynę -->
-    <div id="work-station-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-            <div class="bg-gradient-to-r from-green-500 to-green-600 px-6 py-4">
+    <div id="work-station-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-4 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-auto overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-gradient-to-r from-green-500 to-green-600 px-6 py-4 sticky top-0 z-10">
                 <div class="flex justify-between items-center">
                     <h3 id="work-station-modal-title" class="text-xl font-bold text-white flex items-center gap-2">
                         <i class="fas fa-tools"></i> Nowa maszyna
@@ -2397,7 +2516,7 @@
                     </button>
                 </div>
             </div>
-            <form id="work-station-form" class="p-6 space-y-5">
+            <form id="work-station-form" class="flex-1 overflow-y-auto p-6 space-y-5">
                 <input type="hidden" name="id" value="">
                 
                 <div>
@@ -2525,6 +2644,8 @@
         .print-footer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8px; color: #6b7280; text-align: center; }
     </style>
 
-    <script src="admin.js"></script>
+    <script src="admin.js?v=20251218-5"></script>
+    <script src="admin-fixes.js?v=20251218-1"></script>
+    <script src="production-drilldown.js?v=20251218-2"></script>
 </body>
 </html>

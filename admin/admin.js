@@ -1004,11 +1004,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const userFormCancel = document.getElementById('user-form-cancel');
     const userFormError = document.getElementById('user-form-error');
     const usersTableInfo = document.getElementById('users-table-info');
+    const kioskField = document.getElementById('kiosk-auth-field');
+    const productionSetupHint = document.getElementById('production-setup-hint');
+    const kioskEnabledCheckbox = document.getElementById('field-user-isKioskEnabled');
+    const kioskPinInput = userForm ? userForm.querySelector('[name="kioskPin"]') : null;
+    const kioskEligibleRoles = ['OPERATOR', 'PRODUCTION', 'PRODUCTION_MANAGER'];
 
     let allUsers = [];
     let filteredUsers = [];
     let allDepartments = [];
     let currentEditingUserId = null;
+    let currentEditingUser = null;
 
     // Przełączanie widoków
     if (navUsers) {
@@ -1176,7 +1182,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (filteredUsers.length === 0) {
             usersTableBody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="p-8 text-center text-gray-500">
+                    <td colspan="8" class="p-8 text-center text-gray-500">
                         Brak użytkowników do wyświetlenia
                     </td>
                 </tr>
@@ -1197,6 +1203,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const roleLabelSafe = escapeHtml(roleLabel);
             const departmentSafe = escapeHtml(user.departmentName || '-');
 
+            // Pokoje produkcyjne (multiroom)
+            const productionRooms = user.productionRooms || [];
+            let roomsHtml = '-';
+            if (productionRooms.length > 0) {
+                roomsHtml = productionRooms.map(r => {
+                    const isPrimaryBadge = r.isPrimary ? ' <i class="fas fa-star text-yellow-500 text-xs" title="Pokój główny"></i>' : '';
+                    return `<span class="inline-block px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-800 mr-1 mb-1">${escapeHtml(r.name || r.code || 'Pokój ' + r.id)}${isPrimaryBadge}</span>`;
+                }).join('');
+            } else if (user.productionRoomName) {
+                roomsHtml = `<span class="inline-block px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-800">${escapeHtml(user.productionRoomName)}</span>`;
+            }
+
             return `
                 <tr class="hover:bg-gray-50 transition-colors">
                     <td class="p-4 font-medium text-gray-900">${nameSafe}</td>
@@ -1205,6 +1223,14 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">${roleLabelSafe}</span>
                     </td>
                     <td class="p-4 text-gray-600">${departmentSafe}</td>
+                    <td class="p-4">
+                        <div class="flex flex-wrap items-center gap-1">
+                            ${roomsHtml}
+                            <button class="text-purple-600 hover:text-purple-800 ml-1" data-action="manage-rooms" data-user-id="${user.id}" title="Zarządzaj pokojami">
+                                <i class="fas fa-cog text-xs"></i>
+                            </button>
+                        </div>
+                    </td>
                     <td class="p-4 text-center">${statusBadge}</td>
                     <td class="p-4 text-center text-gray-600">${createdDate}</td>
                     <td class="p-4 text-right flex items-center justify-end gap-2">
@@ -1252,8 +1278,322 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (action === 'delete-user') {
             const user = allUsers.find(u => u.id === userId);
             if (user) handleDeleteUser(user);
+        } else if (action === 'manage-rooms') {
+            const user = allUsers.find(u => u.id === userId);
+            if (user) openProductionRoomsModal(user);
         }
     }
+
+    // MODAL: ZARZĄDZANIE POKOJAMI PRODUKCYJNYMI (MULTIROOM)
+
+    let currentRoomsUserId = null;
+    let currentRoomsUserName = '';
+    let userProductionRoomAssignments = [];
+    let forbiddenRoomsAccess = false;
+
+    function handleProductionRoomsForbidden() {
+        forbiddenRoomsAccess = true;
+        showAdminToast('Brak uprawnień do zarządzania pokojami produkcyjnymi', 'error');
+        closeProductionRoomsModal();
+    }
+
+    function ensureProductionRoomsModal() {
+        let modal = document.getElementById('production-rooms-modal');
+        if (modal) {
+            return modal;
+        }
+
+        modal = document.createElement('div');
+        modal.id = 'production-rooms-modal';
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden';
+        modal.innerHTML = `
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+                <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-purple-50">
+                    <h2 id="production-rooms-modal-title" class="text-lg font-semibold text-purple-800">
+                        <i class="fas fa-door-open mr-2"></i>Pokoje produkcyjne
+                    </h2>
+                    <button id="production-rooms-modal-close" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+                <div class="p-4 overflow-y-auto flex-1">
+                    <p class="text-sm text-gray-600 mb-4">
+                        Użytkownik: <strong id="production-rooms-user-name"></strong>
+                    </p>
+
+                    <div class="mb-4">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">Przypisane pokoje:</h3>
+                        <div id="production-rooms-list" class="space-y-2">
+                            <p class="text-gray-400 text-sm">Ładowanie...</p>
+                        </div>
+                    </div>
+
+                    <div class="border-t pt-4">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-2">Dodaj pokój:</h3>
+                        <div class="flex gap-2 items-end">
+                            <div class="flex-1">
+                                <select id="production-rooms-add-select" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                                    <option value="">Wybierz pokój...</option>
+                                </select>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label class="flex items-center gap-1 text-xs text-gray-600">
+                                    <input type="checkbox" id="production-rooms-add-primary" class="rounded border-gray-300">
+                                    Główny
+                                </label>
+                            </div>
+                            <button id="production-rooms-add-btn" class="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+                    <button id="production-rooms-modal-done" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
+                        Zamknij
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        document.getElementById('production-rooms-modal-close').addEventListener('click', closeProductionRoomsModal);
+        document.getElementById('production-rooms-modal-done').addEventListener('click', closeProductionRoomsModal);
+        document.getElementById('production-rooms-add-btn').addEventListener('click', handleAddProductionRoom);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeProductionRoomsModal();
+            }
+        });
+
+        return modal;
+    }
+
+    async function openProductionRoomsModal(user) {
+        currentRoomsUserId = user.id;
+        currentRoomsUserName = user.name || user.email || 'Użytkownik';
+        forbiddenRoomsAccess = false;
+
+        const modal = ensureProductionRoomsModal();
+        const userNameEl = document.getElementById('production-rooms-user-name');
+        if (userNameEl) {
+            userNameEl.textContent = currentRoomsUserName;
+        }
+
+        modal.classList.remove('hidden');
+
+        await loadUserProductionRooms();
+        await populateProductionRoomsAddSelect();
+    }
+
+    function closeProductionRoomsModal() {
+        const modal = document.getElementById('production-rooms-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        currentRoomsUserId = null;
+        fetchUsers();
+    }
+
+    async function loadUserProductionRooms() {
+        const listEl = document.getElementById('production-rooms-list');
+        if (!listEl || !currentRoomsUserId) return;
+
+        listEl.innerHTML = '<p class="text-gray-400 text-sm"><i class="fas fa-spinner fa-spin mr-1"></i>Ładowanie...</p>';
+
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms?userId=${currentRoomsUserId}`, {
+                credentials: 'include'
+            });
+            if (response.status === 401 || response.status === 403) {
+                handleProductionRoomsForbidden();
+                return;
+            }
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                userProductionRoomAssignments = result.data || [];
+                renderProductionRoomsList();
+            } else {
+                listEl.innerHTML = `<p class="text-red-500 text-sm">Błąd: ${escapeHtml(result.message)}</p>`;
+            }
+        } catch (error) {
+            console.error('Błąd ładowania pokoi użytkownika:', error);
+            listEl.innerHTML = '<p class="text-red-500 text-sm">Błąd połączenia z serwerem</p>';
+        }
+    }
+
+    function renderProductionRoomsList() {
+        const listEl = document.getElementById('production-rooms-list');
+        if (!listEl) return;
+
+        if (userProductionRoomAssignments.length === 0) {
+            listEl.innerHTML = '<p class="text-gray-400 text-sm italic">Brak przypisanych pokoi</p>';
+            return;
+        }
+
+        listEl.innerHTML = userProductionRoomAssignments.map(assignment => {
+            const roomName = assignment.room?.name || `Pokój ${assignment.roomId}`;
+            const roomCode = assignment.room?.code || '';
+            const isPrimary = assignment.isPrimary;
+
+            return `
+                <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-200">
+                    <div class="flex items-center gap-2">
+                        <span class="font-medium text-gray-800">${escapeHtml(roomName)}</span>
+                        ${roomCode ? `<span class="text-xs text-gray-500">[${escapeHtml(roomCode)}]</span>` : ''}
+                        ${isPrimary ? '<span class="px-1.5 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded"><i class="fas fa-star mr-1"></i>Główny</span>' : ''}
+                    </div>
+                    <div class="flex items-center gap-1">
+                        ${!isPrimary ? `
+                            <button class="text-yellow-600 hover:text-yellow-800 px-2 py-1 text-xs"
+                                    onclick="setRoomAsPrimary(${assignment.id})" title="Ustaw jako główny">
+                                <i class="fas fa-star"></i>
+                            </button>
+                        ` : ''}
+                        <button class="text-red-600 hover:text-red-800 px-2 py-1 text-xs"
+                                onclick="removeProductionRoom(${assignment.id})" title="Usuń przypisanie">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    async function populateProductionRoomsAddSelect() {
+        const select = document.getElementById('production-rooms-add-select');
+        if (!select) return;
+
+        select.innerHTML = '<option value="">Wybierz pokój...</option>';
+
+        try {
+            const response = await fetch('/api/production/rooms', { credentials: 'include' });
+            if (response.status === 401 || response.status === 403) {
+                handleProductionRoomsForbidden();
+                return;
+            }
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                const assignedRoomIds = userProductionRoomAssignments.map(a => a.roomId);
+                const availableRooms = (result.data || []).filter(r => !assignedRoomIds.includes(r.id));
+
+                availableRooms.forEach(room => {
+                    const opt = document.createElement('option');
+                    opt.value = room.id;
+                    opt.textContent = `${room.name} [${room.code}]`;
+                    select.appendChild(opt);
+                });
+            }
+        } catch (error) {
+            console.error('Błąd ładowania pokoi:', error);
+        }
+    }
+
+    async function handleAddProductionRoom() {
+        const select = document.getElementById('production-rooms-add-select');
+        const primaryCheckbox = document.getElementById('production-rooms-add-primary');
+
+        const roomId = select?.value;
+        const isPrimary = primaryCheckbox?.checked || false;
+
+        if (!roomId || !currentRoomsUserId) {
+            showAdminToast('Wybierz pokój do dodania', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/admin/user-production-rooms', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    userId: currentRoomsUserId,
+                    roomId: parseInt(roomId, 10),
+                    isPrimary
+                })
+            });
+            if (response.status === 401 || response.status === 403) {
+                handleProductionRoomsForbidden();
+                return;
+            }
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Pokój przypisany', 'success');
+
+                select.value = '';
+                if (primaryCheckbox) primaryCheckbox.checked = false;
+                await loadUserProductionRooms();
+                await populateProductionRoomsAddSelect();
+            } else {
+                showAdminToast(result.message || 'Błąd dodawania pokoju', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd dodawania pokoju:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    }
+
+    window.setRoomAsPrimary = async function setRoomAsPrimary(assignmentId) {
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ isPrimary: true })
+            });
+            if (response.status === 401 || response.status === 403) {
+                handleProductionRoomsForbidden();
+                return;
+            }
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Pokój główny zmieniony', 'success');
+
+                await loadUserProductionRooms();
+            } else {
+                showAdminToast(result.message || 'Błąd zmiany pokoju głównego', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd zmiany pokoju głównego:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    };
+
+    window.removeProductionRoom = async function removeProductionRoom(assignmentId) {
+        if (!confirm('Czy na pewno chcesz usunąć to przypisanie pokoju?')) return;
+
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (response.status === 401 || response.status === 403) {
+                handleProductionRoomsForbidden();
+                return;
+            }
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Przypisanie usunięte', 'success');
+
+                await loadUserProductionRooms();
+                await populateProductionRoomsAddSelect();
+            } else {
+                showAdminToast(result.message || 'Błąd usuwania przypisania', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd usuwania przypisania:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    };
 
     // Usuwanie użytkownika
     async function handleDeleteUser(user) {
@@ -1283,22 +1623,44 @@ document.addEventListener('DOMContentLoaded', () => {
     // Otwieranie formularza użytkownika
     function openUserForm(user = null) {
         currentEditingUserId = user ? user.id : null;
+        currentEditingUser = user || null;
         userFormError.classList.add('hidden');
         userFormError.textContent = '';
+
+        const submitLabel = document.getElementById('user-form-submit-text');
+
+        const productionRoomSelect = userForm.querySelector('[name="productionRoomId"]');
 
         if (user) {
             // Edycja
             userModalTitle.textContent = 'Edytuj użytkownika';
+
             userForm.querySelector('[name="name"]').value = user.name || '';
             userForm.querySelector('[name="email"]').value = user.email || '';
             userForm.querySelector('[name="email"]').disabled = true; // Email nie edytowalny
             userForm.querySelector('[name="role"]').value = user.role || '';
             userForm.querySelector('[name="departmentId"]').value = user.departmentId || '';
-            userForm.querySelector('[name="productionRoomId"]').value = user.productionroomid || '';
+            if (productionRoomSelect) {
+                const roomId = user.productionroomid || '';
+                const roomLabel = roomId ? (user.productionRoomName || `Pokój ${roomId}`) : 'Brak przypisanego pokoju';
+
+                if (roomId) {
+                    productionRoomSelect.innerHTML = `<option value="${roomId}">${escapeHtml(roomLabel)} (ładowanie...)</option>`;
+                    productionRoomSelect.value = roomId;
+                } else {
+                    productionRoomSelect.innerHTML = '<option value="">Brak przypisanego pokoju</option>';
+                }
+
+                productionRoomSelect.dataset.pendingRoomId = roomId;
+                productionRoomSelect.dataset.pendingRoomName = roomLabel;
+            }
             userForm.querySelector('[name="isActive"]').checked = user.isActive !== false;
+            if (kioskEnabledCheckbox) kioskEnabledCheckbox.checked = user.isKioskEnabled === true;
+            if (kioskPinInput) kioskPinInput.value = '';
 
             // Ukryj pole hasła przy edycji
             const passwordField = document.getElementById('user-password-field');
+
             if (passwordField) passwordField.style.display = 'none';
             const resetPasswordField = document.getElementById('user-password-reset-field');
             if (resetPasswordField) resetPasswordField.style.display = 'block';
@@ -1306,16 +1668,25 @@ document.addEventListener('DOMContentLoaded', () => {
             const newPasswordInput = userForm.querySelector('[name="newPassword"]');
             if (newPasswordInput) newPasswordInput.value = '';
 
-            userForm.querySelector('button[type="submit"] span').textContent = 'Zapisz zmiany';
+            if (submitLabel) submitLabel.textContent = 'Zapisz zmiany';
         } else {
             // Nowy użytkownik
             userModalTitle.textContent = 'Dodaj nowego użytkownika';
+
             userForm.reset();
             userForm.querySelector('[name="email"]').disabled = false;
             userForm.querySelector('[name="isActive"]').checked = true;
+            if (kioskEnabledCheckbox) kioskEnabledCheckbox.checked = false;
+            if (kioskPinInput) kioskPinInput.value = '';
+            if (productionRoomSelect) {
+                productionRoomSelect.innerHTML = '<option value="">Brak przypisanego pokoju</option>';
+                productionRoomSelect.dataset.pendingRoomId = '';
+                productionRoomSelect.dataset.pendingRoomName = '';
+            }
 
             // Pokaż pole hasła
             const passwordField = document.getElementById('user-password-field');
+
             if (passwordField) passwordField.style.display = 'block';
             const resetPasswordField = document.getElementById('user-password-reset-field');
             if (resetPasswordField) resetPasswordField.style.display = 'none';
@@ -1323,7 +1694,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const newPasswordInput = userForm.querySelector('[name="newPassword"]');
             if (newPasswordInput) newPasswordInput.value = '';
 
-            userForm.querySelector('button[type="submit"] span').textContent = 'Utwórz użytkownika';
+            if (submitLabel) submitLabel.textContent = 'Utwórz użytkownika';
         }
 
         populateDepartmentFilters();
@@ -1333,21 +1704,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleRoleChange() {
+        if (!userForm) return;
         const roleSelect = userForm.querySelector('[name="role"]');
+        if (!roleSelect) return;
         const roomField = document.getElementById('production-room-field');
+        const roomSelect = userForm.querySelector('[name="productionRoomId"]');
         const multiRolesSection = document.getElementById('multi-roles-section');
         const role = roleSelect.value;
-        
+
         // Pokaż/ukryj pole pokoju produkcyjnego
         if (['PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER'].includes(role)) {
             roomField.classList.remove('hidden');
         } else {
             roomField.classList.add('hidden');
-            userForm.querySelector('[name="productionRoomId"]').value = '';
+            roomSelect && (roomSelect.value = '');
         }
-        
+
+        const kioskEligible = kioskEligibleRoles.includes(role);
+        if (kioskEligible) {
+            kioskField?.classList.remove('hidden');
+            productionSetupHint?.classList.remove('hidden');
+        } else {
+            kioskField?.classList.add('hidden');
+            productionSetupHint?.classList.add('hidden');
+            if (kioskEnabledCheckbox) kioskEnabledCheckbox.checked = false;
+            if (kioskPinInput) kioskPinInput.value = '';
+        }
+
         // Pokaż/ukryj sekcję wieloról (tylko w trybie edycji i dla ról nie-ADMIN)
         if (currentEditingUserId && role !== 'ADMIN' && role !== 'NEW_USER') {
+
             multiRolesSection?.classList.remove('hidden');
             // Zaznacz checkbox głównej roli w wielorolach
             const mainRoleCheckbox = multiRolesSection?.querySelector(`input[value="${role}"]`);
@@ -1367,25 +1753,25 @@ document.addEventListener('DOMContentLoaded', () => {
             multiRolesSection?.classList.add('hidden');
         }
     }
-    
+
     /**
      * Ładuje wielorole użytkownika z API i zaznacza odpowiednie checkboxy
      */
     async function loadUserMultiRoles(userId) {
         const multiRolesSection = document.getElementById('multi-roles-section');
         if (!multiRolesSection || !userId) return;
-        
+
         try {
             const response = await fetch(`/api/admin/user-role-assignments?userId=${userId}`, {
                 credentials: 'include'
             });
             const result = await response.json();
-            
+
             if (result.status === 'success') {
                 const activeRoles = (result.data.assignments || [])
                     .filter(a => a.isActive)
                     .map(a => a.role);
-                
+
                 // Zaznacz checkboxy dla aktywnych ról
                 multiRolesSection.querySelectorAll('input[type="checkbox"]').forEach(cb => {
                     cb.checked = activeRoles.includes(cb.value);
@@ -1398,27 +1784,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function populateProductionRoomSelect() {
         const select = userForm.querySelector('[name="productionRoomId"]');
-        const currentVal = select.value;
-        
-        select.innerHTML = '<option value="">Brak przypisanego pokoju</option>';
-        
+        if (!select) return;
+
+        const pendingRoomId = select.dataset.pendingRoomId;
+        const pendingRoomName = select.dataset.pendingRoomName;
+        const hasPending = pendingRoomId && pendingRoomId !== '';
+
+        if (hasPending) {
+            const label = pendingRoomName || `Pokój ${pendingRoomId}`;
+            select.innerHTML = `<option value="${pendingRoomId}">${escapeHtml(label)} (ładowanie...)</option>`;
+            select.value = pendingRoomId;
+        } else {
+            select.innerHTML = '<option value="">Brak przypisanego pokoju</option>';
+        }
+
+        const currentVal = hasPending ? pendingRoomId : select.value;
+
         try {
             if (!productionRooms || productionRooms.length === 0) {
                 const response = await fetch('/api/production/rooms', { credentials: 'include' });
                 const result = await response.json();
+
                 if (result.status === 'success') {
                     productionRooms = result.data || [];
                 }
             }
-            
+
+            select.innerHTML = '<option value="">Brak przypisanego pokoju</option>';
+
             productionRooms.forEach(room => {
                 const opt = document.createElement('option');
                 opt.value = room.id;
                 opt.textContent = room.name;
                 select.appendChild(opt);
             });
-            
+
             if (currentVal) select.value = currentVal;
+            delete select.dataset.pendingRoomId;
+            delete select.dataset.pendingRoomName;
         } catch (e) {
             console.error('Błąd ładowania pokojów do formularza:', e);
         }
@@ -1428,15 +1831,33 @@ document.addEventListener('DOMContentLoaded', () => {
     if (userForm) {
         const roleSelect = userForm.querySelector('[name="role"]');
         if (roleSelect) roleSelect.addEventListener('change', handleRoleChange);
+
+        document.querySelectorAll('[data-admin-jump]').forEach(link => {
+            link.addEventListener('click', (event) => {
+                event.preventDefault();
+                const targetView = link.getAttribute('data-admin-jump');
+                const targetNav = document.querySelector(`[data-view="${targetView}"]`);
+                if (targetNav) {
+                    targetNav.click();
+                }
+            });
+        });
     }
+
+    // Eksport funkcji do globalnego scope dla zewnętrznych skryptów
+    window.openUserForm = openUserForm;
+    window.handleDeleteUser = handleDeleteUser;
+    window.getAllUsers = function() { return allUsers; };
 
     // Zamykanie formularza użytkownika
     function closeUserForm() {
         userModal.classList.add('hidden');
         userForm.reset();
         currentEditingUserId = null;
+        currentEditingUser = null;
         userFormError.classList.add('hidden');
         userFormError.textContent = '';
+        handleRoleChange();
     }
 
     // Obsługa zapisu użytkownika
@@ -1454,26 +1875,64 @@ document.addEventListener('DOMContentLoaded', () => {
             productionRoomId: formData.get('productionRoomId') || null,
             isActive: formData.get('isActive') === 'on',
         };
+        const isKioskRole = kioskEligibleRoles.includes(data.role);
+        const kioskEnabled = isKioskRole && kioskEnabledCheckbox ? kioskEnabledCheckbox.checked : false;
+        const rawKioskPin = isKioskRole ? (formData.get('kioskPin') || '').trim() : '';
+        const wasKioskEnabled = currentEditingUser?.isKioskEnabled === true;
 
         if (!currentEditingUserId) {
             // Nowy użytkownik - wymagane hasło
             const password = formData.get('password');
             if (!password || password.length < 6) {
+
                 userFormError.textContent = 'Hasło musi mieć co najmniej 6 znaków';
                 userFormError.classList.remove('hidden');
                 return;
             }
             data.password = password;
+
+            if (isKioskRole) {
+                data.isKioskEnabled = kioskEnabled;
+                if (kioskEnabled) {
+                    if (!/^\d{6}$/.test(rawKioskPin)) {
+                        userFormError.textContent = 'PIN kiosku musi mieć 6 cyfr';
+                        userFormError.classList.remove('hidden');
+                        return;
+                    }
+                    data.kioskPin = rawKioskPin;
+                }
+            } else {
+                data.isKioskEnabled = false;
+            }
         } else {
             // Edycja - opcjonalne nowe hasło
             const newPassword = formData.get('newPassword');
             if (newPassword && newPassword.length > 0) {
                 if (newPassword.length < 6) {
+
                     userFormError.textContent = 'Nowe hasło musi mieć co najmniej 6 znaków';
                     userFormError.classList.remove('hidden');
                     return;
                 }
                 data.password = newPassword;
+            }
+
+            if (isKioskRole) {
+                data.isKioskEnabled = kioskEnabled;
+                if (rawKioskPin) {
+                    if (!/^\d{6}$/.test(rawKioskPin)) {
+                        userFormError.textContent = 'PIN kiosku musi mieć 6 cyfr';
+                        userFormError.classList.remove('hidden');
+                        return;
+                    }
+                    data.kioskPin = rawKioskPin;
+                } else if (kioskEnabled && !wasKioskEnabled) {
+                    userFormError.textContent = 'Podaj PIN kiosku (6 cyfr), gdy włączasz logowanie kioskowe';
+                    userFormError.classList.remove('hidden');
+                    return;
+                }
+            } else {
+                data.isKioskEnabled = false;
             }
         }
 
@@ -5921,7 +6380,29 @@ function renderProductionRooms() {
         return;
     }
     
-    grid.innerHTML = productionRooms.map(room => `
+    grid.innerHTML = productionRooms.map(room => {
+        const operators = room.operators || [];
+        const operatorCount = typeof room.operatorCount === 'number'
+            ? room.operatorCount
+            : operators.length;
+        const operatorsPreview = operators.slice(0, 4).map(op => `
+            <span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">
+                ${escapeHtml(op.name || op.email || 'Nieznany')}
+            </span>
+        `).join('');
+        const operatorsMore = operators.length > 4
+            ? `<span class="text-xs text-gray-400">+${operators.length - 4}</span>`
+            : '';
+        const operatorsSection = `
+            <div class="border-t pt-3 mt-3">
+                <p class="text-xs text-gray-400 uppercase tracking-wide mb-2">Przypisane osoby:</p>
+                ${operators.length
+                    ? `<div class="flex flex-wrap gap-1">${operatorsPreview}${operatorsMore}</div>`
+                    : '<p class="text-xs text-gray-400 italic">Brak przypisanych użytkowników</p>'}
+            </div>
+        `;
+
+        return `
         <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
             <div class="bg-gradient-to-r from-amber-500 to-amber-600 px-4 py-3">
                 <div class="flex justify-between items-start">
@@ -5930,15 +6411,19 @@ function renderProductionRooms() {
                         <p class="text-amber-100 text-sm font-mono">${escapeHtml(room.code)}</p>
                     </div>
                     <span class="bg-white/20 text-white text-xs px-2 py-1 rounded-full">
-                        ${room.workCenterCount || 0} gniazd
+                        <i class="fas fa-cogs mr-1"></i>${room.workCenterCount || 0} gniazd
+                    </span>
+                    <span class="bg-white/20 text-white text-xs px-2 py-1 rounded-full ml-2">
+                        <i class="fas fa-users mr-1"></i>${operatorCount} osób
                     </span>
                 </div>
             </div>
             <div class="p-4">
                 ${room.area ? `<p class="text-sm text-gray-600 mb-2"><i class="fas fa-ruler-combined mr-2"></i>${room.area} m²</p>` : ''}
+
                 ${room.supervisor ? `<p class="text-sm text-gray-600 mb-2"><i class="fas fa-user-tie mr-2"></i>${escapeHtml(room.supervisor.name)}</p>` : ''}
                 ${room.description ? `<p class="text-sm text-gray-500 mb-3">${escapeHtml(room.description)}</p>` : ''}
-                
+
                 ${room.workCenters && room.workCenters.length > 0 ? `
                     <div class="border-t pt-3 mt-3">
                         <p class="text-xs text-gray-400 uppercase tracking-wide mb-2">Gniazda:</p>
@@ -5950,18 +6435,21 @@ function renderProductionRooms() {
                         </div>
                     </div>
                 ` : ''}
-                
+                ${operatorsSection}
+
                 <div class="flex gap-2 mt-4">
                     <button onclick="editProductionRoom(${room.id})" class="flex-1 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
                         <i class="fas fa-edit mr-1"></i> Edytuj
                     </button>
+
                     <button onclick="deleteProductionRoom(${room.id})" class="px-3 py-1.5 text-sm bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors">
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // Ładowanie gniazd produkcyjnych
@@ -8011,4 +8499,276 @@ async function restoreDepartment(id, name) {
             workStationFormError.classList.remove('hidden');
         }
     }
+
+    // ============================================
+    // MODAL: ZARZĄDZANIE POKOJAMI PRODUKCYJNYMI (MULTIROOM)
+    // ============================================
+
+    let currentRoomsUserId = null;
+    let currentRoomsUserName = '';
+    let userProductionRoomAssignments = [];
+
+    async function openProductionRoomsModal(user) {
+        currentRoomsUserId = user.id;
+        currentRoomsUserName = user.name || user.email || 'Użytkownik';
+
+        // Utwórz modal jeśli nie istnieje
+        let modal = document.getElementById('production-rooms-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'production-rooms-modal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+                    <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-purple-50">
+                        <h2 id="production-rooms-modal-title" class="text-lg font-semibold text-purple-800">
+                            <i class="fas fa-door-open mr-2"></i>Pokoje produkcyjne
+                        </h2>
+                        <button id="production-rooms-modal-close" class="text-gray-500 hover:text-gray-700">
+                            <i class="fas fa-times text-xl"></i>
+                        </button>
+                    </div>
+                    <div class="p-4 overflow-y-auto flex-1">
+                        <p class="text-sm text-gray-600 mb-4">
+                            Użytkownik: <strong id="production-rooms-user-name"></strong>
+                        </p>
+                        
+                        <!-- Lista przypisanych pokoi -->
+                        <div class="mb-4">
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">Przypisane pokoje:</h3>
+                            <div id="production-rooms-list" class="space-y-2">
+                                <p class="text-gray-400 text-sm">Ładowanie...</p>
+                            </div>
+                        </div>
+
+                        <!-- Formularz dodawania -->
+                        <div class="border-t pt-4">
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">Dodaj pokój:</h3>
+                            <div class="flex gap-2 items-end">
+                                <div class="flex-1">
+                                    <select id="production-rooms-add-select" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                                        <option value="">Wybierz pokój...</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <label class="flex items-center gap-1 text-xs text-gray-600">
+                                        <input type="checkbox" id="production-rooms-add-primary" class="rounded border-gray-300">
+                                        Główny
+                                    </label>
+                                </div>
+                                <button id="production-rooms-add-btn" class="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+                        <button id="production-rooms-modal-done" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
+                            Zamknij
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            // Event listeners
+            document.getElementById('production-rooms-modal-close').addEventListener('click', closeProductionRoomsModal);
+            document.getElementById('production-rooms-modal-done').addEventListener('click', closeProductionRoomsModal);
+            document.getElementById('production-rooms-add-btn').addEventListener('click', handleAddProductionRoom);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) closeProductionRoomsModal();
+            });
+        }
+
+        document.getElementById('production-rooms-user-name').textContent = currentRoomsUserName;
+        modal.classList.remove('hidden');
+
+        await loadUserProductionRooms();
+        await populateProductionRoomsAddSelect();
+    }
+
+    function closeProductionRoomsModal() {
+        const modal = document.getElementById('production-rooms-modal');
+        if (modal) modal.classList.add('hidden');
+        currentRoomsUserId = null;
+        // Odśwież tabelę użytkowników
+        fetchUsers();
+    }
+
+    async function loadUserProductionRooms() {
+        const listEl = document.getElementById('production-rooms-list');
+        if (!listEl || !currentRoomsUserId) return;
+
+        listEl.innerHTML = '<p class="text-gray-400 text-sm"><i class="fas fa-spinner fa-spin mr-1"></i>Ładowanie...</p>';
+
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms?userId=${currentRoomsUserId}`, {
+                credentials: 'include'
+            });
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                userProductionRoomAssignments = result.data || [];
+                renderProductionRoomsList();
+            } else {
+                listEl.innerHTML = `<p class="text-red-500 text-sm">Błąd: ${escapeHtml(result.message)}</p>`;
+            }
+        } catch (error) {
+            console.error('Błąd ładowania pokoi użytkownika:', error);
+            listEl.innerHTML = '<p class="text-red-500 text-sm">Błąd połączenia z serwerem</p>';
+        }
+    }
+
+    function renderProductionRoomsList() {
+        const listEl = document.getElementById('production-rooms-list');
+        if (!listEl) return;
+
+        if (userProductionRoomAssignments.length === 0) {
+            listEl.innerHTML = '<p class="text-gray-400 text-sm italic">Brak przypisanych pokoi</p>';
+            return;
+        }
+
+        listEl.innerHTML = userProductionRoomAssignments.map(assignment => {
+            const roomName = assignment.room?.name || `Pokój ${assignment.roomId}`;
+            const roomCode = assignment.room?.code || '';
+            const isPrimary = assignment.isPrimary;
+
+            return `
+                <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-200">
+                    <div class="flex items-center gap-2">
+                        <span class="font-medium text-gray-800">${escapeHtml(roomName)}</span>
+                        ${roomCode ? `<span class="text-xs text-gray-500">[${escapeHtml(roomCode)}]</span>` : ''}
+                        ${isPrimary ? '<span class="px-1.5 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded"><i class="fas fa-star mr-1"></i>Główny</span>' : ''}
+                    </div>
+                    <div class="flex items-center gap-1">
+                        ${!isPrimary ? `
+                            <button class="text-yellow-600 hover:text-yellow-800 px-2 py-1 text-xs" 
+                                    onclick="setRoomAsPrimary(${assignment.id})" title="Ustaw jako główny">
+                                <i class="fas fa-star"></i>
+                            </button>
+                        ` : ''}
+                        <button class="text-red-600 hover:text-red-800 px-2 py-1 text-xs" 
+                                onclick="removeProductionRoom(${assignment.id})" title="Usuń przypisanie">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    async function populateProductionRoomsAddSelect() {
+        const select = document.getElementById('production-rooms-add-select');
+        if (!select) return;
+
+        select.innerHTML = '<option value="">Wybierz pokój...</option>';
+
+        try {
+            const response = await fetch('/api/production/rooms', { credentials: 'include' });
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                const assignedRoomIds = userProductionRoomAssignments.map(a => a.roomId);
+                const availableRooms = (result.data || []).filter(r => !assignedRoomIds.includes(r.id));
+
+                availableRooms.forEach(room => {
+                    const opt = document.createElement('option');
+                    opt.value = room.id;
+                    opt.textContent = `${room.name} [${room.code}]`;
+                    select.appendChild(opt);
+                });
+            }
+        } catch (error) {
+            console.error('Błąd ładowania pokoi:', error);
+        }
+    }
+
+    async function handleAddProductionRoom() {
+        const select = document.getElementById('production-rooms-add-select');
+        const primaryCheckbox = document.getElementById('production-rooms-add-primary');
+        
+        const roomId = select?.value;
+        const isPrimary = primaryCheckbox?.checked || false;
+
+        if (!roomId || !currentRoomsUserId) {
+            showAdminToast('Wybierz pokój do dodania', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/admin/user-production-rooms', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    userId: currentRoomsUserId,
+                    roomId: parseInt(roomId, 10),
+                    isPrimary
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Pokój przypisany', 'success');
+                select.value = '';
+                primaryCheckbox.checked = false;
+                await loadUserProductionRooms();
+                await populateProductionRoomsAddSelect();
+            } else {
+                showAdminToast(result.message || 'Błąd dodawania pokoju', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd dodawania pokoju:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    }
+
+    // Globalne funkcje dla onclick w renderowanym HTML
+    window.setRoomAsPrimary = async function(assignmentId) {
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ isPrimary: true })
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Pokój główny zmieniony', 'success');
+                await loadUserProductionRooms();
+            } else {
+                showAdminToast(result.message || 'Błąd zmiany pokoju głównego', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd zmiany pokoju głównego:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    };
+
+    window.removeProductionRoom = async function(assignmentId) {
+        if (!confirm('Czy na pewno chcesz usunąć to przypisanie pokoju?')) return;
+
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showAdminToast('Przypisanie usunięte', 'success');
+                await loadUserProductionRooms();
+                await populateProductionRoomsAddSelect();
+            } else {
+                showAdminToast(result.message || 'Błąd usuwania przypisania', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd usuwania przypisania:', error);
+            showAdminToast('Błąd połączenia z serwerem', 'error');
+        }
+    };
 })();

@@ -44,7 +44,7 @@ const clientsLink = document.getElementById('clients-link');
 const productionLink = document.getElementById('production-link');
 const adminLink = document.getElementById('admin-link');
 const logoutBtn = document.getElementById('logout-btn');
-const cartBody = document.getElementById('cart-body');
+let cartBody = document.getElementById('cart-body');
 const cartTotal = document.querySelector('#cart-total');
 const clearCartBtn = document.getElementById('clear-cart');
 const exportBtn = document.getElementById('export-json');
@@ -88,6 +88,18 @@ const templateNameInput = document.getElementById('template-name');
 const templateDescriptionInput = document.getElementById('template-description');
 const templateVisibilityInput = document.getElementById('template-visibility');
 const templateTagsInput = document.getElementById('template-tags');
+let cartTabOrderElements = [];
+let pendingCartFocus = null;
+let cartTabNavInstalled = false;
+
+const CART_PREVIEW_MODE_KEY = 'cartPreviewMode';
+const cartPreviewToggle = document.getElementById('cart-preview-toggle');
+const selectedProductsSection = document.getElementById('selected-products-section');
+const cartSection = document.getElementById('cart-section');
+let cartPreviewModeEnabled = false;
+let cartPreviewClickInstalled = false;
+let lastCartPreviewRowId = null;
+let cartEditDelegationInstalled = false;
 
 const EMBEDDED_FONTS_STATE = {
   'NotoSans-Regular.ttf': (EMBEDDED_FONTS && EMBEDDED_FONTS['NotoSans-Regular.ttf']) || null,
@@ -117,6 +129,196 @@ function arrayBufferToBase64(buffer) {
   }
 
   return null;
+}
+
+function loadCartPreviewMode() {
+  try {
+    return localStorage.getItem(CART_PREVIEW_MODE_KEY) === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+function saveCartPreviewMode(enabled) {
+  try {
+    localStorage.setItem(CART_PREVIEW_MODE_KEY, enabled ? 'true' : 'false');
+  } catch (e) {
+    // ignore
+  }
+}
+
+function disableCartPreviewModeSilently(reason = '') {
+  if (!cartPreviewModeEnabled) return;
+
+  cartPreviewModeEnabled = false;
+  saveCartPreviewMode(false);
+  applyCartPreviewModeUI();
+  if (reason) {
+    console.debug('[cart-preview] auto-disabled:', reason);
+  }
+}
+
+function applyCartPreviewModeUI() {
+  const cartTopBefore = cartSection ? cartSection.getBoundingClientRect().top : null;
+
+  if (cartPreviewToggle) {
+    cartPreviewToggle.checked = cartPreviewModeEnabled;
+  }
+  if (selectedProductsSection) {
+    selectedProductsSection.style.display = cartPreviewModeEnabled ? 'none' : '';
+  }
+
+  if (
+    typeof window !== 'undefined' &&
+    cartSection &&
+    cartTopBefore !== null
+  ) {
+    const cartTopAfter = cartSection.getBoundingClientRect().top;
+    const diff = cartTopAfter - cartTopBefore;
+    if (Math.abs(diff) > 0.5) {
+      window.scrollBy({ top: diff });
+    }
+  }
+}
+
+function initCartPreviewMode() {
+  cartPreviewModeEnabled = loadCartPreviewMode();
+  applyCartPreviewModeUI();
+
+  if (cartPreviewToggle) {
+    cartPreviewToggle.addEventListener('change', () => {
+      cartPreviewModeEnabled = !!cartPreviewToggle.checked;
+      saveCartPreviewMode(cartPreviewModeEnabled);
+      applyCartPreviewModeUI();
+    });
+  }
+}
+
+function getCartItemById(id) {
+  if (!id) return null;
+  return cart.get(id) || null;
+}
+
+function focusProjectsInput(inputEl) {
+  if (!inputEl) return;
+  try {
+    inputEl.focus({ preventScroll: true });
+  } catch (e) {
+    inputEl.focus();
+  }
+  if (typeof inputEl.setSelectionRange === 'function') {
+    const length = inputEl.value?.length ?? 0;
+    // Użyj next frame, żeby mieć pewność, że fokus się ustawił
+    requestAnimationFrame(() => {
+      try {
+        inputEl.setSelectionRange(length, length);
+      } catch (err) {
+        // ignore
+      }
+    });
+  }
+}
+
+function showCartItemPreview(item) {
+  if (!item) return;
+
+  const directUrl = item.projectViewUrl || item.projectviewurl || null;
+  if (directUrl) {
+    showGalleryImage(directUrl, item.product?.name || 'Podgląd produktu');
+    return;
+  }
+
+  // 2) Najpierw spróbuj z mapowania (GalleryProject → Product)
+  // To rozwiązuje sytuacje, gdy slug pliku w galerii różni się od nazwy produktu w bazie.
+  if (item.product && typeof findGallerySlugForProducts === 'function') {
+    const slugFromMapping = findGallerySlugForProducts([item.product]);
+    if (slugFromMapping && typeof buildGalleryUrl === 'function') {
+      const url = buildGalleryUrl(slugFromMapping);
+      if (url) {
+        showGalleryImage(url, item.product?.name || 'Podgląd produktu');
+        return;
+      }
+    }
+  }
+
+  // 3) Fallback: spróbuj po identyfikatorze/nazwie jak wcześniej
+  const identifier = item.product?.identifier || item.product?.pc_id || item.product?.name || '';
+  if (identifier && typeof buildGalleryUrl === 'function') {
+    const url = buildGalleryUrl(identifier);
+    if (url) {
+      showGalleryImage(url, item.product?.name || 'Podgląd produktu');
+      return;
+    }
+  }
+
+  setGalleryPlaceholder('Brak obrazka dla wybranego produktu.');
+}
+
+function initCartPreviewClick() {
+  if (cartPreviewClickInstalled) return;
+  if (!cartBody) return;
+
+  // Używamy mousedown w fazie capture, żeby zareagować zanim blur/commit
+  // z poprzednio aktywnego inputa przebuduje koszyk i „zje” klik.
+  cartBody.addEventListener('mousedown', (event) => {
+    if (!cartPreviewModeEnabled) return;
+
+    if (event.button !== 0) return;
+
+    const target = event.target;
+    if (!target) return;
+
+    const interactive = target.closest('input, textarea, button, select, a, label');
+    const clickedProjectsInput = interactive?.classList?.contains('projects-input');
+
+    // Jeżeli klik dotyczy innego pola (np. ilości), nie przełączaj podglądu
+    if (interactive && !clickedProjectsInput) {
+      return;
+    }
+
+    const row = target.closest('tr[data-id]');
+    if (!row) return;
+
+    const id = row.dataset.id;
+    const item = getCartItemById(id);
+    if (!item) return;
+
+    lastCartPreviewRowId = id;
+    showCartItemPreview(item);
+
+    if (!clickedProjectsInput) {
+      requestAnimationFrame(() => {
+        // Po blur może nastąpić render koszyka – szukamy wiersza ponownie po id
+        const freshRow = cartBody.querySelector(`tr[data-id="${CSS.escape(id)}"]`);
+        focusProjectsInput(freshRow?.querySelector('.projects-input'));
+      });
+    }
+
+  }, true);
+
+  cartBody.addEventListener('focusin', (event) => {
+    if (!cartPreviewModeEnabled) return;
+
+    const target = event.target;
+    if (!target) return;
+
+    const interactive = target.closest?.('input, textarea, button, select, a, label');
+    if (!interactive) return;
+
+    const row = interactive.closest('tr[data-id]');
+    if (!row) return;
+
+    const id = row.dataset.id;
+    if (!id || id === lastCartPreviewRowId) return;
+
+    const item = getCartItemById(id);
+    if (!item) return;
+
+    lastCartPreviewRowId = id;
+    showCartItemPreview(item);
+  });
+
+  cartPreviewClickInstalled = true;
 }
 
 function escapeHtml(str) {
@@ -1802,12 +2004,16 @@ function showGalleryImage(src, alt) {
   galleryPreviewPlaceholder.hidden = true;
   galleryPreviewImage.hidden = false;
   galleryPreviewImage.alt = alt ?? 'Podgląd produktu';
-  
-  // Na produkcji (HTTPS) nie możemy ładować obrazka bezpośrednio z HTTP QNAP-a,
-  // dlatego korzystamy z proxy backendu (/api/gallery/image), który pobiera obraz
-  // z GALLERY_BASE i zwraca go z tego samego originu.
-  const proxiedUrl = `${GALLERY_API_BASE}/image?url=${encodeURIComponent(src)}`;
-  galleryPreviewImage.src = proxiedUrl;
+
+  let finalUrl = src;
+  const proxyPrefix = `${GALLERY_API_BASE}/image?`;
+  if (!src.startsWith(proxyPrefix)) {
+    // Na produkcji (HTTPS) nie możemy ładować obrazka bezpośrednio z HTTP QNAP-a,
+    // dlatego korzystamy z proxy backendu (/api/gallery/image), który pobiera obraz
+    // z GALLERY_BASE i zwraca go z tego samego originu.
+    finalUrl = `${GALLERY_API_BASE}/image?url=${encodeURIComponent(src)}`;
+  }
+  galleryPreviewImage.src = finalUrl;
   
   
   // initGalleryZoom() jest wywoływana w initialize(), nie tutaj
@@ -1955,10 +2161,11 @@ function renderFavoritesBar() {
   });
   
   // Dodaj event listenery do przycisków usuwania
-  const removeButtons = favoritesBarItems.querySelectorAll('.favorites-bar__remove');
+  const removeButtons = document.querySelectorAll('.favorites-bar__remove');
   removeButtons.forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
+    btn.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       const favoriteId = btn.dataset.favoriteId;
       await removeFromFavorites(favoriteId);
       renderFavoritesBar();
@@ -1977,6 +2184,404 @@ function renderFavoritesBar() {
       }
     });
   });
+}
+
+const CART_FIELD_ORDER = ['projects', 'qtyPerProject', 'qty', 'notes', 'remove'];
+const CART_FIELD_SELECTORS = {
+  projects: '.projects-input',
+  qtyPerProject: '.qty-per-project-input',
+  qty: '.qty-input',
+  notes: '.cart-notes-input',
+  remove: '.remove-from-cart'
+};
+
+function initCartTabNavigation() {
+  if (cartTabNavInstalled) return;
+  if (!cartBody) return;
+
+  cartBody.addEventListener('keydown', handleCartTabKeydownDelegated, true);
+  cartTabNavInstalled = true;
+}
+
+function updateCartEntry(id, updates) {
+  const entry = cart.get(id);
+  if (!entry) return false;
+
+  const newEntry = { ...entry, ...updates };
+  cart.set(id, newEntry);
+  saveCartToStorage();
+  return true;
+}
+
+function recalculateProjectBreakdown(projectsStr, totalQty) {
+  if (!projectsStr || totalQty <= 0) {
+    return { quantityInputPerProject: '', perProjectQuantities: [] };
+  }
+
+  const result = computePerProjectQuantities(projectsStr, totalQty, '');
+  if (result.success) {
+    return {
+      quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
+      perProjectQuantities: result.perProjectQuantities
+    };
+  }
+
+  return { quantityInputPerProject: '', perProjectQuantities: [] };
+}
+
+function initCartEditDelegation() {
+  if (cartEditDelegationInstalled) return;
+  if (!cartBody) return;
+
+  const safe = (label, fn) => {
+    try {
+      fn();
+    } catch (e) {
+      console.error(`[cart][${label}] error`, e);
+    }
+  };
+
+  const commitQty = (qtyInput) => {
+    const id = qtyInput?.dataset?.id;
+    if (!id) return;
+    const entry = cart.get(id);
+    if (!entry) return;
+
+    const value = parseInt(qtyInput.value, 10);
+    const currentQty = Number(entry.quantity ?? 0);
+    if (Number.isFinite(value) && value === currentQty) {
+      return;
+    }
+
+    const rawStock = (entry?.product && entry.product.stock !== undefined && entry.product.stock !== null)
+      ? Number(entry.product.stock)
+      : null;
+    const stock = Number.isFinite(rawStock) ? rawStock : null;
+
+    if (!Number.isFinite(value) || value < 1) {
+      qtyInput.value = entry.quantity ?? 1;
+      return;
+    }
+
+    const previousQty = entry.quantity ?? 1;
+    let finalQty = value;
+
+    if (stock !== null && stock >= 0 && value > stock) {
+      const lines = [
+        `Na stanie: ${stock} szt.`,
+        `Wpisujesz: ${value} szt.`,
+        '',
+        'Dodać mimo to?'
+      ];
+
+      if (!confirm(lines.join('\n'))) {
+        qtyInput.value = previousQty;
+        return;
+      }
+    }
+
+    const projectsStr = entry.projects || '';
+    const breakdown = recalculateProjectBreakdown(projectsStr, finalQty);
+
+    updateCartEntry(id, {
+      quantity: finalQty,
+      ...breakdown,
+      quantitySource: 'total',
+      stockAtOrder: stock,
+      belowStock: stock !== null && finalQty > stock
+    });
+    renderCart();
+  };
+
+  const commitProjects = (projectsInput) => {
+    const id = projectsInput?.dataset?.id;
+    if (!id) return;
+    const entry = cart.get(id);
+    if (!entry) return;
+
+    const value = (projectsInput.value || '').trim();
+    const currentProjects = String(entry.projects || '').trim();
+    if (!value && !currentProjects) {
+      return;
+    }
+
+    if (!value) {
+      updateCartEntry(id, {
+        projects: '',
+        quantityInputPerProject: '',
+        perProjectQuantities: [],
+        quantitySource: 'total'
+      });
+      renderCart();
+      return;
+    }
+
+    const normalized = sanitizeProjectsValue(value);
+    if (normalized && normalized === currentProjects) {
+      return;
+    }
+    if (!normalized || !isValidProjectInput(normalized)) {
+      updateCartEntry(id, {
+        projects: '',
+        quantityInputPerProject: '',
+        perProjectQuantities: [],
+        quantitySource: 'total'
+      });
+      renderCart();
+      return;
+    }
+
+    const projectNumbers = parseProjects(normalized);
+    if (projectNumbers.length === 0) {
+      updateCartEntry(id, {
+        projects: normalized,
+        quantityInputPerProject: '',
+        perProjectQuantities: [],
+        quantitySource: 'total'
+      });
+      renderCart();
+      return;
+    }
+
+    const totalQty = entry.quantity || 0;
+    const perProjectInputStr = (entry.quantityInputPerProject || '').trim();
+
+    if (perProjectInputStr) {
+      const result = computePerProjectQuantities(normalized, '', perProjectInputStr);
+      if (result.success) {
+        updateCartEntry(id, {
+          projects: normalized,
+          quantity: result.totalQuantity,
+          quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
+          perProjectQuantities: result.perProjectQuantities,
+          quantitySource: 'perProject'
+        });
+      } else {
+        if (totalQty > 0) {
+          const breakdown = recalculateProjectBreakdown(normalized, totalQty);
+          updateCartEntry(id, {
+            projects: normalized,
+            ...breakdown,
+            quantitySource: 'total'
+          });
+        } else {
+          updateCartEntry(id, {
+            projects: normalized,
+            quantityInputPerProject: '',
+            perProjectQuantities: [],
+            quantitySource: 'total'
+          });
+        }
+      }
+    } else if (totalQty > 0) {
+      const breakdown = recalculateProjectBreakdown(normalized, totalQty);
+      updateCartEntry(id, {
+        projects: normalized,
+        ...breakdown,
+        quantitySource: 'total'
+      });
+    } else {
+      updateCartEntry(id, {
+        projects: normalized,
+        quantityInputPerProject: '',
+        perProjectQuantities: [],
+        quantitySource: 'total'
+      });
+    }
+
+    renderCart();
+  };
+
+  const commitQtyPerProject = (qtyPerProjectInput) => {
+    const id = qtyPerProjectInput?.dataset?.id;
+    if (!id) return;
+    const entry = cart.get(id);
+    if (!entry) return;
+
+    const rawValue = (qtyPerProjectInput.value || '').trim();
+    const projectsStr = entry.projects || '';
+    const currentRaw = String(entry.quantityInputPerProject || '').trim();
+    if (!rawValue && !currentRaw) {
+      return;
+    }
+
+    if (!rawValue) {
+      updateCartEntry(id, {
+        quantityInputPerProject: '',
+        perProjectQuantities: [],
+        quantitySource: 'total'
+      });
+      renderCart();
+      return;
+    }
+
+    const perProjectQtyStr = sanitizePerProjectValue(rawValue);
+    if (perProjectQtyStr && perProjectQtyStr === currentRaw) {
+      return;
+    }
+    if (!perProjectQtyStr) {
+      updateCartEntry(id, {
+        quantityInputPerProject: '',
+        perProjectQuantities: [],
+        quantitySource: 'total'
+      });
+      renderCart();
+      return;
+    }
+
+    if (!projectsStr) {
+      updateCartEntry(id, {
+        quantityInputPerProject: perProjectQtyStr,
+        perProjectQuantities: [],
+        quantitySource: 'perProject'
+      });
+      setStatus('Wpisz numery projektów, aby przeliczyć ilości', 'info', 'cart');
+      renderCart();
+      return;
+    }
+
+    const result = computePerProjectQuantities(projectsStr, '', perProjectQtyStr);
+    if (!result.success) {
+      updateCartEntry(id, {
+        quantityInputPerProject: perProjectQtyStr,
+        perProjectQuantities: [],
+        quantitySource: 'perProject'
+      });
+      renderCart();
+      return;
+    }
+
+    updateCartEntry(id, {
+      quantity: result.totalQuantity,
+      quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
+      perProjectQuantities: result.perProjectQuantities,
+      quantitySource: 'perProject'
+    });
+    renderCart();
+  };
+
+  cartBody.addEventListener('input', (event) => {
+    const target = event.target;
+    if (target && target.classList?.contains('projects-input')) {
+      target.value = target.value.replace(/[^0-9,\-\s]/g, '');
+    }
+  });
+
+  cartBody.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const target = event.target;
+    if (!target || !target.classList) return;
+
+    if (
+      target.classList.contains('qty-input') ||
+      target.classList.contains('projects-input') ||
+      target.classList.contains('qty-per-project-input')
+    ) {
+      event.preventDefault();
+      target.blur();
+    }
+  }, true);
+
+  cartBody.addEventListener('change', (event) => {
+    const target = event.target;
+    if (!target || !target.classList) return;
+
+    if (target.classList.contains('qty-input')) safe('change:qty', () => commitQty(target));
+    else if (target.classList.contains('projects-input')) safe('change:projects', () => commitProjects(target));
+    else if (target.classList.contains('qty-per-project-input')) safe('change:qtyPerProject', () => commitQtyPerProject(target));
+  }, true);
+
+  cartBody.addEventListener('focusout', (event) => {
+    const target = event.target;
+    if (!target || !target.classList) return;
+
+    if (target.classList.contains('qty-input')) safe('focusout:qty', () => commitQty(target));
+    else if (target.classList.contains('projects-input')) safe('focusout:projects', () => commitProjects(target));
+    else if (target.classList.contains('qty-per-project-input')) safe('focusout:qtyPerProject', () => commitQtyPerProject(target));
+  }, true);
+
+  cartEditDelegationInstalled = true;
+}
+
+function handleCartTabKeydownDelegated(event) {
+  if (event.key !== 'Tab') return;
+
+  const target = event.target;
+  if (!target || !target.dataset) return;
+
+  const field = target.dataset.cartField;
+  if (!field) return;
+
+  const fieldIndex = CART_FIELD_ORDER.indexOf(field);
+  if (fieldIndex === -1) return;
+
+  const row = target.closest('tr[data-id]');
+  if (!row) return;
+
+  const direction = event.shiftKey ? -1 : 1;
+  let targetRow = row;
+  let targetFieldIndex = fieldIndex + direction;
+
+  if (targetFieldIndex >= CART_FIELD_ORDER.length) {
+    targetRow = row.nextElementSibling && row.nextElementSibling.matches('tr[data-id]') ? row.nextElementSibling : null;
+    targetFieldIndex = 0;
+  } else if (targetFieldIndex < 0) {
+    targetRow = row.previousElementSibling && row.previousElementSibling.matches('tr[data-id]') ? row.previousElementSibling : null;
+    targetFieldIndex = CART_FIELD_ORDER.length - 1;
+  }
+
+  if (!targetRow) {
+    // Pozwól TAB przejść poza tabelę
+    return;
+  }
+
+  const targetField = CART_FIELD_ORDER[targetFieldIndex];
+  const targetOrderId = targetRow.dataset.id;
+
+  event.preventDefault();
+  pendingCartFocus = { orderId: targetOrderId, field: targetField };
+  setTimeout(() => {
+    if (pendingCartFocus && pendingCartFocus.orderId === targetOrderId && pendingCartFocus.field === targetField) {
+      focusCartField(targetOrderId, targetField);
+      pendingCartFocus = null;
+    }
+  }, 0);
+}
+
+function focusCartField(rowOrId, field) {
+  const selector = CART_FIELD_SELECTORS[field];
+  if (!selector) return false;
+
+  const row = typeof rowOrId === 'string'
+    ? cartBody?.querySelector(`tr[data-id="${rowOrId}"]`)
+    : rowOrId;
+
+  if (!row) return false;
+
+  const element = row.querySelector(selector);
+  if (!element || typeof element.focus !== 'function') {
+    return false;
+  }
+
+  element.focus();
+  if (element.setSelectionRange && element.value !== undefined) {
+    const len = element.value.length;
+    element.setSelectionRange(len, len);
+  } else if (element.select) {
+    element.select();
+  }
+
+  return true;
+}
+
+function restorePendingCartFocus() {
+  if (!pendingCartFocus) return;
+
+  const { orderId, field } = pendingCartFocus;
+  const focused = focusCartField(orderId, field);
+  if (focused) {
+    pendingCartFocus = null;
+  }
 }
 
 function resetResultsPlaceholder(text = 'Brak wyników do wyświetlenia.') {
@@ -2142,6 +2747,8 @@ async function searchProducts(event) {
 
   setStatus('Wyszukiwanie produktów...', 'info');
   resetResultsPlaceholder('Trwa pobieranie danych...');
+
+  disableCartPreviewModeSilently('search');
 
   try {
     const searchTerms = tokenizeQuery(query);
@@ -2407,6 +3014,7 @@ function setSelectedResultsRow(row) {
 }
 
 function renderResults(products) {
+  disableCartPreviewModeSilently('renderResults');
   resultsBody.innerHTML = '';
   setSelectedResultsRow(null);
   products.forEach(product => {
@@ -2762,13 +3370,32 @@ function buildGalleryUrl(productIdentifier = null) {
   }
   
   // Return the proxied image URL (same as used in gallery preview)
-  const fullApiBase = GALLERY_API_BASE.startsWith('http') 
-    ? GALLERY_API_BASE 
-    : `${window.location.origin}${GALLERY_API_BASE}`;
-  const finalUrl = `${fullApiBase}/image?url=${encodeURIComponent(productData.url)}`;
+  const finalUrl = `${GALLERY_API_BASE}/image?url=${encodeURIComponent(productData.url)}`;
   console.log('[buildGalleryUrl] Final proxied URL:', finalUrl);
   
   return finalUrl;
+}
+
+function getProjectViewUrlForProduct(product) {
+  if (!product) return null;
+
+  const selectedSlug = (galleryProductSelect && typeof galleryProductSelect.value === 'string')
+    ? galleryProductSelect.value.trim()
+    : '';
+  if (selectedSlug) {
+    const urlFromSelected = buildGalleryUrl(selectedSlug);
+    if (urlFromSelected) return urlFromSelected;
+  }
+
+  if (typeof findGallerySlugForProducts === 'function') {
+    const slugFromMapping = findGallerySlugForProducts([product]);
+    if (slugFromMapping) {
+      const url = buildGalleryUrl(slugFromMapping);
+      if (url) return url;
+    }
+  }
+
+  return buildGalleryUrl(product.identifier || product.pc_id || product.name);
 }
 
 function addToCart(product, quantity, projects = '', itemNotes = '') {
@@ -2845,7 +3472,7 @@ function addToCart(product, quantity, projects = '', itemNotes = '') {
     locationName,
     source,
     itemNotes: currentNotes,
-    projectViewUrl: buildGalleryUrl(product.identifier || product.name),  // Capture gallery URL for this specific product
+    projectViewUrl: getProjectViewUrlForProduct(product),
     stockAtOrder: stock,
     belowStock
   });
@@ -2914,7 +3541,7 @@ function addToCartWithQuantityBreakdown(product, computeResult, itemNotes = '') 
     locationName,
     source,
     itemNotes: currentNotes,
-    projectViewUrl: buildGalleryUrl(product.identifier || product.name),  // Capture gallery URL for this specific product
+    projectViewUrl: getProjectViewUrlForProduct(product),
     stockAtOrder: stock,
     belowStock
   });
@@ -3020,18 +3647,18 @@ function renderCart() {
           ${stockWarningHtml}
         </td>
         <td class="cart-projects-col">
-          <input type="text" class="projects-input" value="${projectsSafe}" placeholder="1-5,7" data-id="${id}" inputmode="numeric" pattern="[0-9,\-\s]*" title="Nr projektów" />
-          <input type="text" class="qty-per-project-input ${perProjectInputClass}" value="${qtyPerProjectDisplaySafe}" placeholder="po 20" data-id="${id}" title="Ilości na projekty: po X lub lista 10,20,30" />
+          <input type="text" class="projects-input" value="${projectsSafe}" placeholder="1-5,7" data-id="${id}" inputmode="numeric" pattern="[0-9,\\-\\s]*" title="Nr projektów" data-cart-field="projects" />
+          <input type="text" class="qty-per-project-input ${perProjectInputClass}" value="${qtyPerProjectDisplaySafe}" placeholder="po 20" data-id="${id}" title="Ilości na projekty: po X lub lista 10,20,30" data-cart-field="qtyPerProject" />
         </td>
         <td>
-          <input type="number" class="qty-input ${qtyInputClass}" value="${quantity}" min="1" data-id="${id}" title="Łączna ilość" />
+          <input type="number" class="qty-input ${qtyInputClass}" value="${quantity}" min="1" data-id="${id}" title="Łączna ilość" data-cart-field="qty" />
         </td>
         <td class="cart-notes-cell">
-          <textarea class="cart-notes-input" data-id="${id}" placeholder="Uwagi do pozycji..." title="Uwagi produkcyjne">${itemNotesSafe}</textarea>
+          <textarea class="cart-notes-input" data-id="${id}" placeholder="Uwagi do pozycji..." title="Uwagi produkcyjne" data-cart-field="notes">${itemNotesSafe}</textarea>
         </td>
         <td class="price-cell">${lineTotalSafe}</td>
         <td class="cart-actions-cell">
-          <button type="button" class="btn btn--danger btn--sm remove-from-cart" data-id="${id}">Usuń</button>
+          <button type="button" class="btn btn--danger btn--sm remove-from-cart" data-id="${id}" data-cart-field="remove">Usuń</button>
         </td>
       </tr>
     `);
@@ -3039,276 +3666,11 @@ function renderCart() {
 
   cartBody.innerHTML = rowsHtml.join('');
 
-  const qtyInputs = cartBody.querySelectorAll('.qty-input');
-  const projectsInputs = cartBody.querySelectorAll('.projects-input');
-  const qtyPerProjectInputs = cartBody.querySelectorAll('.qty-per-project-input');
+  initCartTabNavigation();
+  initCartEditDelegation();
+  restorePendingCartFocus();
+
   const removeBtns = cartBody.querySelectorAll('.remove-from-cart');
-
-  // ============================================================
-  // OBSŁUGA EDYCJI W KOSZYKU - uproszczona i niezawodna logika
-  // ============================================================
-
-  // Pomocnicza funkcja do aktualizacji pozycji w koszyku
-  function updateCartEntry(id, updates) {
-    const entry = cart.get(id);
-    if (!entry) return false;
-    
-    const newEntry = { ...entry, ...updates };
-    cart.set(id, newEntry);
-    saveCartToStorage();
-    return true;
-  }
-
-  // Pomocnicza funkcja do przeliczania rozkładu na projekty
-  function recalculateProjectBreakdown(id, projectsStr, totalQty) {
-    if (!projectsStr || totalQty <= 0) {
-      return { quantityInputPerProject: '', perProjectQuantities: [] };
-    }
-    
-    const result = computePerProjectQuantities(projectsStr, totalQty, '');
-    if (result.success) {
-      return {
-        quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
-        perProjectQuantities: result.perProjectQuantities
-      };
-    }
-    return { quantityInputPerProject: '', perProjectQuantities: [] };
-  }
-
-  // 1. OBSŁUGA POLA ILOŚCI (kolumna "Ilość")
-  qtyInputs.forEach(qtyInput => {
-    qtyInput.addEventListener('blur', () => {
-      const id = qtyInput.dataset.id;
-      const entry = cart.get(id);
-      if (!entry) return;
-
-      const value = parseInt(qtyInput.value, 10);
-      const rawStock = (entry?.product && entry.product.stock !== undefined && entry.product.stock !== null)
-        ? Number(entry.product.stock)
-        : null;
-      const stock = Number.isFinite(rawStock) ? rawStock : null;
-
-      // Walidacja
-      if (!Number.isFinite(value) || value < 1) {
-        qtyInput.value = entry.quantity ?? 1;
-        return;
-      }
-
-      const previousQty = entry.quantity ?? 1;
-      let finalQty = value;
-
-      if (stock !== null && stock >= 0 && value > stock) {
-        const lines = [
-          `Na stanie: ${stock} szt.`,
-          `Wpisujesz: ${value} szt.`,
-          '',
-          'Dodać mimo to?'
-        ];
-
-        if (!confirm(lines.join('\n'))) {
-          qtyInput.value = previousQty;
-          return;
-        }
-      }
-
-      // Przelicz rozkład na projekty (jeśli są)
-      const projectsStr = entry.projects || '';
-      const breakdown = recalculateProjectBreakdown(id, projectsStr, finalQty);
-
-      updateCartEntry(id, {
-        quantity: finalQty,
-        ...breakdown,
-        quantitySource: 'total',
-        stockAtOrder: stock,
-        belowStock: stock !== null && finalQty > stock
-      });
-      renderCart();
-    });
-  });
-
-  // 2. OBSŁUGA POLA PROJEKTÓW (kolumna "Nr projektów")
-  projectsInputs.forEach(projectsInput => {
-    // Filtruj niedozwolone znaki podczas wpisywania
-    projectsInput.addEventListener('input', () => {
-      projectsInput.value = projectsInput.value.replace(/[^0-9,\-\s]/g, '');
-    });
-
-    projectsInput.addEventListener('blur', () => {
-      const id = projectsInput.dataset.id;
-      const entry = cart.get(id);
-      if (!entry) return;
-
-      const value = projectsInput.value.trim();
-
-      // Puste pole = wyczyść projekty
-      if (!value) {
-        updateCartEntry(id, {
-          projects: '',
-          quantityInputPerProject: '',
-          perProjectQuantities: [],
-          quantitySource: 'total'
-        });
-        renderCart();
-        return;
-      }
-
-      // Automatycznie wyczyść (usuwa zbędne przecinki, spacje)
-      const normalized = sanitizeProjectsValue(value);
-      
-      // Jeśli po sanityzacji jest pusty lub niepoprawny - wyczyść bez błędu
-      if (!normalized || !isValidProjectInput(normalized)) {
-        updateCartEntry(id, {
-          projects: '',
-          quantityInputPerProject: '',
-          perProjectQuantities: [],
-          quantitySource: 'total'
-        });
-        renderCart();
-        return;
-      }
-
-      const projectNumbers = parseProjects(normalized);
-
-      // Brak poprawnych numerów
-      if (projectNumbers.length === 0) {
-        updateCartEntry(id, {
-          projects: normalized,
-          quantityInputPerProject: '',
-          perProjectQuantities: [],
-          quantitySource: 'total'
-        });
-        renderCart();
-        return;
-      }
-
-      // Mamy poprawne projekty - teraz decydujemy jak przeliczyć ilości
-      const totalQty = entry.quantity || 0;
-      const perProjectInputStr = (entry.quantityInputPerProject || '').trim();
-
-      // Przypadek A: Użytkownik wcześniej wpisał "po X" lub listę ilości - użyj tego
-      if (perProjectInputStr) {
-        const result = computePerProjectQuantities(normalized, '', perProjectInputStr);
-        if (result.success) {
-          updateCartEntry(id, {
-            projects: normalized,
-            quantity: result.totalQuantity,
-            quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
-            perProjectQuantities: result.perProjectQuantities,
-            quantitySource: 'perProject'
-          });
-        } else {
-          // Ilości nie pasują do nowej liczby projektów - rozłóż równomiernie
-          if (totalQty > 0) {
-            const breakdown = recalculateProjectBreakdown(id, normalized, totalQty);
-            updateCartEntry(id, {
-              projects: normalized,
-              ...breakdown,
-              quantitySource: 'total'
-            });
-          } else {
-            updateCartEntry(id, {
-              projects: normalized,
-              quantityInputPerProject: '',
-              perProjectQuantities: [],
-              quantitySource: 'total'
-            });
-          }
-        }
-      }
-      // Przypadek B: Mamy tylko łączną ilość - rozłóż równomiernie
-      else if (totalQty > 0) {
-        const breakdown = recalculateProjectBreakdown(id, normalized, totalQty);
-        updateCartEntry(id, {
-          projects: normalized,
-          ...breakdown,
-          quantitySource: 'total'
-        });
-      }
-      // Przypadek C: Brak ilości - tylko zapisz projekty
-      else {
-        updateCartEntry(id, {
-          projects: normalized,
-          quantityInputPerProject: '',
-          perProjectQuantities: [],
-          quantitySource: 'total'
-        });
-      }
-
-      renderCart();
-    });
-  });
-
-  // 3. OBSŁUGA POLA "ILOŚCI NA PROJEKTY" (kolumna "Ilości na proj.")
-  qtyPerProjectInputs.forEach(qtyPerProjectInput => {
-    qtyPerProjectInput.addEventListener('blur', () => {
-      const id = qtyPerProjectInput.dataset.id;
-      const entry = cart.get(id);
-      if (!entry) return;
-
-      const rawValue = qtyPerProjectInput.value.trim();
-      const projectsStr = entry.projects || '';
-
-      // Puste pole = wyczyść rozkład (ale zachowaj łączną ilość)
-      if (!rawValue) {
-        updateCartEntry(id, {
-          quantityInputPerProject: '',
-          perProjectQuantities: [],
-          quantitySource: 'total'
-        });
-        renderCart();
-        return;
-      }
-
-      // Automatycznie wyczyść (usuwa zbędne przecinki)
-      const perProjectQtyStr = sanitizePerProjectValue(rawValue);
-      
-      // Jeśli po sanityzacji jest pusty - wyczyść bez błędu
-      if (!perProjectQtyStr) {
-        updateCartEntry(id, {
-          quantityInputPerProject: '',
-          perProjectQuantities: [],
-          quantitySource: 'total'
-        });
-        renderCart();
-        return;
-      }
-
-      // Zawsze zapisz wpisaną wartość (nawet bez projektów)
-      if (!projectsStr) {
-        updateCartEntry(id, {
-          quantityInputPerProject: perProjectQtyStr,
-          perProjectQuantities: [],
-          quantitySource: 'perProject'
-        });
-        setStatus('Wpisz numery projektów, aby przeliczyć ilości', 'info', 'cart');
-        renderCart();
-        return;
-      }
-
-      // Mamy projekty - oblicz rozkład
-      const result = computePerProjectQuantities(projectsStr, '', perProjectQtyStr);
-
-      if (!result.success) {
-        // Zachowaj wpisaną wartość mimo błędu (bez komunikatu o błędzie dla drobnych problemów)
-        updateCartEntry(id, {
-          quantityInputPerProject: perProjectQtyStr,
-          quantitySource: 'perProject'
-        });
-        renderCart();
-        return;
-      }
-
-      // Sukces - zapisz przeliczone wartości
-      updateCartEntry(id, {
-        quantity: result.totalQuantity,
-        quantityInputPerProject: result.perProjectQuantities.map(p => p.qty).join(','),
-        perProjectQuantities: result.perProjectQuantities,
-        quantitySource: 'perProject'
-      });
-      renderCart();
-    });
-  });
-
   removeBtns.forEach(removeBtn => {
     removeBtn.addEventListener('click', () => {
       cart.delete(removeBtn.dataset.id);
@@ -3659,6 +4021,9 @@ function togglePrices() {
 function initialize() {
   // Inicjalizacja motywu
   initTheme();
+
+  initCartPreviewMode();
+  initCartPreviewClick();
   
   resetResultsPlaceholder();
 

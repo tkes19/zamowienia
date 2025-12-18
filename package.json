@@ -1,0 +1,12 @@
+{
+  "name": "zamowienia",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "tailwind:build": "tailwindcss -c tailwind.config.js -i ./assets/tailwind.css -o ./assets/tailwind.generated.css --minify",
+    "tailwind:watch": "tailwindcss -c tailwind.config.js -i ./assets/tailwind.css -o ./assets/tailwind.generated.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.10"
+  }
+}
