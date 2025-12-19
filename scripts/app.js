@@ -42,6 +42,7 @@ let selectedTemplate = null;
 const resultsBody = document.getElementById('results-body');
 const clientsLink = document.getElementById('clients-link');
 const productionLink = document.getElementById('production-link');
+const productionStatusLink = document.getElementById('production-status-link');
 const adminLink = document.getElementById('admin-link');
 const logoutBtn = document.getElementById('logout-btn');
 let cartBody = document.getElementById('cart-body');
@@ -4714,10 +4715,19 @@ function showUserNavigation(role) {
   
   // Produkcja - dla ról produkcyjnych + SALES_DEPT (podgląd) + ADMIN
   if (productionLink) {
-    if (['ADMIN', 'SALES_DEPT', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER', 'WAREHOUSE'].includes(role)) {
+    if (['ADMIN', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER', 'WAREHOUSE'].includes(role)) {
       productionLink.style.display = 'flex';
     } else {
       productionLink.style.display = 'none';
+    }
+  }
+
+  // Status produkcji (podgląd) - tylko dla SALES_DEPT
+  if (productionStatusLink) {
+    if (role === 'SALES_DEPT') {
+      productionStatusLink.style.display = 'flex';
+    } else {
+      productionStatusLink.style.display = 'none';
     }
   }
   
@@ -4739,8 +4749,8 @@ function showUserNavigation(role) {
       adminLink.innerHTML = '<i class="fas fa-cog"></i> Panel admina';
     } else if (role === 'SALES_DEPT') {
       adminLink.style.display = 'flex';
-      adminLink.href = '/admin';
-      adminLink.innerHTML = '<i class="fas fa-cog"></i> Ustawienia';
+      adminLink.href = '/admin#orders';
+      adminLink.innerHTML = '<i class="fas fa-clipboard-list"></i> Zamówienia (admin)';
     } else if (role === 'GRAPHICS') {
       adminLink.style.display = 'flex';
       adminLink.href = '/admin#city-access';

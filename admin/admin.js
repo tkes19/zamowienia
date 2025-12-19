@@ -27,10 +27,187 @@ function showAdminToast(message, type = 'info', duration = 3000) {
     }, duration);
 }
 
+function hideRestrictedNavForUnauthorizedUser() {
+    const navLinks = document.querySelectorAll('aside [data-view]');
+    navLinks.forEach(link => {
+        link.style.display = 'none';
+    });
+
+    ['aside a[href="/clients"]', 'aside a[href="/machine-assignments.html"]', 'aside a[href="/"]']
+        .forEach(selector => {
+            document.querySelectorAll(selector).forEach(link => {
+                link.style.display = 'none';
+            });
+        });
+
+    const main = document.querySelector('main');
+    if (main) {
+        main.innerHTML = `
+            <div class="unauthorized-overlay bg-white border border-red-100 rounded-xl p-8 text-center shadow-md mx-auto mt-12 max-w-2xl">
+                <div class="flex flex-col items-center gap-3 text-red-500">
+                    <i class="fas fa-user-lock text-3xl"></i>
+                    <p class="text-lg font-semibold text-gray-900">Brak dostępu</p>
+                    <p class="text-sm text-gray-500">
+                        To konto nie ma uprawnień do tej sekcji albo sesja wygasła.
+                        Zaloguj się ponownie lub skontaktuj z administratorem.
+                    </p>
+                </div>
+            </div>
+        `;
+    }
+}
+
+let adminAllowedViews = null;
+let adminUserRole = null;
+let adminProdStatusReadOnly = false;
+
+function getAllowedAdminViewsForRole(role) {
+    const PRODUCTION_VIEWS = [
+        'production-rooms',
+        'production-work-center-types',
+        'production-operation-types',
+        'production-work-centers',
+        'production-work-stations',
+        'production-paths',
+        'production-orders'
+    ];
+
+    const BASE_VIEWS = ['dashboard'];
+
+    const roleViews = {
+        ADMIN: [
+            ...BASE_VIEWS,
+            'products',
+            'orders',
+            'users',
+            'folder-access',
+            'city-access',
+            'product-mapping',
+            'departments',
+            'delivery-presets',
+            ...PRODUCTION_VIEWS,
+            'settings'
+        ],
+        SALES_DEPT: [
+            ...BASE_VIEWS,
+            'orders',
+            'folder-access',
+            'city-access'
+        ],
+        WAREHOUSE: [
+            ...BASE_VIEWS,
+            'products',
+            'orders'
+        ],
+        PRODUCTION: [
+            ...BASE_VIEWS,
+            'orders',
+            ...PRODUCTION_VIEWS
+        ],
+        PRODUCTION_MANAGER: [
+            ...BASE_VIEWS,
+            'orders',
+            ...PRODUCTION_VIEWS
+        ],
+        OPERATOR: [
+            ...BASE_VIEWS,
+            ...PRODUCTION_VIEWS
+        ],
+        GRAPHICS: [
+            'city-access'
+        ],
+        GRAPHIC_DESIGNER: [
+            'city-access'
+        ]
+    };
+
+    return roleViews[role] || [];
+}
+
+function applyAdminNavRbac(allowedViews) {
+    const allowed = new Set(allowedViews || []);
+
+    document.querySelectorAll('aside [data-view]').forEach(link => {
+        const view = link.getAttribute('data-view');
+        if (!view) return;
+        link.style.display = allowed.has(view) ? 'flex' : 'none';
+    });
+
+    const machineAssignmentsLink = document.querySelector('aside a[href="/machine-assignments.html"]');
+    if (machineAssignmentsLink) {
+        machineAssignmentsLink.style.display = allowed.has('production-work-stations') ? 'flex' : 'none';
+    }
+}
+
+async function checkUserPermissionsAndAdaptUI() {
+    try {
+        const response = await fetch('/api/auth/me', { credentials: 'include' });
+        if (!response.ok) {
+            hideRestrictedNavForUnauthorizedUser();
+            return;
+        }
+
+        const result = await response.json();
+        if (!result || result.status !== 'success' || !result.role) {
+            hideRestrictedNavForUnauthorizedUser();
+            return;
+        }
+
+        adminUserRole = result.role;
+
+        const query = new URLSearchParams(window.location.search || '');
+        adminProdStatusReadOnly = adminUserRole === 'SALES_DEPT' && query.get('mode') === 'prod-status';
+
+        adminAllowedViews = getAllowedAdminViewsForRole(adminUserRole);
+        if (adminProdStatusReadOnly) {
+            const allowed = new Set(adminAllowedViews || []);
+            allowed.add('production-orders');
+            adminAllowedViews = Array.from(allowed);
+        }
+        applyAdminNavRbac(adminAllowedViews);
+
+        if (adminProdStatusReadOnly) {
+            const prodOrdersNav = document.querySelector('aside [data-view="production-orders"]');
+            if (prodOrdersNav) prodOrdersNav.style.display = 'none';
+
+            const prodOrdersActionsHeader = document.querySelector('#view-production-orders th:last-child');
+            if (prodOrdersActionsHeader) prodOrdersActionsHeader.style.display = 'none';
+        }
+
+        const sidebarTitle = document.querySelector('aside h1');
+        const sidebarSubtitle = document.querySelector('aside p');
+        if (adminUserRole !== 'ADMIN') {
+            if (sidebarTitle) sidebarTitle.textContent = 'Panel';
+            if (sidebarSubtitle) sidebarSubtitle.textContent = 'Zarządzanie';
+        }
+
+        const syncBtn = document.getElementById('sync-btn');
+        if (syncBtn) {
+            syncBtn.style.display = (adminUserRole === 'ADMIN' || adminUserRole === 'WAREHOUSE') ? 'flex' : 'none';
+        }
+
+        if (adminUserRole === 'GRAPHICS' || adminUserRole === 'GRAPHIC_DESIGNER') {
+            const sidebar = document.querySelector('aside');
+            if (sidebar) sidebar.style.display = 'none';
+        }
+
+        const hash = (window.location.hash || '').replace('#', '').trim();
+        if (hash && adminAllowedViews.includes(hash)) {
+            const targetNav = document.querySelector(`nav [data-view="${hash}"]`);
+            if (targetNav) {
+                targetNav.click();
+            }
+        }
+    } catch (error) {
+        console.error('Błąd sprawdzania uprawnień:', error);
+        hideRestrictedNavForUnauthorizedUser();
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Sprawdź uprawnienia użytkownika i dostosuj UI
     checkUserPermissionsAndAdaptUI();
-    
+
     const tableBody = document.getElementById('products-table-body');
     const searchInput = document.getElementById('search-input');
     const categoryFilter = document.getElementById('category-filter');
@@ -982,9 +1159,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ========================================
+    // ============================================
     // ZARZĄDZANIE UŻYTKOWNIKAMI
-    // ========================================
+    // ============================================
 
     const viewProducts = document.getElementById('view-products');
     const viewUsers = document.getElementById('view-users');
@@ -1137,7 +1314,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const safeMessage = escapeHtml(json.message || 'Nie udało się pobrać użytkowników');
                 usersTableBody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="p-8 text-center text-red-600">
+                        <td colspan="7" class="p-8 text-center text-red-500">
                             Błąd: ${safeMessage}
                         </td>
                     </tr>
@@ -1147,7 +1324,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Błąd podczas pobierania użytkowników:', err);
             usersTableBody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="p-8 text-center text-red-600">
+                    <td colspan="7" class="p-8 text-center text-red-500">
                         Błąd połączenia z serwerem
                     </td>
                 </tr>
@@ -1469,26 +1646,25 @@ document.addEventListener('DOMContentLoaded', () => {
         select.innerHTML = '<option value="">Wybierz pokój...</option>';
 
         try {
-            const response = await fetch('/api/production/rooms', { credentials: 'include' });
-            if (response.status === 401 || response.status === 403) {
-                handleProductionRoomsForbidden();
-                return;
-            }
-            const result = await response.json();
+            if (!productionRooms || productionRooms.length === 0) {
+                const response = await fetch('/api/production/rooms', { credentials: 'include' });
+                const result = await response.json();
 
-            if (result.status === 'success') {
-                const assignedRoomIds = userProductionRoomAssignments.map(a => a.roomId);
-                const availableRooms = (result.data || []).filter(r => !assignedRoomIds.includes(r.id));
-
-                availableRooms.forEach(room => {
-                    const opt = document.createElement('option');
-                    opt.value = room.id;
-                    opt.textContent = `${room.name} [${room.code}]`;
-                    select.appendChild(opt);
-                });
+                if (result.status === 'success') {
+                    productionRooms = result.data || [];
+                }
             }
-        } catch (error) {
-            console.error('Błąd ładowania pokoi:', error);
+
+            select.innerHTML = '<option value="">Wybierz pokój...</option>';
+
+            productionRooms.forEach(room => {
+                const opt = document.createElement('option');
+                opt.value = room.id;
+                opt.textContent = `${room.name} [${room.code}]`;
+                select.appendChild(opt);
+            });
+        } catch (e) {
+            console.error('Błąd ładowania pokojów:', e);
         }
     }
 
@@ -1815,7 +1991,7 @@ document.addEventListener('DOMContentLoaded', () => {
             productionRooms.forEach(room => {
                 const opt = document.createElement('option');
                 opt.value = room.id;
-                opt.textContent = room.name;
+                opt.textContent = `${room.name} [${room.code}]`;
                 select.appendChild(opt);
             });
 
@@ -1843,11 +2019,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     }
-
-    // Eksport funkcji do globalnego scope dla zewnętrznych skryptów
-    window.openUserForm = openUserForm;
-    window.handleDeleteUser = handleDeleteUser;
-    window.getAllUsers = function() { return allUsers; };
 
     // Zamykanie formularza użytkownika
     function closeUserForm() {
@@ -2404,7 +2575,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 productionHtml = `
                     <div class="flex items-center gap-2 min-w-[100px]">
                         <div class="flex-1 bg-gray-200 rounded-full h-2">
-                            <div class="${barColor} h-2 rounded-full transition-all" style="width: ${pp.percent}%"></div>
+                            <div class="${barColor} h-2 rounded-full" style="width: ${pp.percent}%"></div>
                         </div>
                         <span class="text-xs font-medium text-gray-600 whitespace-nowrap">${pp.label}</span>
                     </div>
@@ -2578,8 +2749,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }).join('');
 
             const canEditNotes = ['ADMIN', 'SALES_DEPT'].includes(currentUserRole);
-            const createdDate = new Date(fullOrder.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-            const updatedDate = fullOrder.updatedAt ? new Date(fullOrder.updatedAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+            const createdDate = new Date(fullOrder.createdAt).toLocaleString('pl-PL', {
+                year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+            });
+            const updatedDate = fullOrder.updatedAt ? new Date(fullOrder.updatedAt).toLocaleString('pl-PL', {
+                year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+            }) : null;
             const creatorName = fullOrder.User ? (fullOrder.User.name || fullOrder.User.shortCode || '') : '';
             const creatorNameSafe = creatorName ? escapeHtml(creatorName) : '';
             const statusLabelFull = STATUS_LABELS[fullOrder.status] || fullOrder.status;
@@ -2687,7 +2862,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ${canEditNotes ? `<button onclick="window.adminSaveOrderNotes('${fullOrder.id}')" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors font-medium whitespace-nowrap"><i class="fas fa-save"></i> Zapisz</button>` : ''}
                                 <button onclick="window.adminPrintOrder('${fullOrder.id}')" class="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 transition-colors font-medium whitespace-nowrap"><i class="fas fa-print"></i> Drukuj</button>
                             </div>
-                        </div>
                         
                         <!-- Kontener historii (domyślnie ukryty) -->
                         <div id="admin-history-container-${orderId}" class="hidden mt-3 transition-all duration-300 ease-in-out"></div>
@@ -2739,6 +2913,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (order) order.status = newStatus;
                 select.dataset.originalStatus = newStatus;
                 showAdminToast('Status zamówienia został zaktualizowany', 'success');
+                renderOrdersTable();
             } else {
                 showAdminToast(result.message || 'Nie udało się zmienić statusu', 'error');
                 select.value = originalStatus;
@@ -2782,7 +2957,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.adminPrintOrder = async function(orderId) {
         try {
             const response = await fetch(`/api/orders/${orderId}`, { credentials: 'include' });
-            if (!response.ok) throw new Error('Nie udało się pobrać szczegółów zamówienia');
+            if (!response.ok) throw new Error('Nie udało się pobrać szczegółów');
 
             const result = await response.json();
             const order = result.data;
@@ -2820,7 +2995,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return `<tr><td style="font-size:8px;">${productLabelSafe}</td><td style="font-size:8px;">${projectsDisplaySafe}</td><td style="text-align:center;font-size:8px;">${item.quantity}</td><td style="text-align:right;font-size:8px;">${(item.unitPrice || 0).toFixed(2)} zł</td><td style="text-align:right;font-size:8px;">${((item.quantity || 0) * (item.unitPrice || 0)).toFixed(2)} zł</td><td style="font-size:8px;">${sourcePrefixSafe}${locationDisplaySafe}</td><td style="font-size:7px;font-style:italic;color:#666;">${notesDisplaySafe}</td></tr>`;
             }).join('');
 
-            const createdDate = new Date(order.createdAt).toLocaleString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const createdDate = new Date(order.createdAt).toLocaleString('pl-PL', {
+                year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+            });
             const orderNumberSafe = escapeHtml(order.orderNumber || '');
             const statusLabelPrint = STATUS_LABELS[order.status] || order.status;
             const statusLabelPrintSafe = escapeHtml(statusLabelPrint);
@@ -2867,7 +3044,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const headers = ['Numer zamówienia', 'Data', 'Klient', 'Handlowiec', 'Status', 'Wartość'];
         const rows = allAdminOrders.map(order => {
-            const date = new Date(order.createdAt).toLocaleDateString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const date = new Date(order.createdAt).toLocaleDateString('pl-PL', {
+                year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+            });
             return [order.orderNumber || '', date, order.Customer?.name || '', order.User?.name || order.User?.shortCode || '', STATUS_LABELS[order.status] || order.status, (order.total || 0).toFixed(2)];
         });
 
@@ -3113,37 +3292,6 @@ document.addEventListener('DOMContentLoaded', () => {
         handleOrderRowClick(e);
     }
 
-    // Event listeners
-    if (refreshOrdersBtn) refreshOrdersBtn.addEventListener('click', loadOrders);
-    if (ordersStatusFilter) ordersStatusFilter.addEventListener('change', debouncedLoadOrders);
-    if (ordersUserFilter) ordersUserFilter.addEventListener('change', debouncedLoadOrders);
-    if (ordersSearchInput) ordersSearchInput.addEventListener('input', debounce(() => renderOrdersTable(), 300));
-    if (exportOrdersCsvBtn) exportOrdersCsvBtn.addEventListener('click', exportOrdersCSV);
-    if (ordersTableBody) ordersTableBody.addEventListener('click', handleOrdersTableClick);
-    if (ordersTableHead) ordersTableHead.addEventListener('click', handleSortClick);
-    
-    // Inicjalizacja przełącznika widoku statusów
-    initStatusViewToggle();
-
-    // Print preview
-    if (adminPrintPreviewClose) adminPrintPreviewClose.addEventListener('click', () => adminPrintPreviewModal?.classList.add('hidden'));
-    if (adminPrintPreviewPrint) {
-        adminPrintPreviewPrint.addEventListener('click', () => {
-            const printContent = adminPrintPreviewContent?.innerHTML || '';
-            const printWindow = window.open('', '', 'height=600,width=800');
-            printWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Wydruk zamówienia</title><style>* { margin: 0; padding: 0; } body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; line-height: 1.3; } .print-document { background: white; padding: 15px; max-width: 210mm; margin: 0 auto; } .print-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; border-bottom: 1px solid #1f2937; padding-bottom: 8px; } .print-company { font-size: 16px; font-weight: bold; color: #1f2937; } .print-title { font-size: 14px; font-weight: bold; color: #1f2937; margin-top: 2px; } .print-meta { font-size: 10px; color: #6b7280; text-align: right; } .print-section { margin-bottom: 10px; } .print-section-title { font-size: 11px; font-weight: bold; color: #1f2937; margin-bottom: 6px; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; } .print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; } .print-field { font-size: 10px; } .print-field-label { color: #6b7280; font-weight: 600; margin-bottom: 2px; } .print-field-value { color: #1f2937; font-weight: 500; } .print-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px; } .print-table thead { background: #f3f4f6; border-bottom: 1px solid #d1d5db; } .print-table th { padding: 4px 6px; text-align: left; font-weight: 600; color: #1f2937; } .print-table td { padding: 4px 6px; border-bottom: 1px solid #e5e7eb; color: #374151; } .print-table tbody tr:last-child td { border-bottom: none; } .print-total { text-align: right; font-size: 11px; font-weight: bold; color: #1f2937; margin-top: 8px; padding-top: 6px; border-top: 1px solid #d1d5db; } .print-footer { margin-top: 15px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-size: 9px; color: #6b7280; text-align: center; }</style></head><body>${printContent}</body></html>`);
-            printWindow.document.close();
-            printWindow.print();
-        });
-    }
-
-    // Delete modal
-    if (deleteOrderCancel) deleteOrderCancel.addEventListener('click', () => { deleteOrderModal?.classList.add('hidden'); deleteOrderId = null; });
-    if (deleteOrderConfirm) deleteOrderConfirm.addEventListener('click', confirmDeleteOrder);
-
-    // Edit modal
-    if (editOrderClose) editOrderClose.addEventListener('click', () => { editOrderModal?.classList.add('hidden'); });
-
     // ============================================
     // OBSŁUGA PRZEŁĄCZANIA WIDOKÓW
     // ============================================
@@ -3152,6 +3300,14 @@ document.addEventListener('DOMContentLoaded', () => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
             const viewName = link.dataset.view;
+
+            if (Array.isArray(adminAllowedViews) && adminAllowedViews.length > 0) {
+                if (!adminAllowedViews.includes(viewName)) {
+                    showAdminToast('Brak uprawnień do tej sekcji', 'warning');
+                    return;
+                }
+            }
+            
 
             // Ukryj wszystkie widoki
             document.querySelectorAll('.view-container').forEach(container => {
@@ -5618,7 +5774,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (result.status === 'success') {
                 showAdminToast('Produkt przypisany do projektu', 'success');
                 closeProductMappingModal();
-                // Odśwież dane
                 await loadProductMappingProjects();
                 if (pmSelectedProjectId === projectId) {
                     selectProductMappingProject(projectId);
@@ -5631,164 +5786,8 @@ document.addEventListener('DOMContentLoaded', () => {
             showAdminToast('Nie udało się przypisać produktu: ' + error.message, 'error');
         }
     }
-
 });
 
-// Funkcja sprawdzająca uprawnienia użytkownika i dostosowująca UI
-async function checkUserPermissionsAndAdaptUI() {
-    try {
-        const response = await fetch('/api/auth/me');
-        const result = await response.json();
-        
-        if (result.status === 'success') {
-            const userRole = result.role;
-            
-            // Pokaż/ukryj elementy menu w zależności od roli
-            const cityAccessLink = document.querySelector('[data-view="city-access"]');
-            const folderAccessLink = document.querySelector('[data-view="folder-access"]');
-            const usersLink = document.querySelector('[data-view="users"]');
-            const productsLink = document.querySelector('[data-view="products"]');
-            const ordersLink = document.querySelector('[data-view="orders"]');
-            const productMappingLink = document.querySelector('[data-view="product-mapping"]');
-            
-            // Mapowanie produktów - tylko ADMIN
-            if (productMappingLink) {
-                if (userRole === 'ADMIN') {
-                    productMappingLink.style.display = 'flex';
-                } else {
-                    productMappingLink.style.display = 'none';
-                }
-            }
-            
-            // Miejscowości PM - dostęp dla ADMIN, SALES_DEPT, GRAPHICS
-            if (cityAccessLink) {
-                if (['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(userRole)) {
-                    cityAccessLink.style.display = 'flex';
-                } else {
-                    cityAccessLink.style.display = 'none';
-                }
-            }
-            
-            // Foldery KI - dostęp dla ADMIN, SALES_DEPT
-            if (folderAccessLink) {
-                if (['ADMIN', 'SALES_DEPT'].includes(userRole)) {
-                    folderAccessLink.style.display = 'flex';
-                } else {
-                    folderAccessLink.style.display = 'none';
-                }
-            }
-            
-            // Użytkownicy - tylko ADMIN
-            if (usersLink) {
-                if (userRole === 'ADMIN') {
-                    usersLink.style.display = 'flex';
-                } else {
-                    usersLink.style.display = 'none';
-                }
-            }
-            
-            // Produkty - tylko ADMIN i WAREHOUSE (SALES_DEPT ma tylko podgląd magazynu)
-            if (productsLink) {
-                if (['ADMIN', 'WAREHOUSE'].includes(userRole)) {
-                    productsLink.style.display = 'flex';
-                } else {
-                    productsLink.style.display = 'none';
-                }
-            }
-            
-            // Zamówienia - ADMIN, WAREHOUSE, PRODUCTION (SALES_DEPT używa głównego panelu zamówień)
-            if (ordersLink) {
-                if (['ADMIN', 'WAREHOUSE', 'PRODUCTION'].includes(userRole)) {
-                    ordersLink.style.display = 'flex';
-                } else {
-                    ordersLink.style.display = 'none';
-                }
-            }
-            
-            // Klienci - ADMIN, SALES_DEPT
-            const clientsLink = document.querySelector('[data-view="clients"]');
-            if (clientsLink) {
-                if (['ADMIN', 'SALES_DEPT'].includes(userRole)) {
-                    clientsLink.style.display = 'flex';
-                } else {
-                    clientsLink.style.display = 'none';
-                }
-            }
-            
-            // Dla GRAPHICS - ukryj sidebar i pokaż tylko widok nieprzypisanych miejscowości
-            if (userRole === 'GRAPHICS') {
-                const sidebar = document.querySelector('aside');
-                if (sidebar) {
-                    sidebar.style.display = 'none';
-                }
-                
-                const pageTitle = document.querySelector('h1');
-                if (pageTitle) {
-                    pageTitle.textContent = 'Nowe miejscowości do przypisania';
-                }
-                
-                setTimeout(() => {
-                    if (cityAccessLink) {
-                        cityAccessLink.click();
-                    }
-                }, 100);
-            }
-            
-            // Dla SALES_DEPT - ograniczony dostęp
-            if (userRole === 'SALES_DEPT') {
-                // Ukryj przyciski dodawania użytkowników
-                const newUserBtn = document.getElementById('new-user-btn');
-                if (newUserBtn) newUserBtn.style.display = 'none';
-                
-                // Zmień tytuł strony
-                const pageTitle = document.querySelector('h1');
-                if (pageTitle) {
-                    pageTitle.textContent = 'Panel Działu Sprzedaży';
-                }
-                
-                // Automatycznie przejdź do widoku Miejscowości PM
-                setTimeout(() => {
-                    if (cityAccessLink) {
-                        cityAccessLink.click();
-                    }
-                }, 100);
-            }
-        }
-    } catch (error) {
-        console.error('Błąd sprawdzania uprawnień:', error);
-    }
-}
-
-// ============================================
-// MODUŁ: PANEL PRODUKCYJNY
-// ============================================
-
-// Typy gniazd ładowane dynamicznie z API
-let workCenterTypes = [];
-
-// Typy operacji ładowane dynamicznie z API
-let operationTypes = [];
-
-// Fallback dla starych danych (jeśli typ nie jest w słowniku)
-const WORK_CENTER_TYPE_LABELS = {
-    'laser_co2': 'Laser CO2',
-    'laser_fiber': 'Laser Fiber',
-    'uv_print': 'Druk UV',
-    'cnc': 'CNC',
-    'cutting': 'Cięcie',
-    'assembly': 'Montaż',
-    'packaging': 'Pakowanie',
-    'other': 'Inne'
-};
-
-// Funkcja pobierająca nazwę typu (najpierw ze słownika, potem fallback)
-function getWorkCenterTypeName(typeCode) {
-    const fromApi = workCenterTypes.find(t => t.code === typeCode);
-    if (fromApi) return fromApi.name;
-    return WORK_CENTER_TYPE_LABELS[typeCode] || typeCode || 'Nieznany';
-}
-
-// Funkcja pobierająca nazwę typu operacji (API -> fallback do stałej)
 function getOperationTypeName(typeCode) {
     if (!typeCode) return 'Nieznany';
 
@@ -5800,20 +5799,6 @@ function getOperationTypeName(typeCode) {
     }
 
     return typeCode || 'Nieznany';
-}
-
-// Ładowanie typów gniazd z API
-async function loadWorkCenterTypes() {
-    try {
-        const response = await fetch('/api/production/work-center-types?isActive=true', { credentials: 'include' });
-        const result = await response.json();
-        if (result.status === 'success') {
-            workCenterTypes = result.data || [];
-        }
-    } catch (error) {
-        console.error('Błąd ładowania typów gniazd:', error);
-    }
-    return workCenterTypes;
 }
 
 // Ładowanie typów operacji z API (do formularzy i widoku słownika)
@@ -7403,10 +7388,11 @@ if (prodOrdersPriorityFilter) prodOrdersPriorityFilter.addEventListener('change'
 
 async function loadProductionOrders() {
     if (!productionOrdersTbody) return;
+    const prodOrdersColspan = adminProdStatusReadOnly ? 9 : 10;
     
     productionOrdersTbody.innerHTML = `
         <tr>
-            <td colspan="8" class="px-6 py-12 text-center text-gray-400">
+            <td colspan="${prodOrdersColspan}" class="px-6 py-12 text-center text-gray-400">
                 <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
                 <p class="text-lg">Ładowanie zleceń...</p>
             </td>
@@ -7424,7 +7410,7 @@ async function loadProductionOrders() {
         } else {
             productionOrdersTbody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="px-6 py-12 text-center text-red-500">
+                    <td colspan="${prodOrdersColspan}" class="px-6 py-12 text-center text-red-500">
                         <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
                         <p>${result.message || 'Błąd ładowania zleceń'}</p>
                     </td>
@@ -7435,7 +7421,7 @@ async function loadProductionOrders() {
         console.error('Błąd ładowania zleceń produkcyjnych:', error);
         productionOrdersTbody.innerHTML = `
             <tr>
-                <td colspan="8" class="px-6 py-12 text-center text-red-500">
+                <td colspan="${prodOrdersColspan}" class="px-6 py-12 text-center text-red-500">
                     <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
                     <p>Błąd połączenia z serwerem</p>
                 </td>
@@ -7496,11 +7482,12 @@ function filterProductionOrders() {
 
 function renderProductionOrders() {
     if (!productionOrdersTbody) return;
+    const prodOrdersColspan = adminProdStatusReadOnly ? 9 : 10;
     
     if (filteredProductionOrders.length === 0) {
         productionOrdersTbody.innerHTML = `
             <tr>
-                <td colspan="10" class="px-6 py-12 text-center text-gray-400">
+                <td colspan="${prodOrdersColspan}" class="px-6 py-12 text-center text-gray-400">
                     <i class="fas fa-clipboard-list text-4xl mb-4"></i>
                     <p class="text-lg">Brak zleceń produkcyjnych</p>
                     <p class="text-sm mt-1">Zlecenia pojawią się automatycznie po zatwierdzeniu zamówień</p>
@@ -7552,6 +7539,21 @@ function renderProductionOrders() {
             </div>
         `;
         
+        const actionsHtml = adminProdStatusReadOnly ? '' : `
+                <td class="px-4 py-3 text-center">
+                    <div class="flex items-center justify-center gap-1">
+                        <button onclick="changeProductionOrderStatus('${order.id}', '${status}')" 
+                                class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Zmień status">
+                            <i class="fas fa-exchange-alt text-xs"></i>
+                        </button>
+                        <button onclick="deleteProductionOrder('${order.id}', '${escapeHtml(orderNumber)}', '${status}')" 
+                                class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="Usuń zlecenie">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                </td>
+        `;
+
         return `
             <tr class="hover:bg-gray-50 transition-colors">
                 <td class="px-4 py-3">
@@ -7583,18 +7585,7 @@ function renderProductionOrders() {
                 <td class="px-4 py-3 text-right text-sm text-gray-500">
                     ${createdAt}
                 </td>
-                <td class="px-4 py-3 text-center">
-                    <div class="flex items-center justify-center gap-1">
-                        <button onclick="changeProductionOrderStatus('${order.id}', '${status}')" 
-                                class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Zmień status">
-                            <i class="fas fa-exchange-alt text-xs"></i>
-                        </button>
-                        <button onclick="deleteProductionOrder('${order.id}', '${escapeHtml(orderNumber)}', '${status}')" 
-                                class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="Usuń zlecenie">
-                            <i class="fas fa-trash text-xs"></i>
-                        </button>
-                    </div>
-                </td>
+                ${actionsHtml}
             </tr>
         `;
     }).join('');
@@ -7602,6 +7593,11 @@ function renderProductionOrders() {
 
 // Zmiana statusu zlecenia produkcyjnego
 async function changeProductionOrderStatus(orderId, currentStatus) {
+    if (adminProdStatusReadOnly) {
+        showAdminToast('Tryb podglądu: brak możliwości zmiany statusu', 'warning');
+        return;
+    }
+
     const statusOptions = [
         { value: 'planned', label: 'Zaplanowane' },
         { value: 'approved', label: 'Zatwierdzone' },
@@ -7647,6 +7643,11 @@ async function changeProductionOrderStatus(orderId, currentStatus) {
 
 // Usuwanie zlecenia produkcyjnego
 async function deleteProductionOrder(orderId, orderNumber, status) {
+    if (adminProdStatusReadOnly) {
+        showAdminToast('Tryb podglądu: brak możliwości usuwania zleceń', 'warning');
+        return;
+    }
+
     if (status === 'in_progress') {
         if (!confirm(`Zlecenie ${orderNumber} jest W REALIZACJI!\n\nCzy na pewno chcesz je usunąć?`)) {
             return;

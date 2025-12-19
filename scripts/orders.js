@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function setupOrdersNavigation(role) {
         const formLink = document.getElementById('nav-form-link');
         const productionLink = document.getElementById('production-link');
+        const productionStatusLink = document.getElementById('production-status-link');
         const graphicsLink = document.getElementById('graphics-link');
         
         // Formularz - ukryj dla produkcji (nie mają tam co robić)
@@ -60,9 +61,22 @@ document.addEventListener('DOMContentLoaded', () => {
             clientsLink.style.display = 'flex';
         }
         
-        // Produkcja - dla ról produkcyjnych + SALES_DEPT + ADMIN
-        if (productionLink && ['ADMIN', 'SALES_DEPT', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER', 'WAREHOUSE'].includes(role)) {
-            productionLink.style.display = 'flex';
+        // Produkcja - dla ról produkcyjnych + ADMIN (bez SALES_DEPT)
+        if (productionLink) {
+            if (['ADMIN', 'PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER', 'WAREHOUSE'].includes(role)) {
+                productionLink.style.display = 'flex';
+            } else {
+                productionLink.style.display = 'none';
+            }
+        }
+
+        // Status produkcji (podgląd) - tylko dla SALES_DEPT
+        if (productionStatusLink) {
+            if (role === 'SALES_DEPT') {
+                productionStatusLink.style.display = 'flex';
+            } else {
+                productionStatusLink.style.display = 'none';
+            }
         }
         
         // Grafika - dla kierownika produkcji, SALES_DEPT, ADMIN
@@ -71,8 +85,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         // Admin
-        if (adminLink && ['ADMIN', 'SALES_DEPT'].includes(role)) {
-            adminLink.style.display = 'flex';
+        if (adminLink) {
+            if (role === 'ADMIN') {
+                adminLink.style.display = 'flex';
+                adminLink.href = '/admin';
+                adminLink.innerHTML = '<i class="fas fa-cog"></i> <span>Panel admina</span>';
+            } else if (role === 'SALES_DEPT') {
+                adminLink.style.display = 'flex';
+                adminLink.href = '/admin#orders';
+                adminLink.innerHTML = '<i class="fas fa-clipboard-list"></i> <span>Zamówienia (admin)</span>';
+            } else {
+                adminLink.style.display = 'none';
+            }
         }
     }
 

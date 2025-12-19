@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Pokazywanie linków nawigacji na podstawie roli
     function setupClientsNavigation(role) {
         const productionLink = document.getElementById('production-link');
+        const productionStatusLink = document.getElementById('production-status-link');
         const graphicsLink = document.getElementById('graphics-link');
         
         // Zamówienia - dla sprzedaży i admina
@@ -34,9 +35,22 @@ document.addEventListener('DOMContentLoaded', () => {
             ordersLink.style.display = 'flex';
         }
         
-        // Produkcja - dla SALES_DEPT i ADMIN
-        if (productionLink && ['ADMIN', 'SALES_DEPT'].includes(role)) {
-            productionLink.style.display = 'flex';
+        // Produkcja - tylko dla ADMIN (bez SALES_DEPT)
+        if (productionLink) {
+            if (role === 'ADMIN') {
+                productionLink.style.display = 'flex';
+            } else {
+                productionLink.style.display = 'none';
+            }
+        }
+
+        // Status produkcji (podgląd) - tylko dla SALES_DEPT
+        if (productionStatusLink) {
+            if (role === 'SALES_DEPT') {
+                productionStatusLink.style.display = 'flex';
+            } else {
+                productionStatusLink.style.display = 'none';
+            }
         }
         
         // Grafika - dla SALES_DEPT i ADMIN
@@ -52,8 +66,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 adminLink.href = '/admin';
             } else if (role === 'SALES_DEPT') {
                 adminLink.style.display = 'flex';
-                adminLink.innerHTML = '<i class="fas fa-cog"></i><span>Ustawienia</span>';
-                adminLink.href = '/admin';
+                adminLink.innerHTML = '<i class="fas fa-clipboard-list"></i><span>Zamówienia (admin)</span>';
+                adminLink.href = '/admin#orders';
             }
         }
     }

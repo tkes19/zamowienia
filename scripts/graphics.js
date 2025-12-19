@@ -140,7 +140,7 @@ function setupGraphicsNavigation(role) {
     }
     
     // Produkcja - dla ADMIN, SALES_DEPT, PRODUCTION_MANAGER
-    if (productionLink && ['ADMIN', 'SALES_DEPT', 'PRODUCTION_MANAGER'].includes(role)) {
+    if (productionLink && ['ADMIN', 'PRODUCTION_MANAGER'].includes(role)) {
         productionLink.style.display = 'flex';
     }
 }
