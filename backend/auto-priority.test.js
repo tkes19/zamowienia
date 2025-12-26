@@ -4,7 +4,7 @@
  * Zgodnie z docs/SPEC_PRODUCTION_PANEL.md §6.6
  */
 
-const { computeOrderTimePriority } = require('./server.js');
+const { computeOrderTimePriority } = require('./services/productionService.js');
 
 describe('computeOrderTimePriority', () => {
     // Stała data "teraz" dla powtarzalności testów

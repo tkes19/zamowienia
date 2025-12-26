@@ -1,4 +1,4 @@
-const { computeNextOrderNumber } = require('./server.js');
+const { computeNextOrderNumber } = require('./services/orderService');
 
 describe('computeNextOrderNumber', () => {
     test('returns year/1/shortCode when there are no existing numbers', () => {

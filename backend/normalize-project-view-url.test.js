@@ -1,4 +1,4 @@
-const { normalizeProjectViewUrl } = require('./server.js');
+const { normalizeProjectViewUrl } = require('./services/productionService.js');
 
 describe('normalizeProjectViewUrl', () => {
     test('returns null for "/"', () => {
