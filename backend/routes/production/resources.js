@@ -69,11 +69,7 @@ router.get('/work-centers', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), 
 
         let query = supabase
             .from('WorkCenter')
-            .select(`
-                *,
-                room:ProductionRoom(id, name, code),
-                workStations:WorkStation(id, name, code, type, status)
-            `)
+            .select('*')
             .eq('isActive', true)
             .order('name');
 
@@ -91,27 +87,7 @@ router.get('/work-centers', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), 
             });
         }
 
-        const centersWithCounts = (workCenters || []).map(wc => {
-            const stations = wc.workStations || [];
-            const statusCounts = {
-                available: 0,
-                in_use: 0,
-                maintenance: 0,
-                breakdown: 0
-            };
-            stations.forEach(s => {
-                if (statusCounts.hasOwnProperty(s.status)) {
-                    statusCounts[s.status]++;
-                }
-            });
-            return {
-                ...wc,
-                workStationCount: stations.length,
-                workStationsByStatus: statusCounts
-            };
-        });
-
-        return res.json({ status: 'success', data: centersWithCounts });
+        return res.json({ status: 'success', data: workCenters || [] });
     } catch (error) {
         console.error('[GET /api/production/work-centers] Exception:', error);
         return res.status(500).json({ 
@@ -140,11 +116,7 @@ router.get('/work-stations', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']),
 
         let query = supabase
             .from('WorkStation')
-            .select(`
-                *,
-                workCenter:WorkCenter(id, name, code, type, roomId),
-                room:ProductionRoom(id, name, code)
-            `)
+            .select('*')
             .eq('isActive', true)
             .order('name');
 

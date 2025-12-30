@@ -464,10 +464,9 @@ router.get('/roles', async (req, res) => {
         }
 
         const { data, error } = await supabase
-            .from('UserRole')
+            .from('UserRoleAssignment')
             .select('role')
-            .eq('userId', userId)
-            .eq('isActive', true);
+            .eq('userId', userId);
 
         if (error) throw error;
 
@@ -501,12 +500,12 @@ router.post('/active-role', async (req, res) => {
 
         // Sprawdź czy użytkownik ma tę rolę
         const { data: userRole, error: roleError } = await supabase
-            .from('UserRole')
-            .select('*')
+            .from('UserRoleAssignment')
+            .select('role')
             .eq('userId', userId)
             .eq('role', role)
             .eq('isActive', true)
-            .single();
+            .maybeSingle();
 
         if (roleError || !userRole) {
             return res.status(403).json({ 
@@ -556,7 +555,7 @@ router.post('/sync-role', async (req, res) => {
 
         // Usuń istniejące role
         await supabase
-            .from('UserRole')
+            .from('UserRoleAssignment')
             .delete()
             .eq('userId', userId);
 
@@ -570,7 +569,7 @@ router.post('/sync-role', async (req, res) => {
             }));
 
             const { error } = await supabase
-                .from('UserRole')
+                .from('UserRoleAssignment')
                 .insert(newRoles);
 
             if (error) throw error;

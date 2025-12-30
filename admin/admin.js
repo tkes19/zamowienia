@@ -13,7 +13,7 @@ function escapeHtml(str) {
 function showAdminToast(message, type = 'info', duration = 3000) {
     const container = document.getElementById('admin-toast-container');
     if (!container) {
-        console.log(`[Toast ${type}] ${message}`);
+        console.warn(`[Toast ${type}] ${message}`);
         return;
     }
     const icons = { success: 'fa-check-circle', error: 'fa-exclamation-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' };
@@ -623,7 +623,7 @@ document.addEventListener('DOMContentLoaded', () => {
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Zapisuję...</span>';
         }
 
-        try {
+                try {
             const response = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
@@ -733,7 +733,7 @@ document.addEventListener('DOMContentLoaded', () => {
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Zapisuję...</span>';
         }
 
-        try {
+                try {
             const response = await fetch(`/api/admin/products/${encodeURIComponent(currentInventoryProductId)}/inventory`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -777,7 +777,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        try {
+                try {
             const response = await fetch(`/api/admin/products/${encodeURIComponent(product.id)}`, {
                 method: 'DELETE',
             });
@@ -892,7 +892,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </tr>
         `;
 
-        try {
+                try {
             const response = await fetch('/api/admin/order-delivery-presets');
             const result = await response.json();
 
@@ -1088,7 +1088,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         setDeliveryPresetFormLoading(true);
 
-        try {
+                try {
             const url = id ? `/api/admin/order-delivery-presets/${id}` : '/api/admin/order-delivery-presets';
             const method = id ? 'PATCH' : 'POST';
 
@@ -1144,7 +1144,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function deleteDeliveryPreset(id) {
-        try {
+                try {
             const response = await fetch(`/api/admin/order-delivery-presets/${id}`, { method: 'DELETE' });
             const result = await response.json();
 
@@ -1169,6 +1169,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const navProducts = document.querySelector('[data-view="products"]');
 
     const usersTableBody = document.getElementById('users-table-body');
+    const usersTable = document.getElementById('users-table');
     const usersSearchInput = document.getElementById('users-search-input');
     const usersRoleFilter = document.getElementById('users-role-filter');
     const usersDepartmentFilter = document.getElementById('users-department-filter');
@@ -1192,6 +1193,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let allDepartments = [];
     let currentEditingUserId = null;
     let currentEditingUser = null;
+    let fallbackProductionRooms = [];
 
     // Przełączanie widoków
     if (navUsers) {
@@ -1237,8 +1239,10 @@ document.addEventListener('DOMContentLoaded', () => {
         usersDepartmentFilter.addEventListener('change', filterUsers);
     }
 
-    if (usersTableBody) {
-        usersTableBody.addEventListener('click', handleUsersTableClick);
+    if (usersTable) {
+        usersTable.addEventListener('click', handleUsersTableClick);
+    } else {
+        console.error('❌ usersTable nie znaleziony!');
     }
 
     // Pobieranie działów
@@ -1307,7 +1311,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const json = await res.json();
 
             if (json.status === 'success') {
-                allUsers = json.data || [];
+                allUsers = (json.data || []).map(u => ({
+                    ...u,
+                    productionroomid: u.productionroomid || u.productionRoom?.id || u.productionRoom?.roomId || null,
+                    productionRoomName: u.productionRoom?.name || u.productionRoomName || null,
+                    productionRoomCode: u.productionRoom?.code || u.productionRoomCode || null,
+                    // propagate multiroom assignments from API
+                    productionRooms: u.productionRooms || [],
+                    departmentName: u.Department?.name || u.departmentName || null
+                }));
                 filterUsers();
             } else {
                 console.error('Błąd pobierania użytkowników:', json.message);
@@ -1384,10 +1396,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const productionRooms = user.productionRooms || [];
             let roomsHtml = '-';
             if (productionRooms.length > 0) {
-                roomsHtml = productionRooms.map(r => {
-                    const isPrimaryBadge = r.isPrimary ? ' <i class="fas fa-star text-yellow-500 text-xs" title="Pokój główny"></i>' : '';
-                    return `<span class="inline-block px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-800 mr-1 mb-1">${escapeHtml(r.name || r.code || 'Pokój ' + r.id)}${isPrimaryBadge}</span>`;
-                }).join('');
+                const primary = productionRooms.find(r => r.isPrimary) || productionRooms[0];
+                const primaryBadge = primary ? `<span class="inline-block px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-800 mr-1 mb-1">${escapeHtml(primary.room?.name || primary.name || 'Pokój ' + primary.roomId)} <i class="fas fa-star text-yellow-500 text-xs" title="Pokój główny"></i></span>` : '';
+
+                const additional = productionRooms.filter(r => primary && r.id !== primary.id);
+                let additionalBadge = '';
+                if (additional.length > 0) {
+                    const tooltipList = additional.map(r => `${escapeHtml(r.room?.name || r.name || 'Pokój ' + r.roomId)}`).join(', ');
+                    additionalBadge = `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-700 mr-1 mb-1" title="Dodatkowe pokoje: ${tooltipList}"><i class="fas fa-layer-group text-gray-500"></i>${additional.length}</span>`;
+                }
+
+                roomsHtml = `${primaryBadge}${additionalBadge}`;
             } else if (user.productionRoomName) {
                 roomsHtml = `<span class="inline-block px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-800">${escapeHtml(user.productionRoomName)}</span>`;
             }
@@ -1403,9 +1422,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="p-4">
                         <div class="flex flex-wrap items-center gap-1">
                             ${roomsHtml}
-                            <button class="text-purple-600 hover:text-purple-800 ml-1" data-action="manage-rooms" data-user-id="${user.id}" title="Zarządzaj pokojami">
-                                <i class="fas fa-cog text-xs"></i>
-                            </button>
                         </div>
                     </td>
                     <td class="p-4 text-center">${statusBadge}</td>
@@ -1444,7 +1460,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Obsługa kliknięć w tabeli użytkowników
     function handleUsersTableClick(e) {
         const target = e.target.closest('[data-action]');
-        if (!target) return;
+        if (!target) {
+            return;
+        }
 
         const action = target.dataset.action;
         const userId = target.dataset.userId;
@@ -1455,9 +1473,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (action === 'delete-user') {
             const user = allUsers.find(u => u.id === userId);
             if (user) handleDeleteUser(user);
-        } else if (action === 'manage-rooms') {
-            const user = allUsers.find(u => u.id === userId);
-            if (user) openProductionRoomsModal(user);
         }
     }
 
@@ -1562,6 +1577,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
         await loadUserProductionRooms();
         await populateProductionRoomsAddSelect();
+
+        // Jeśli w DB nic nie ma, a mamy fallback z użytkownika – zapisz go do bazy automatycznie
+        if (userProductionRoomAssignments.length === 0 && fallbackProductionRooms.length > 0) {
+            try {
+                const primary = fallbackProductionRooms.find(r => r.isPrimary) || fallbackProductionRooms[0];
+                if (primary?.roomId) {
+                    await fetch('/api/admin/user-production-rooms', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({
+                            userId: currentRoomsUserId,
+                            roomId: parseInt(primary.roomId, 10),
+                            isPrimary: true
+                        })
+                    });
+                    await loadUserProductionRooms();
+                }
+            } catch (e) {
+                console.warn('Auto-sync fallback room failed:', e);
+            }
+        }
     }
 
     function closeProductionRoomsModal() {
@@ -1577,27 +1614,64 @@ document.addEventListener('DOMContentLoaded', () => {
         const listEl = document.getElementById('production-rooms-list');
         if (!listEl || !currentRoomsUserId) return;
 
-        listEl.innerHTML = '<p class="text-gray-400 text-sm"><i class="fas fa-spinner fa-spin mr-1"></i>Ładowanie...</p>';
+        // Najpierw pokaż fallback, jeśli go mamy (żeby zniknęło "Ładowanie..." gdy API zawiedzie)
+        if (fallbackProductionRooms.length > 0) {
+            userProductionRoomAssignments = fallbackProductionRooms.map(r => ({
+                id: r.id || `legacy-${r.roomId || r.id}`,
+                userId: currentRoomsUserId,
+                roomId: r.roomId || r.id,
+                isPrimary: Boolean(r.isPrimary),
+                room: r.room || { id: r.roomId || r.id, name: r.name || r.roomName || `Pokój ${r.roomId || r.id}`, code: r.code || '' }
+            }));
+            renderProductionRoomsList();
+        } else {
+            listEl.innerHTML = '<p class="text-gray-400 text-sm"><i class="fas fa-spinner fa-spin mr-1"></i>Ładowanie...</p>';
+        }
 
-        try {
-            const response = await fetch(`/api/admin/user-production-rooms?userId=${currentRoomsUserId}`, {
-                credentials: 'include'
+                try {
+            const response = await fetch(`/api/admin/user-production-rooms?userId=${currentRoomsUserId}&t=${Date.now()}`, {
+                credentials: 'include',
+                cache: 'no-store'
             });
             if (response.status === 401 || response.status === 403) {
                 handleProductionRoomsForbidden();
                 return;
             }
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
             const result = await response.json();
 
             if (result.status === 'success') {
                 userProductionRoomAssignments = result.data || [];
-                renderProductionRoomsList();
             } else {
-                listEl.innerHTML = `<p class="text-red-500 text-sm">Błąd: ${escapeHtml(result.message)}</p>`;
+                throw new Error(result.message || 'Błąd ładowania pokoi');
             }
         } catch (error) {
             console.error('Błąd ładowania pokoi użytkownika:', error);
-            listEl.innerHTML = '<p class="text-red-500 text-sm">Błąd połączenia z serwerem</p>';
+            // Fallback do danych z użytkownika, jeśli API zawiodło
+            if (fallbackProductionRooms.length > 0) {
+                userProductionRoomAssignments = fallbackProductionRooms.map(r => ({
+                    id: r.id || `legacy-${r.roomId || r.id}`,
+                    userId: currentRoomsUserId,
+                    roomId: r.roomId || r.id,
+                    isPrimary: Boolean(r.isPrimary),
+                    room: r.room || { id: r.roomId || r.id, name: r.name || r.roomName || `Pokój ${r.roomId || r.id}`, code: r.code || '' }
+                }));
+            } else {
+                listEl.innerHTML = '<p class="text-red-500 text-sm">Błąd połączenia z serwerem</p>';
+                return;
+            }
+        } finally {
+            if (userProductionRoomAssignments.length === 0 && fallbackProductionRooms.length > 0) {
+                userProductionRoomAssignments = fallbackProductionRooms.map(r => ({
+                    id: r.id || `legacy-${r.roomId || r.id}`,
+                    userId: currentRoomsUserId,
+                    roomId: r.roomId || r.id,
+                    isPrimary: Boolean(r.isPrimary),
+                    room: r.room || { id: r.roomId || r.id, name: r.name || r.roomName || `Pokój ${r.roomId || r.id}`, code: r.code || '' }
+                }));
+            }
+            renderProductionRoomsList();
         }
     }
 
@@ -1645,7 +1719,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         select.innerHTML = '<option value="">Wybierz pokój...</option>';
 
-        try {
+                try {
             if (!productionRooms || productionRooms.length === 0) {
                 const response = await fetch('/api/production/rooms', { credentials: 'include' });
                 const result = await response.json();
@@ -1680,7 +1754,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        try {
+                try {
             const response = await fetch('/api/admin/user-production-rooms', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1715,7 +1789,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.setRoomAsPrimary = async function setRoomAsPrimary(assignmentId) {
-        try {
+                try {
             const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -1745,7 +1819,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.removeProductionRoom = async function removeProductionRoom(assignmentId) {
         if (!confirm('Czy na pewno chcesz usunąć to przypisanie pokoju?')) return;
 
-        try {
+                try {
             const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
                 method: 'DELETE',
                 credentials: 'include'
@@ -1773,10 +1847,108 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Usuwanie użytkownika
     async function handleDeleteUser(user) {
-        if (!confirm(`Czy na pewno chcesz usunąć użytkownika "${user.name || user.email}"?`)) {
+        // Najpierw sprawdź powiązania
+        try {
+            const depsRes = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/dependencies`, {
+                credentials: 'include',
+            });
+            const depsData = await depsRes.json();
+            
+            if (depsData.status === 'success') {
+                // Zawsze pokaż modal z informacją o powiązaniach
+                showDeleteUserModal(user, depsData);
+                return;
+            }
+        } catch (err) {
+            console.error('Błąd sprawdzania powiązań:', err);
+            // Kontynuuj z prostym potwierdzeniem w przypadku błędu
+        }
+
+        // Fallback: jeśli nie udało się sprawdzić powiązań
+        if (!confirm(`Czy na pewno chcesz zdezaktywować użytkownika "${user.name || user.email}"?`)) {
             return;
         }
 
+        performSoftDelete(user);
+    }
+
+    // Modal z informacją o powiązaniach i opcją hard delete
+    function showDeleteUserModal(user, depsData) {
+        const { dependencies, canDelete, blockers } = depsData;
+        
+        // Sprawdź, czy są jakiekolwiek powiązania
+        const hasDependencies = dependencies && Object.keys(dependencies).length > 0;
+        
+        if (!hasDependencies) {
+            // Brak powiązań - oferuj hard delete
+            const message = `Użytkownik "${user.name || user.email}" nie ma żadnych powiązań.\n\n` +
+                          `✅ Możliwe jest trwałe usunięcie\n\n` +
+                          `Wybierz opcję:\n` +
+                          `OK = Usuń na stałe (nieodwracalne)\n` +
+                          `Anuluj = Tylko zdezaktywuj`;
+            
+            const choice = confirm(message);
+            
+            if (choice) {
+                performHardDelete(user);
+            } else {
+                const softChoice = confirm(`Czy zdezaktywować użytkownika "${user.name || user.email}"?`);
+                if (softChoice) {
+                    performSoftDelete(user);
+                }
+            }
+            return;
+        }
+        
+        // Są powiązania - pokaż szczegóły
+        let message = `Użytkownik "${user.name || user.email}" ma następujące powiązania:\n\n`;
+        
+        if (dependencies.orders) {
+            message += `• ${dependencies.orders} zamówień (BLOKUJE trwałe usunięcie)\n`;
+        }
+        if (dependencies.customers) {
+            message += `• ${dependencies.customers} klientów (zostaną odpięci)\n`;
+        }
+        if (dependencies.folderAccess) {
+            message += `• ${dependencies.folderAccess} dostępów do folderów (zostaną usunięte)\n`;
+        }
+        if (dependencies.orderDrafts) {
+            message += `• ${dependencies.orderDrafts} szkiców zamówień (zostaną usunięte)\n`;
+        }
+        
+        message += '\n';
+        
+        if (blockers && blockers.length > 0) {
+            message += `❌ Nie można usunąć na stałe z powodu: ${blockers.join(', ')}\n\n`;
+            message += 'Możesz:\n';
+            message += '1. Zdezaktywować użytkownika (pozostanie w bazie)\n';
+            message += '2. Anulować';
+            
+            const choice = confirm(message + '\n\nKliknij OK, aby zdezaktywować, lub Anuluj');
+            
+            if (choice) {
+                performSoftDelete(user);
+            }
+        } else {
+            message += '✅ Możliwe jest trwałe usunięcie\n\n';
+            message += 'Wybierz opcję:\n';
+            message += 'OK = Usuń na stałe (nieodwracalne)\n';
+            message += 'Anuluj = Tylko zdezaktywuj';
+            
+            const choice = confirm(message);
+            
+            if (choice) {
+                performHardDelete(user);
+            } else {
+                const softChoice = confirm(`Czy zdezaktywować użytkownika "${user.name || user.email}"?`);
+                if (softChoice) {
+                    performSoftDelete(user);
+                }
+            }
+        }
+    }
+
+    async function performSoftDelete(user) {
         try {
             const res = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}`, {
                 method: 'DELETE',
@@ -1786,13 +1958,37 @@ document.addEventListener('DOMContentLoaded', () => {
             const json = await res.json();
 
             if (json.status === 'success') {
+                showAdminToast('Użytkownik zdezaktywowany', 'success');
                 fetchUsers();
+            } else {
+                alert(json.message || 'Nie udało się zdezaktywować użytkownika');
+            }
+        } catch (err) {
+            console.error('Błąd podczas dezaktywacji użytkownika:', err);
+            alert('Błąd połączenia z serwerem');
+        }
+    }
+
+    async function performHardDelete(user) {
+        try {
+            const res = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}?hard=true`, {
+                method: 'DELETE',
+                credentials: 'include',
+            });
+
+            const json = await res.json();
+
+            if (json.status === 'success') {
+                showAdminToast('Użytkownik usunięty na stałe', 'success');
+                fetchUsers();
+            } else if (json.status === 'blocked') {
+                alert(json.message || 'Nie można usunąć użytkownika z powodu powiązań');
             } else {
                 alert(json.message || 'Nie udało się usunąć użytkownika');
             }
         } catch (err) {
             console.error('Błąd podczas usuwania użytkownika:', err);
-            alert('Błąd połączenia z serwerem podczas usuwania użytkownika');
+            alert('Błąd połączenia z serwerem');
         }
     }
 
@@ -1876,8 +2072,23 @@ document.addEventListener('DOMContentLoaded', () => {
         populateDepartmentFilters();
         populateProductionRoomSelect();
         handleRoleChange(); // Ustaw widoczność pola pokoju
+        
+        // Load multiroom assignments if editing user
+        if (user && user.id) {
+            // Force refresh by clearing cache first
+            currentUserMultiroomAssignments = [];
+            loadUserMultiroomAssignments(user.id);
+        } else {
+            clearUserMultiroomSection();
+        }
+        
         userModal.classList.remove('hidden');
     }
+
+    // Eksportuj funkcje globalnie dla admin-fixes.js
+    window.openUserForm = openUserForm;
+    window.handleDeleteUser = handleDeleteUser;
+    window.getAllUsers = () => allUsers;
 
     function handleRoleChange() {
         if (!userForm) return;
@@ -1888,12 +2099,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const multiRolesSection = document.getElementById('multi-roles-section');
         const role = roleSelect.value;
 
-        // Pokaż/ukryj pole pokoju produkcyjnego
+        // Pokaż/ukryj pole pokoju produkcyjnego i multiroom section
         if (['PRODUCTION', 'OPERATOR', 'PRODUCTION_MANAGER'].includes(role)) {
             roomField.classList.remove('hidden');
+            // Show multiroom section only when editing
+            const multiroomSection = document.getElementById('user-multiroom-section');
+            if (multiroomSection && currentEditingUserId) {
+                multiroomSection.style.display = 'block';
+            }
         } else {
             roomField.classList.add('hidden');
             roomSelect && (roomSelect.value = '');
+            const multiroomSection = document.getElementById('user-multiroom-section');
+            if (multiroomSection) {
+                multiroomSection.style.display = 'none';
+            }
         }
 
         const kioskEligible = kioskEligibleRoles.includes(role);
@@ -1937,7 +2157,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const multiRolesSection = document.getElementById('multi-roles-section');
         if (!multiRolesSection || !userId) return;
 
-        try {
+                try {
             const response = await fetch(`/api/admin/user-role-assignments?userId=${userId}`, {
                 credentials: 'include'
             });
@@ -1976,7 +2196,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const currentVal = hasPending ? pendingRoomId : select.value;
 
-        try {
+                try {
             if (!productionRooms || productionRooms.length === 0) {
                 const response = await fetch('/api/production/rooms', { credentials: 'include' });
                 const result = await response.json();
@@ -2043,24 +2263,77 @@ document.addEventListener('DOMContentLoaded', () => {
             email: formData.get('email'),
             role: formData.get('role'),
             departmentId: formData.get('departmentId') || null,
-            productionRoomId: formData.get('productionRoomId') || null,
-            isActive: formData.get('isActive') === 'on',
+            productionroomid: formData.get('productionRoomId') || null,  // musi być małymi literami
         };
+        
+        // Validate required fields
+        if (!data.name || !data.name.trim()) {
+            userFormError.textContent = 'Imię i nazwisko jest wymagane';
+            userFormError.classList.remove('hidden');
+            return;
+        }
+        
         const isKioskRole = kioskEligibleRoles.includes(data.role);
+        
+        // Email is optional for kiosk roles, required for others
+        if (!isKioskRole) {
+            if (!data.email || !data.email.trim()) {
+                userFormError.textContent = 'Email jest wymagany dla tej roli';
+                userFormError.classList.remove('hidden');
+                return;
+            }
+            
+            // Basic email validation
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(data.email)) {
+                userFormError.textContent = 'Podaj prawidłowy adres email';
+                userFormError.classList.remove('hidden');
+                return;
+            }
+        } else {
+            // For kiosk roles, if email is provided, validate it
+            if (data.email && data.email.trim()) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(data.email)) {
+                    userFormError.textContent = 'Podaj prawidłowy adres email lub pozostaw puste';
+                    userFormError.classList.remove('hidden');
+                    return;
+                }
+            } else {
+                // Leave email empty for kiosk users if not provided
+                data.email = null;
+            }
+        }
+        
         const kioskEnabled = isKioskRole && kioskEnabledCheckbox ? kioskEnabledCheckbox.checked : false;
         const rawKioskPin = isKioskRole ? (formData.get('kioskPin') || '').trim() : '';
         const wasKioskEnabled = currentEditingUser?.isKioskEnabled === true;
 
         if (!currentEditingUserId) {
-            // Nowy użytkownik - wymagane hasło
+            // Nowy użytkownik - hasło wymagane dla ról niekioskowych.
+            // Dla ról kioskowych, jeśli puste, generujemy losowe hasło.
             const password = formData.get('password');
-            if (!password || password.length < 6) {
-
-                userFormError.textContent = 'Hasło musi mieć co najmniej 6 znaków';
-                userFormError.classList.remove('hidden');
-                return;
+            if (!isKioskRole) {
+                if (!password || password.length < 6) {
+                    userFormError.textContent = 'Hasło musi mieć co najmniej 6 znaków';
+                    userFormError.classList.remove('hidden');
+                    return;
+                }
+                data.password = password;
+            } else {
+                if (password && password.length > 0) {
+                    if (password.length < 6) {
+                        userFormError.textContent = 'Hasło musi mieć co najmniej 6 znaków';
+                        userFormError.classList.remove('hidden');
+                        return;
+                    }
+                    data.password = password;
+                } else {
+                    // auto-generate safe password for kiosk users
+                    const randomPwd = Math.random().toString(36).slice(-8) + 'Aa1!';
+                    data.password = randomPwd;
+                }
             }
-            data.password = password;
 
             if (isKioskRole) {
                 data.isKioskEnabled = kioskEnabled;
@@ -2106,8 +2379,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 data.isKioskEnabled = false;
             }
         }
+        
+        // Add isActive only for PATCH requests (editing users)
+        if (currentEditingUserId) {
+            data.isActive = formData.get('isActive') === 'on';
+        }
 
-        try {
+                try {
             const url = currentEditingUserId
                 ? `/api/admin/users/${currentEditingUserId}`
                 : '/api/admin/users';
@@ -2122,6 +2400,16 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             const json = await res.json();
+            
+            // Debug logging for 400 errors
+            if (!res.ok && res.status === 400) {
+                console.error('POST /api/admin/users 400 error:', {
+                    url,
+                    method,
+                    dataSent: data,
+                    errorResponse: json
+                });
+            }
 
             if (json.status === 'success') {
                 // Zapisz wielorole jeśli są zaznaczone
@@ -2153,7 +2441,7 @@ document.addEventListener('DOMContentLoaded', () => {
             selectedRoles.push(cb.value);
         });
         
-        try {
+                try {
             await fetch(`/api/admin/user-role-assignments/sync/${userId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -2184,6 +2472,235 @@ document.addEventListener('DOMContentLoaded', () => {
             usersRoleFilter.appendChild(opt);
         });
     }
+
+    // ============================================
+    // MULTIROOM MANAGEMENT IN USER FORM
+    // ============================================
+    
+    let currentUserMultiroomAssignments = [];
+    
+    function clearUserMultiroomSection() {
+        const listEl = document.getElementById('user-multiroom-list');
+        if (listEl) {
+            listEl.innerHTML = '<p class="text-xs text-gray-400 italic">Brak dodatkowych pokoi</p>';
+        }
+        currentUserMultiroomAssignments = [];
+    }
+    
+    async function loadUserMultiroomAssignments(userId) {
+        const listEl = document.getElementById('user-multiroom-list');
+        if (!listEl || !userId) return;
+        
+        listEl.innerHTML = '<p class="text-xs text-gray-400 italic"><i class="fas fa-spinner fa-spin"></i> Ładowanie...</p>';
+        
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms?userId=${userId}&t=${Date.now()}`, {
+                credentials: 'include',
+                cache: 'no-store'
+            });
+            
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                currentUserMultiroomAssignments = result.data || [];
+                renderUserMultiroomList();
+                populateUserMultiroomAddSelect();
+            } else {
+                listEl.innerHTML = `<p class="text-xs text-red-500">${escapeHtml(result.message || 'Błąd ładowania')}</p>`;
+            }
+        } catch (error) {
+            console.error('Błąd ładowania pokoi użytkownika:', error);
+            listEl.innerHTML = '<p class="text-xs text-red-500">Błąd połączenia</p>';
+        }
+    }
+    
+    function renderUserMultiroomList() {
+        const listEl = document.getElementById('user-multiroom-list');
+        if (!listEl) return;
+        
+        // Filter out the primary room - show only additional rooms
+        const additionalRooms = currentUserMultiroomAssignments.filter(a => !a.isPrimary);
+        
+        if (additionalRooms.length === 0) {
+            listEl.innerHTML = '<p class="text-xs text-gray-400 italic">Brak dodatkowych pokoi</p>';
+            return;
+        }
+        
+        listEl.innerHTML = additionalRooms.map(assignment => {
+            const roomName = assignment.room?.name || `Pokój ${assignment.roomId}`;
+            const roomCode = assignment.room?.code || '';
+            
+            return `
+                <div class="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200 text-xs">
+                    <div class="flex items-center gap-2">
+                        <span class="font-medium text-gray-800">${escapeHtml(roomName)}</span>
+                        ${roomCode ? `<span class="text-gray-500">[${escapeHtml(roomCode)}]</span>` : ''}
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button type="button" class="text-yellow-600 hover:text-yellow-800 px-1" onclick="setUserMultiroomPrimary(${assignment.id})" title="Ustaw jako główny">
+                            <i class="fas fa-star text-xs"></i>
+                        </button>
+                        <button type="button" class="text-red-600 hover:text-red-800 px-1" onclick="removeUserMultiroom(${assignment.id})" title="Usuń">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    async function populateUserMultiroomAddSelect() {
+        const select = document.getElementById('user-multiroom-add-select');
+        if (!select) return;
+        
+        select.innerHTML = '<option value="">Wybierz pokój do dodania...</option>';
+        
+        try {
+            if (!productionRooms || productionRooms.length === 0) {
+                const response = await fetch('/api/production/rooms', { credentials: 'include' });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    productionRooms = result.data || [];
+                }
+            }
+            
+            const assignedRoomIds = currentUserMultiroomAssignments.map(a => a.roomId);
+            const availableRooms = productionRooms.filter(r => !assignedRoomIds.includes(r.id));
+            
+            availableRooms.forEach(room => {
+                const opt = document.createElement('option');
+                opt.value = room.id;
+                opt.textContent = `${room.name} [${room.code}]`;
+                select.appendChild(opt);
+            });
+        } catch (error) {
+            console.error('Błąd ładowania pokoi:', error);
+        }
+    }
+    
+    async function handleUserMultiroomAdd() {
+        const select = document.getElementById('user-multiroom-add-select');
+        const roomId = select?.value;
+        
+        if (!roomId || !currentEditingUserId) {
+            showAdminToast('Wybierz pokój do dodania', 'warning');
+            return;
+        }
+        
+        console.log('Adding multiroom:', { userId: currentEditingUserId, roomId: parseInt(roomId, 10) });
+        
+        try {
+            const response = await fetch('/api/admin/user-production-rooms', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    userId: currentEditingUserId,
+                    roomId: parseInt(roomId, 10),
+                    isPrimary: false
+                })
+            });
+            
+            const result = await response.json();
+            console.log('Multiroom add response:', result);
+            
+            if (result.status === 'success') {
+                showAdminToast('Pokój dodany', 'success');
+                select.value = '';
+                // Force refresh with cache busting
+                await loadUserMultiroomAssignments(currentEditingUserId);
+                // Also refresh to verify it was saved
+                setTimeout(async () => {
+                    await loadUserMultiroomAssignments(currentEditingUserId);
+                }, 500);
+            } else {
+                showAdminToast(result.message || 'Błąd dodawania pokoju', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd dodawania pokoju:', error);
+            showAdminToast('Błąd połączenia', 'error');
+        }
+    }
+    
+    window.setUserMultiroomPrimary = async function(assignmentId) {
+        if (!currentEditingUserId) return;
+        
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ isPrimary: true })
+            });
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                showAdminToast('Pokój główny zmieniony', 'success');
+                
+                // Reload multiroom assignments
+                await loadUserMultiroomAssignments(currentEditingUserId);
+                
+                // Update the main production room select field
+                const updatedAssignment = currentUserMultiroomAssignments.find(a => a.isPrimary);
+                if (updatedAssignment && updatedAssignment.room) {
+                    const mainSelect = userForm.querySelector('[name="productionRoomId"]');
+                    if (mainSelect) {
+                        // Update the select value
+                        mainSelect.value = updatedAssignment.roomId;
+                        
+                        // Update the option text if needed
+                        const option = mainSelect.querySelector(`option[value="${updatedAssignment.roomId}"]`);
+                        if (option) {
+                            option.textContent = `${updatedAssignment.room.name} [${updatedAssignment.room.code}]`;
+                        }
+                    }
+                }
+            } else {
+                showAdminToast(result.message || 'Błąd', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd zmiany pokoju głównego:', error);
+            showAdminToast('Błąd połączenia', 'error');
+        }
+    };
+    
+    window.removeUserMultiroom = async function(assignmentId) {
+        if (!currentEditingUserId) return;
+        if (!confirm('Czy na pewno chcesz usunąć to przypisanie pokoju?')) return;
+        
+        try {
+            const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                showAdminToast('Przypisanie usunięte', 'success');
+                await loadUserMultiroomAssignments(currentEditingUserId);
+            } else {
+                showAdminToast(result.message || 'Błąd', 'error');
+            }
+        } catch (error) {
+            console.error('Błąd usuwania przypisania:', error);
+            showAdminToast('Błąd połączenia', 'error');
+        }
+    };
+    
+    // Event listeners for multiroom controls
+    document.getElementById('user-multiroom-add-btn')?.addEventListener('click', handleUserMultiroomAdd);
+    document.getElementById('user-multiroom-refresh')?.addEventListener('click', () => {
+        if (currentEditingUserId) {
+            loadUserMultiroomAssignments(currentEditingUserId);
+        }
+    });
+
+    // Export functions for admin-fixes.js
+    window.openUserForm = openUserForm;
+    window.getAllUsers = () => allUsers;
 
     // ============================================
     // WIDOK ZAMÓWIENIA - PEŁNA IMPLEMENTACJA
@@ -2347,7 +2864,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Synchronizuj rolę użytkownika
     async function syncUserRole() {
-        try {
+                try {
             const response = await fetch('/api/auth/sync-role', {
                 method: 'POST',
                 credentials: 'include'
@@ -2370,7 +2887,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Najpierw synchronizuj rolę
         currentUserRole = await syncUserRole();
 
-        try {
+                try {
             ordersTableBody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-gray-500"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i> Ładowanie…</td></tr>';
 
             const params = new URLSearchParams();
@@ -2402,7 +2919,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Załaduj listę handlowców do filtra
     async function loadOrdersUsers() {
         if (!ordersUserFilter) return;
-        try {
+                try {
             const response = await fetch('/api/users', { credentials: 'include' });
             if (!response.ok) return;
             const result = await response.json();
@@ -2637,7 +3154,7 @@ document.addEventListener('DOMContentLoaded', () => {
             pillsContainer.style.pointerEvents = 'none';
         }
         
-        try {
+                try {
             const response = await fetch(`/api/orders/${orderId}/status`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -2684,7 +3201,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (loadingOrders.has(orderId)) return;
         loadingOrders.add(orderId);
 
-        try {
+                try {
             // Pobierz szczegóły zamówienia i zlecenia produkcyjne równolegle
             const [orderResponse, prodOrdersResponse] = await Promise.all([
                 fetch(`/api/orders/${orderId}`, { credentials: 'include' }),
@@ -2721,7 +3238,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Formatuj projekty z ilościami
                 let projectsDisplay = item.selectedProjects || '-';
                 if (item.projectQuantities) {
-                    try {
+                            try {
                         const pq = typeof item.projectQuantities === 'string' 
                             ? JSON.parse(item.projectQuantities) 
                             : item.projectQuantities;
@@ -2899,7 +3416,7 @@ document.addEventListener('DOMContentLoaded', () => {
         select.dataset.status = newStatus;
         select.disabled = true;
 
-        try {
+                try {
             const response = await fetch(`/api/orders/${orderId}/status`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -2933,7 +3450,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!textarea) return;
 
         const notes = textarea.value;
-        try {
+                try {
             const response = await fetch(`/api/orders/${orderId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -2955,7 +3472,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Print order
     window.adminPrintOrder = async function(orderId) {
-        try {
+                try {
             const response = await fetch(`/api/orders/${orderId}`, { credentials: 'include' });
             if (!response.ok) throw new Error('Nie udało się pobrać szczegółów');
 
@@ -2976,7 +3493,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Formatuj projekty z ilościami
                 let projectsDisplay = item.selectedProjects || '-';
                 if (item.projectQuantities) {
-                    try {
+                            try {
                         const pq = typeof item.projectQuantities === 'string' 
                             ? JSON.parse(item.projectQuantities) 
                             : item.projectQuantities;
@@ -3078,7 +3595,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function showEditOrderModal(orderId) {
         if (!editOrderModal || !editOrderContent) return;
 
-        try {
+                try {
             // Show modal with loading
             if (editOrderNumber) editOrderNumber.textContent = '';
             editOrderModal.classList.remove('hidden');
@@ -3099,7 +3616,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Formatuj projekty z ilościami
                 let projectsDisplay = item.selectedProjects || '-';
                 if (item.projectQuantities) {
-                    try {
+                            try {
                         const pq = typeof item.projectQuantities === 'string' 
                             ? JSON.parse(item.projectQuantities) 
                             : item.projectQuantities;
@@ -3197,7 +3714,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function saveOrderChanges(orderId) {
-        try {
+                try {
             const status = document.getElementById('edit-order-status').value;
             const notes = document.getElementById('edit-order-notes').value;
 
@@ -3225,7 +3742,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function confirmDeleteOrder(force = false) {
         if (!deleteOrderId) return;
 
-        try {
+                try {
             const url = force 
                 ? `/api/orders/${deleteOrderId}?force=true` 
                 : `/api/orders/${deleteOrderId}`;
@@ -3371,7 +3888,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </tr>
         `;
 
-        try {
+                try {
             // Pobierz przypisania
             const accessResponse = await fetch('/api/admin/user-folder-access');
             const accessResult = await accessResponse.json();
@@ -3393,7 +3910,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Pobierz foldery z QNAP (do autouzupełniania)
-            try {
+                    try {
                 const foldersResponse = await fetch('/api/gallery/salespeople');
                 const foldersResult = await foldersResponse.json();
                 if (foldersResult.salesPeople) {
@@ -3674,7 +4191,7 @@ document.addEventListener('DOMContentLoaded', () => {
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Zapisywanie...';
         }
         
-        try {
+                try {
             let response;
             
             if (id) {
@@ -3721,7 +4238,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const id = toggleBtn.dataset.id;
             const currentActive = toggleBtn.dataset.active === 'true';
             
-            try {
+                    try {
                 const response = await fetch(`/api/admin/user-folder-access/${id}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
@@ -3753,7 +4270,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
-            try {
+                    try {
                 const response = await fetch(`/api/admin/user-folder-access/${id}`, {
                     method: 'DELETE'
                 });
@@ -3810,7 +4327,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     async function loadCityAccess() {
         // Sprawdź rolę użytkownika
-        try {
+                try {
             const authResponse = await fetch('/api/auth/me');
             const authResult = await authResponse.json();
             
@@ -3829,7 +4346,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Funkcja specjalnego widoku dla GRAPHICS - nieprzypisane miejscowości
     async function loadUnassignedCitiesView() {
-        try {
+                try {
             // Ukryj standardowe kontrolki dla GRAPHICS
             if (cityAccessUserSelect) cityAccessUserSelect.parentElement.style.display = 'none';
             if (cityTilesSearch) cityTilesSearch.parentElement.style.display = 'none';
@@ -3989,7 +4506,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Przypisywanie...';
         
-        try {
+                try {
             const response = await fetch('/api/admin/user-city-access', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -4028,7 +4545,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     async function loadCityTilesData() {
-        try {
+                try {
             // Pobierz użytkowników
             const usersResponse = await fetch('/api/admin/users');
             const usersResult = await usersResponse.json();
@@ -4068,7 +4585,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let allSystemCityAssignments = [];
     
     async function loadAllCityAssignments() {
-        try {
+                try {
             const response = await fetch('/api/admin/user-city-access');
             const result = await response.json();
             
@@ -4180,7 +4697,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
         
-        try {
+                try {
             const response = await fetch(`/api/admin/user-city-access?userId=${userId}`);
             const result = await response.json();
             
@@ -4453,7 +4970,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const tsRaw = a.updatedAt || a.createdAt || '';
                 let dateStr = '';
                 if (tsRaw) {
-                    try {
+                            try {
                         dateStr = new Date(tsRaw).toLocaleString('pl-PL');
                     } catch (_) {
                         dateStr = tsRaw;
@@ -4589,7 +5106,7 @@ document.addEventListener('DOMContentLoaded', () => {
         tile.disabled = true;
         tile.style.opacity = '0.5';
         
-        try {
+                try {
             if (isAssigned && accessId) {
                 // Sprawdź, czy to ostatnie aktywne przypisanie tej miejscowości w całym systemie
                 let isLastAssignment = false;
@@ -5122,7 +5639,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     btn.disabled = true;
                     btn.innerHTML = '<i class="fas fa-spinner fa-spin text-[10px]"></i><span>Usuwanie...</span>';
 
-                    try {
+                            try {
                         const response = await fetch(`/api/admin/user-city-access/${assignmentId}`, { method: 'DELETE' });
                         const result = await response.json();
 
@@ -5335,7 +5852,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (btnIcon) btnIcon.className = 'fas fa-spinner fa-spin';
 
-        try {
+                try {
             const response = await fetch(`/api/orders/${orderId}/history`, {
                 credentials: 'include'
             });
@@ -5450,7 +5967,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `;
 
-        try {
+                try {
             const response = await fetch('/api/admin/gallery-projects');
             const result = await response.json();
 
@@ -5480,7 +5997,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadAllDbProducts() {
-        try {
+                try {
             const response = await fetch('/api/admin/products-with-stock');
             const result = await response.json();
 
@@ -5634,7 +6151,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
 
-        try {
+                try {
             const response = await fetch(`/api/admin/gallery-projects/${projectId}/products`);
             const result = await response.json();
 
@@ -5713,7 +6230,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function removeProductFromProject(projectId, productId) {
-        try {
+                try {
             const response = await fetch(`/api/admin/gallery-projects/${projectId}/products/${productId}`, {
                 method: 'DELETE'
             });
@@ -5763,7 +6280,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        try {
+                try {
             const response = await fetch(`/api/admin/gallery-projects/${projectId}/products`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -6804,7 +7321,7 @@ async function editWorkCenterPaths(id) {
 
         // Zapisz dodawane mapowania
         for (const code of toAdd) {
-            try {
+                    try {
                 const resp = await fetch(`/api/production/workcenters/${encodeURIComponent(id)}/path-mappings`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -6822,7 +7339,7 @@ async function editWorkCenterPaths(id) {
 
         // Dezaktywuj usuwane mapowania
         for (const code of toRemove) {
-            try {
+                    try {
                 const resp = await fetch(`/api/production/workcenters/${encodeURIComponent(id)}/path-mappings/${encodeURIComponent(code)}`, {
                     method: 'DELETE',
                     credentials: 'include'
@@ -8074,7 +8591,7 @@ async function restoreDepartment(id, name) {
         const currentVal = select.value;
         select.innerHTML = '<option value="">Brak (tylko ADMIN może zarządzać)</option>';
         
-        try {
+                try {
             // Pobierz użytkowników z rolami produkcyjnymi (PRODUCTION_MANAGER, PRODUCTION)
             const response = await fetch('/api/admin/users', { credentials: 'include' });
             const result = await response.json();
@@ -8104,7 +8621,7 @@ async function restoreDepartment(id, name) {
         const currentVal = select.value;
         select.innerHTML = '<option value="">Brak</option>';
         
-        try {
+                try {
             const response = await fetch('/api/admin/users?role=PRODUCTION', { credentials: 'include' });
             const result = await response.json();
             
@@ -8149,7 +8666,7 @@ async function restoreDepartment(id, name) {
             roomManagerUserId: roomManagerUserId || null  // MES-compliant room manager
         };
         
-        try {
+                try {
             const url = id ? `/api/production/rooms/${id}` : '/api/production/rooms';
             const method = id ? 'PATCH' : 'POST';
             
@@ -8249,7 +8766,7 @@ async function restoreDepartment(id, name) {
         select.innerHTML = '<option value="">Brak przypisania</option>';
         
         if (productionRooms.length === 0) {
-            try {
+                    try {
                 const response = await fetch('/api/production/rooms', { credentials: 'include' });
                 const result = await response.json();
                 if (result.status === 'success') {
@@ -8294,7 +8811,7 @@ async function restoreDepartment(id, name) {
             description: description || null
         };
         
-        try {
+                try {
             const url = id ? `/api/production/work-centers/${id}` : '/api/production/work-centers';
             const method = id ? 'PATCH' : 'POST';
             
@@ -8421,7 +8938,7 @@ async function restoreDepartment(id, name) {
         select.innerHTML = '<option value="">Brak przypisania</option>';
         
         if (workCenters.length === 0) {
-            try {
+                    try {
                 const response = await fetch('/api/production/work-centers', { credentials: 'include' });
                 const result = await response.json();
                 if (result.status === 'success') {
@@ -8468,7 +8985,7 @@ async function restoreDepartment(id, name) {
             model: model || null
         };
         
-        try {
+                try {
             const url = id ? `/api/production/work-stations/${id}` : '/api/production/work-stations';
             const method = id ? 'PATCH' : 'POST';
             
@@ -8512,77 +9029,62 @@ async function restoreDepartment(id, name) {
     async function openProductionRoomsModal(user) {
         currentRoomsUserId = user.id;
         currentRoomsUserName = user.name || user.email || 'Użytkownik';
-
-        // Utwórz modal jeśli nie istnieje
-        let modal = document.getElementById('production-rooms-modal');
-        if (!modal) {
-            modal = document.createElement('div');
-            modal.id = 'production-rooms-modal';
-            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden';
-            modal.innerHTML = `
-                <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col">
-                    <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-purple-50">
-                        <h2 id="production-rooms-modal-title" class="text-lg font-semibold text-purple-800">
-                            <i class="fas fa-door-open mr-2"></i>Pokoje produkcyjne
-                        </h2>
-                        <button id="production-rooms-modal-close" class="text-gray-500 hover:text-gray-700">
-                            <i class="fas fa-times text-xl"></i>
-                        </button>
-                    </div>
-                    <div class="p-4 overflow-y-auto flex-1">
-                        <p class="text-sm text-gray-600 mb-4">
-                            Użytkownik: <strong id="production-rooms-user-name"></strong>
-                        </p>
-                        
-                        <!-- Lista przypisanych pokoi -->
-                        <div class="mb-4">
-                            <h3 class="text-sm font-semibold text-gray-700 mb-2">Przypisane pokoje:</h3>
-                            <div id="production-rooms-list" class="space-y-2">
-                                <p class="text-gray-400 text-sm">Ładowanie...</p>
-                            </div>
-                        </div>
-
-                        <!-- Formularz dodawania -->
-                        <div class="border-t pt-4">
-                            <h3 class="text-sm font-semibold text-gray-700 mb-2">Dodaj pokój:</h3>
-                            <div class="flex gap-2 items-end">
-                                <div class="flex-1">
-                                    <select id="production-rooms-add-select" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
-                                        <option value="">Wybierz pokój...</option>
-                                    </select>
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <label class="flex items-center gap-1 text-xs text-gray-600">
-                                        <input type="checkbox" id="production-rooms-add-primary" class="rounded border-gray-300">
-                                        Główny
-                                    </label>
-                                </div>
-                                <button id="production-rooms-add-btn" class="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
-                                    <i class="fas fa-plus"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-end">
-                        <button id="production-rooms-modal-done" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
-                            Zamknij
-                        </button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-
-            // Event listeners
-            document.getElementById('production-rooms-modal-close').addEventListener('click', closeProductionRoomsModal);
-            document.getElementById('production-rooms-modal-done').addEventListener('click', closeProductionRoomsModal);
-            document.getElementById('production-rooms-add-btn').addEventListener('click', handleAddProductionRoom);
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) closeProductionRoomsModal();
-            });
+        fallbackProductionRooms = [];
+        userProductionRoomAssignments = [];
+        
+        // Upewnij się, że modal i listy istnieją zanim wyrenderujemy fallback
+        const modal = ensureProductionRoomsModal();
+        const userNameEl = document.getElementById('production-rooms-user-name');
+        if (userNameEl) {
+            userNameEl.textContent = currentRoomsUserName;
         }
-
-        document.getElementById('production-rooms-user-name').textContent = currentRoomsUserName;
         modal.classList.remove('hidden');
+
+        const roomId =
+            user.productionroomid ||
+            user.productionRoomId ||
+            (user.productionRoom && (user.productionRoom.id || user.productionRoom.roomId)) ||
+            null;
+        const roomName =
+            user.productionRoomName ||
+            (user.productionRoom && (user.productionRoom.name || user.productionRoom.roomName)) ||
+            (roomId ? `Pokój ${roomId}` : null);
+        const roomCode =
+            user.productionRoomCode ||
+            (user.productionRoom && (user.productionRoom.code || user.productionRoom.roomCode)) ||
+            '';
+
+        console.log('[rooms] open modal', {
+            userId: user.id,
+            roomId,
+            roomName,
+            roomCode,
+            fromUser: user
+        });
+
+        fallbackProductionRooms = Array.isArray(user.productionRooms) ? user.productionRooms : [];
+        if ((!fallbackProductionRooms || fallbackProductionRooms.length === 0) && (roomId || roomName)) {
+            fallbackProductionRooms = [{
+                id: roomId || `legacy-${user.id}`,
+                roomId: roomId || null,
+                isPrimary: true,
+                room: {
+                    id: roomId || null,
+                    name: roomName || 'Pokój produkcyjny',
+                    code: roomCode || ''
+                }
+            }];
+        }
+        if (fallbackProductionRooms.length > 0) {
+            userProductionRoomAssignments = fallbackProductionRooms.map(r => ({
+                id: r.id || `legacy-${r.roomId || r.id}`,
+                userId: currentRoomsUserId,
+                roomId: r.roomId || r.id,
+                isPrimary: Boolean(r.isPrimary),
+                room: r.room || { id: r.roomId || r.id, name: r.name || r.roomName || `Pokój ${r.roomId || r.id}`, code: r.code || '' }
+            }));
+            renderProductionRoomsList();
+        }
 
         await loadUserProductionRooms();
         await populateProductionRoomsAddSelect();
@@ -8600,9 +9102,21 @@ async function restoreDepartment(id, name) {
         const listEl = document.getElementById('production-rooms-list');
         if (!listEl || !currentRoomsUserId) return;
 
-        listEl.innerHTML = '<p class="text-gray-400 text-sm"><i class="fas fa-spinner fa-spin mr-1"></i>Ładowanie...</p>';
+        // Jeżeli mamy fallback z użytkownika, pokaż od razu
+        if (fallbackProductionRooms.length > 0) {
+            userProductionRoomAssignments = fallbackProductionRooms.map(r => ({
+                id: r.id || `legacy-${r.roomId || r.id}`,
+                userId: currentRoomsUserId,
+                roomId: r.roomId || r.id,
+                isPrimary: Boolean(r.isPrimary),
+                room: r.room || { id: r.roomId || r.id, name: r.name || r.roomName || `Pokój ${r.roomId || r.id}`, code: r.code || '' }
+            }));
+            renderProductionRoomsList();
+        } else {
+            listEl.innerHTML = '<p class="text-gray-400 text-sm"><i class="fas fa-spinner fa-spin mr-1"></i>Ładowanie...</p>';
+        }
 
-        try {
+                try {
             const response = await fetch(`/api/admin/user-production-rooms?userId=${currentRoomsUserId}`, {
                 credentials: 'include'
             });
@@ -8610,6 +9124,15 @@ async function restoreDepartment(id, name) {
 
             if (result.status === 'success') {
                 userProductionRoomAssignments = result.data || [];
+                if (userProductionRoomAssignments.length === 0 && fallbackProductionRooms.length > 0) {
+                    userProductionRoomAssignments = fallbackProductionRooms.map(r => ({
+                        id: r.id || `legacy-${r.roomId || r.id}`,
+                        userId: currentRoomsUserId,
+                        roomId: r.roomId || r.id,
+                        isPrimary: Boolean(r.isPrimary),
+                        room: r.room || { id: r.roomId || r.id, name: r.name || r.roomName || `Pokój ${r.roomId || r.id}`, code: r.code || '' }
+                    }));
+                }
                 renderProductionRoomsList();
             } else {
                 listEl.innerHTML = `<p class="text-red-500 text-sm">Błąd: ${escapeHtml(result.message)}</p>`;
@@ -8664,7 +9187,7 @@ async function restoreDepartment(id, name) {
 
         select.innerHTML = '<option value="">Wybierz pokój...</option>';
 
-        try {
+                try {
             const response = await fetch('/api/production/rooms', { credentials: 'include' });
             const result = await response.json();
 
@@ -8696,7 +9219,7 @@ async function restoreDepartment(id, name) {
             return;
         }
 
-        try {
+                try {
             const response = await fetch('/api/admin/user-production-rooms', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -8727,7 +9250,7 @@ async function restoreDepartment(id, name) {
 
     // Globalne funkcje dla onclick w renderowanym HTML
     window.setRoomAsPrimary = async function(assignmentId) {
-        try {
+                try {
             const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -8752,7 +9275,7 @@ async function restoreDepartment(id, name) {
     window.removeProductionRoom = async function(assignmentId) {
         if (!confirm('Czy na pewno chcesz usunąć to przypisanie pokoju?')) return;
 
-        try {
+                try {
             const response = await fetch(`/api/admin/user-production-rooms/${assignmentId}`, {
                 method: 'DELETE',
                 credentials: 'include'
@@ -8772,4 +9295,18 @@ async function restoreDepartment(id, name) {
             showAdminToast('Błąd połączenia z serwerem', 'error');
         }
     };
+
+    // Czekaj na DOM przed inicjalizacją
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeAdmin);
+    } else {
+        initializeAdmin();
+    }
+
+    function initializeAdmin() {
+        console.log('🔧 Inicjalizacja admin.js...');
+        // Tutaj cała reszta kodu, która wymaga DOM
+        // (przenieś cały kod inicjalizujący tutaj)
+    }
+
 })();

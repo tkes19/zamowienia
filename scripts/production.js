@@ -79,11 +79,9 @@ function startProductionSse() {
         productionSse.addEventListener('message', (ev) => {
             try {
                 const payload = JSON.parse(ev.data || '{}');
-                if (payload?.type === 'productionStatusChanged') {
-                    scheduleProductionSseRefresh();
-                }
+                handleProductionEvent(payload);
             } catch (e) {
-                // ignore
+                console.error('[SSE] Parse error:', e);
             }
         });
 
@@ -93,6 +91,150 @@ function startProductionSse() {
     } catch (e) {
         scheduleProductionSseReconnect();
     }
+}
+
+/**
+ * Obsługa zdarzeń produkcyjnych z SSE
+ */
+function handleProductionEvent(payload) {
+    if (!payload || !payload.type) return;
+
+    console.log('[SSE] Production event:', payload.type, payload.data);
+
+    switch (payload.type) {
+        case 'production.operation.started':
+        case 'production.operation.paused':
+        case 'production.operation.completed':
+        case 'production.operation.cancelled':
+        case 'production.operation.problem':
+            handleOperationEvent(payload);
+            break;
+        
+        case 'production.workorder.updated':
+            handleWorkOrderEvent(payload);
+            break;
+        
+        case 'production.order.updated':
+            handleOrderEvent(payload);
+            break;
+        
+        case 'production.kpi.updated':
+            handleKpiEvent(payload);
+            break;
+        
+        // Legacy events
+        case 'productionStatusChanged':
+        case 'operationStarted':
+        case 'operationCompleted':
+        case 'operationPaused':
+            scheduleProductionSseRefresh();
+            break;
+        
+        default:
+            // Nieznany typ zdarzenia
+            break;
+    }
+}
+
+/**
+ * Obsługa zdarzenia operacji - aktualizacja konkretnej operacji bez pełnego fetchu
+ */
+function handleOperationEvent(payload) {
+    const { operationId, orderId, workOrderId } = payload.data || {};
+    
+    if (!orderId) {
+        scheduleProductionSseRefresh();
+        return;
+    }
+
+    // Znajdź zlecenie w lokalnym stanie
+    const order = orders.find(o => o.id === orderId);
+    if (!order) {
+        // Zlecenie nie jest w lokalnym stanie - odśwież wszystko
+        scheduleProductionSseRefresh();
+        return;
+    }
+
+    // Zaktualizuj operację w zleceniu (optymistycznie)
+    if (order.operations && operationId) {
+        const operation = order.operations.find(op => op.id === operationId);
+        if (operation) {
+            // Zaktualizuj status operacji na podstawie typu zdarzenia
+            if (payload.type === 'production.operation.started') {
+                operation.status = 'active';
+            } else if (payload.type === 'production.operation.paused') {
+                operation.status = 'paused';
+            } else if (payload.type === 'production.operation.completed') {
+                operation.status = 'completed';
+            } else if (payload.type === 'production.operation.cancelled') {
+                operation.status = 'cancelled';
+            }
+        }
+    }
+
+    // Odśwież UI dla tego zlecenia
+    updateOrderInUI(order);
+    
+    // Odśwież statystyki
+    loadStats();
+}
+
+/**
+ * Obsługa zdarzenia work order - aktualizacja statusu ZP
+ */
+function handleWorkOrderEvent(payload) {
+    const { workOrderId } = payload.data || {};
+    
+    if (!workOrderId) {
+        scheduleProductionSseRefresh();
+        return;
+    }
+
+    // Znajdź work order w lokalnym stanie
+    const wo = workOrders.find(w => w.id === workOrderId);
+    if (!wo) {
+        scheduleProductionSseRefresh();
+        return;
+    }
+
+    // Zaktualizuj status work order
+    if (payload.data.newStatus) {
+        wo.status = payload.data.newStatus;
+    }
+
+    // Odśwież UI
+    renderOrders();
+}
+
+/**
+ * Obsługa zdarzenia zlecenia produkcyjnego
+ */
+function handleOrderEvent(payload) {
+    scheduleProductionSseRefresh();
+}
+
+/**
+ * Obsługa zdarzenia KPI - aktualizacja statystyk
+ */
+function handleKpiEvent(payload) {
+    loadStats();
+}
+
+/**
+ * Aktualizacja konkretnego zlecenia w UI bez pełnego re-renderu
+ */
+function updateOrderInUI(order) {
+    // Znajdź element w DOM
+    const orderCard = document.querySelector(`[data-order-id="${order.id}"]`);
+    if (!orderCard) {
+        // Element nie jest widoczny - odśwież wszystko
+        renderOrders();
+        return;
+    }
+
+    // Zaktualizuj tylko ten element (prosty re-render tego kafelka)
+    // W przyszłości można to zoptymalizować do aktualizacji tylko zmienionych części
+    renderOrders();
 }
 
 // Maszyny w pokoju operatora
@@ -1142,9 +1284,9 @@ function renderOrders() {
         container.innerHTML = `
             <div class="prod-empty">
                 <i class="fas ${hasFilters ? 'fa-filter' : 'fa-clipboard-check'}"></i>
-                <div class="prod-empty-text">${hasFilters ? 'Brak zleceń spełniających filtry' : 'Brak aktywnych zleceń'}</div>
+                <div class="prod-empty-text">${hasFilters ? 'Brak zleceń spełniających filtry' : 'Brak aktywnych zleceń w Twoim pokoju'}</div>
                 <div style="color: var(--prod-text-muted); margin-top: 8px; font-size: 14px;">
-                    ${hasFilters ? 'Spróbuj wyłączyć filtry' : 'Wszystkie zlecenia zostały wykonane'}
+                    ${hasFilters ? 'Spróbuj wyłączyć filtry' : 'Wszystkie zlecenia dla Twojego pokoju zostały wykonane lub nie ma zleceń przypisanych do tego pokoju'}
                 </div>
             </div>
         `;
@@ -2132,11 +2274,17 @@ async function confirmComplete() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
         
+        const payload = {
+            quantity: outputQuantity,
+            notes: qualityNotes,
+            wasteQuantity
+        };
+
         const response = await fetch(`/api/production/operations/${operationIdToComplete}/complete`, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ outputQuantity, wasteQuantity, qualityNotes }),
+            body: JSON.stringify(payload),
             signal: controller.signal
         });
         
@@ -2543,6 +2691,13 @@ async function initKpiDashboard() {
         }
 
         userRole = data.role;
+        
+        // Show Mission Control link for ADMIN and PRODUCTION_MANAGER
+        const dashboardExecutiveLink = document.getElementById('prod-nav-dashboard-executive');
+        if (dashboardExecutiveLink) {
+            const allowedRoles = ['ADMIN', 'PRODUCTION_MANAGER'];
+            dashboardExecutiveLink.style.display = allowedRoles.includes(userRole) ? 'flex' : 'none';
+        }
     } catch (error) {
         console.error('[KPI] Błąd pobierania danych użytkownika:', error);
         kpiDashboard.style.display = 'none';

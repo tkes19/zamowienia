@@ -107,7 +107,7 @@
                         var operatorsHtml = '';
                         if (operators.length > 0) {
                             var operatorTags = operators.slice(0, 4).map(function(op) {
-                                return '<span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">' + escapeHtml(op.name || op.email || 'Nieznany') + '</span>';
+                                return '<span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">' + escapeHtml(op.user?.name || op.user?.email || 'Nieznany') + '</span>';
                             }).join('');
                             var moreOperators = operators.length > 4 ? '<span class="text-xs text-gray-400">+' + (operators.length - 4) + '</span>' : '';
                             operatorsHtml = '<div class="border-t pt-3 mt-3"><p class="text-xs text-gray-400 uppercase tracking-wide mb-2">Przypisane osoby:</p><div class="flex flex-wrap gap-1">' + operatorTags + moreOperators + '</div></div>';
@@ -135,7 +135,7 @@
                                     '<p class="text-amber-100 text-sm font-mono">' + escapeHtml(room.code) + '</p>' +
                                 '</div>' +
                                 '<div class="flex flex-wrap gap-1 mt-2">' +
-                                    '<span class="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full"><i class="fas fa-cogs mr-1"></i>' + (room.workCenterCount || 0) + ' gniazd</span>' +
+                                    '<span class="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full"><i class="fas fa-cogs mr-1"></i>' + (room.workCenters ? room.workCenters.length : 0) + ' gniazd</span>' +
                                     '<span class="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full"><i class="fas fa-users mr-1"></i>' + operatorCount + ' osób</span>' +
                                     managerBadge +
                                 '</div>' +
@@ -166,8 +166,8 @@
                     }
                     
                     grid.innerHTML = centers.map(function(wc) {
-                        var stationCount = wc.workStationCount || 0;
-                        var typeName = (typeof getWorkCenterTypeName === 'function' ? getWorkCenterTypeName(wc.type) : wc.type) || wc.type;
+                        var stationCount = (wc.workStations && wc.workStations.length) || 0;
+                        var typeName = (typeof getWorkCenterTypeName === 'function' ? getWorkCenterTypeName(wc.type?.name || wc.type) : wc.type?.name || wc.type) || wc.type?.name || wc.type;
                         var stats = wc.workStationsByStatus || {};
                         var available = stats.available || 0;
                         var inUse = stats.in_use || 0;
@@ -271,6 +271,7 @@
                                 '<p class="text-sm text-gray-600 mb-1"><i class="fas fa-tag mr-2 text-gray-400"></i>' + typeName + '</p>' +
                                 (ws.manufacturer ? '<p class="text-sm text-gray-600 mb-1"><i class="fas fa-industry mr-2 text-gray-400"></i>' + escapeHtml(ws.manufacturer) + ' ' + (ws.model || '') + '</p>' : '') +
                                 (ws.workCenter ? '<p class="text-sm text-gray-600 mb-1"><i class="fas fa-sitemap mr-2 text-gray-400"></i>' + (ws.workCenter.room ? '<span class="text-amber-600 cursor-pointer hover:underline" onclick="drillDownToWorkCenters(' + ws.workCenter.room.id + ')">' + escapeHtml(ws.workCenter.room.name) + '</span> → ' : '') + '<span class="text-blue-600 cursor-pointer hover:underline" onclick="drillDownToWorkStations(' + ws.workCenter.id + ')">' + escapeHtml(ws.workCenter.name) + '</span></p>' : '') +
+                                (ws.workCenter?.room && !ws.workCenter.room.name ? '<p class="text-sm text-red-600 mb-1"><i class="fas fa-exclamation-triangle mr-2"></i>Błąd: Pokój nie ma nazwy (ID: ' + ws.workCenter.room.id + ')</p>' : '') +
                                 (ws.currentOperator ? '<p class="text-sm text-amber-600"><i class="fas fa-user mr-2"></i>' + escapeHtml(ws.currentOperator.name) + '</p>' : '') +
                                 '<div class="flex flex-wrap gap-1 mt-3">' +
                                     (ws.status !== 'available' ? '<button onclick="quickChangeStatus(' + ws.id + ', \'available\')" class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200" title="Dostępna"><i class="fas fa-check-circle"></i></button>' : '') +

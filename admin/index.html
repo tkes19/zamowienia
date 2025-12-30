@@ -99,6 +99,11 @@
                 <!-- Sekcja Produkcja -->
                 <div class="mt-4 pt-4 border-t border-gray-200">
                     <p class="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Produkcja</p>
+                    <a href="/dashboard-executive.html" id="nav-dashboard-executive" class="hidden flex items-center gap-3 px-4 py-3 text-red-700 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors font-medium">
+                        <i class="fas fa-tachometer-alt w-5"></i>
+                        <span>Centrum Produkcji</span>
+                        <span class="ml-auto text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full">ADMIN</span>
+                    </a>
                     <a href="#" class="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-amber-50 hover:text-amber-600 rounded-lg transition-colors" data-view="production-rooms">
                         <i class="fas fa-door-open w-5"></i>
                         <span>Pokoje</span>
@@ -510,7 +515,7 @@
                 <!-- Tabela użytkowników -->
                 <div class="bg-white rounded-b-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="overflow-x-auto">
-                        <table class="w-full text-left border-collapse">
+                        <table id="users-table" class="w-full text-left border-collapse">
                             <thead id="users-table-head" class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold tracking-wider border-b border-gray-200">
                                 <tr>
                                     <th class="p-2 sortable-header cursor-pointer hover:bg-gray-100" data-sort="name">Imię i nazwisko <i class="fas fa-sort sort-icon ml-1 opacity-50"></i></th>
@@ -2155,8 +2160,9 @@
                     <input type="text" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Jan Kowalski">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email <span id="email-required-indicator">*</span></label>
                     <input type="email" name="email" autocomplete="username" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="jan.kowalski@firma.pl">
+                    <p class="mt-1 text-xs text-gray-500" id="email-hint">Opcjonalne dla ról kioskowych (OPERATOR, PRODUCTION)</p>
                 </div>
                 <div id="user-password-field">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Hasło *</label>
@@ -2228,11 +2234,34 @@
                     <p class="mt-1 text-xs text-gray-500">Opcjonalnie przypisz użytkownika do działu.</p>
                 </div>
                 <div id="production-room-field" class="hidden">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Pokój produkcyjny</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Pokój produkcyjny (główny)</label>
                     <select name="productionRoomId" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <option value="">Brak przypisanego pokoju</option>
                     </select>
-                    <p class="mt-1 text-xs text-gray-500">Dla operatorów: określa widoczność zleceń.</p>
+                    <p class="mt-1 text-xs text-gray-500">Główny pokój produkcyjny użytkownika.</p>
+                    
+                    <!-- Multi-room management inline -->
+                    <div id="user-multiroom-section" class="mt-4 border-t pt-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="text-sm font-medium text-gray-700">Dodatkowe pokoje produkcyjne</label>
+                            <button type="button" id="user-multiroom-refresh" class="text-xs text-blue-600 hover:text-blue-800">
+                                <i class="fas fa-sync-alt"></i> Odśwież
+                            </button>
+                        </div>
+                        <div id="user-multiroom-list" class="space-y-2 mb-3">
+                            <p class="text-xs text-gray-400 italic">Ładowanie...</p>
+                        </div>
+                        <div class="flex gap-2 items-end">
+                            <div class="flex-1">
+                                <select id="user-multiroom-add-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="">Wybierz pokój do dodania...</option>
+                                </select>
+                            </div>
+                            <button type="button" id="user-multiroom-add-btn" class="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+                                <i class="fas fa-plus"></i> Dodaj
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="kiosk-auth-field" class="hidden">
@@ -2644,7 +2673,7 @@
         .print-footer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 8px; color: #6b7280; text-align: center; }
     </style>
 
-    <script src="admin.js?v=20251218-5"></script>
+    <script src="admin.js?v=20251230-9"></script>
     <script src="admin-fixes.js?v=20251218-1"></script>
     <script src="production-drilldown.js?v=20251218-2"></script>
 </body>

@@ -572,10 +572,14 @@ async function loadGalleryCities() {
     // Pobierz miasta z filtrowaniem po przypisaniach użytkownika
     const data = await fetchGalleryJSON(`${GALLERY_API_BASE}/cities`);
     
-    let visibleCities = Array.isArray(data.cities)
+    const allCitiesFiltered = Array.isArray(data.cities)
       ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
       : [];
     
+    const hasAssignedCities = Array.isArray(data.assignedCities) && data.assignedCities.length > 0;
+    const assignedCitiesList = hasAssignedCities ? data.assignedCities : [];
+    
+    let visibleCities = [...allCitiesFiltered];
     // Sprawdź rolę użytkownika, aby zdecydować o filtrowaniu
     const currentUserRole = await getCurrentUserRole();
     const isGuest = currentUserRole === 'GUEST' || !currentUserRole;
@@ -585,7 +589,7 @@ async function loadGalleryCities() {
     // ADMIN, SALES_DEPT i GRAPHICS widzą wszystkie miejscowości domyślnie
     if (['ADMIN', 'SALES_DEPT', 'GRAPHICS'].includes(currentUserRole)) {
       // Nie filtruj - pokaż wszystkie miejscowości
-      userAssignedCities = data.assignedCities || [];
+      userAssignedCities = assignedCitiesList;
       
       // Dla GRAPHICS ustaw tryb read-only (nie mogą składać zamówień)
       if (currentUserRole === 'GRAPHICS') {
@@ -593,11 +597,10 @@ async function loadGalleryCities() {
       } else {
         document.body.classList.remove('read-only-mode');
       }
-    } else if (data.assignedCities && data.assignedCities.length > 0) {
-      // SALES_REP i CLIENT z przypisaniami - filtruj miasta
-      userAssignedCities = data.assignedCities;
-      const assignedCities = new Set(data.assignedCities);
-      visibleCities = visibleCities.filter(city => assignedCities.has(city));
+    } else if (hasAssignedCities) {
+      // SALES_REP i CLIENT z przypisaniami - domyślnie pokazuj wszystkie,
+      // ale zapamiętaj przypisane aby można było przełączyć na "tylko moje"
+      userAssignedCities = assignedCitiesList;
     } else if (isGuest) {
       // Gość widzi wszystkie miasta w trybie tylko do odczytu
       document.body.classList.add('read-only-mode');
@@ -646,23 +649,15 @@ async function loadGalleryCities() {
     }
     
     // Przechowaj wszystkie miasta do przełącznika "pokaż wszystkie" (PRZED filtrowaniem!)
-    const allCitiesFiltered = Array.isArray(data.cities)
-      ? data.cities.filter((name) => !/^\d+\./.test((name ?? '').trim()))
-      : [];
     window._allCitiesForToggle = allCitiesFiltered;
     
     // Zapisz przypisane miasta PRZED filtrowaniem
-    const assignedCitiesBeforeFilter = data.assignedCities && data.assignedCities.length > 0 
-      ? data.assignedCities 
-      : [];
-    window._userAssignedCities = assignedCitiesBeforeFilter;
+    window._userAssignedCities = userAssignedCities;
     
     // Pokaż przełącznik dla użytkowników z przypisaniami
     const showAllToggle = document.getElementById('show-all-cities-toggle');
     if (showAllToggle) {
       // Pobierz przypisane miejscowości z danych (niezależnie od roli)
-      const hasAssignedCities = data.assignedCities && data.assignedCities.length > 0;
-      
       if (['ADMIN', 'SALES_DEPT'].includes(currentUserRole) && hasAssignedCities) {
         // ADMIN i SALES_DEPT z przypisaniami - pokaż przełącznik "moje miejscowości"
         showAllToggle.style.display = 'inline';
@@ -670,16 +665,16 @@ async function loadGalleryCities() {
         showAllToggle.dataset.showingAll = 'true'; // domyślnie pokazują wszystkie
         showAllToggle.dataset.mode = 'all-to-assigned';
         // Zapisz przypisane miejscowości do przełącznika
-        window._userAssignedCities = data.assignedCities;
+        window._userAssignedCities = assignedCitiesList;
       } else if (currentUserRole === 'GRAPHICS') {
         // GRAPHICS - nie pokazuj przełącznika (tylko podgląd)
         showAllToggle.style.display = 'none';
       } else if (hasAssignedCities && !['ADMIN', 'SALES_DEPT'].includes(currentUserRole)) {
-        // Dla SALES_REP/CLIENT z przypisaniami pokaż przełącznik "pokaż wszystkie"
+        // Dla SALES_REP/CLIENT z przypisaniami - domyślnie pokazują wszystkie, możliwość przełączenia na "tylko moje"
         showAllToggle.style.display = 'inline';
-        showAllToggle.textContent = 'pokaż wszystkie';
-        showAllToggle.dataset.showingAll = 'false';
-        showAllToggle.dataset.mode = 'assigned-to-all';
+        showAllToggle.textContent = 'tylko moje';
+        showAllToggle.dataset.showingAll = 'true';
+        showAllToggle.dataset.mode = 'all-to-assigned';
       } else {
         showAllToggle.style.display = 'none';
       }
@@ -4637,8 +4632,10 @@ async function checkAuthAndInitialize() {
     });
 
     if (response.ok) {
-      const userData = await response.json();
-      currentUser = userData;
+      const payload = await response.json();
+      const normalizedUser = payload && payload.user ? payload.user : payload;
+      const resolvedRole = normalizedUser?.role || payload?.role || null;
+      currentUser = normalizedUser;
 
       // Usuń tryb gościa – pokaż pełny widok
       document.body.classList.remove('hide-guest');
@@ -4650,7 +4647,7 @@ async function checkAuthAndInitialize() {
 
       // Wyświetl dane użytkownika w pasku – imię i nazwisko (lub inna nazwa) w pierwszej linii
       if (headerUserName) {
-        const displayName = userData.fullName || userData.name || userData.email || '';
+        const displayName = normalizedUser.fullName || normalizedUser.name || normalizedUser.email || '';
         headerUserName.textContent = displayName;
       }
       if (headerUserRole) {
@@ -4661,10 +4658,10 @@ async function checkAuthAndInitialize() {
           'WAREHOUSE': 'Magazyn',
           'NEW_USER': 'Nowy użytkownik'
         };
-        headerUserRole.textContent = roleLabels[userData.role] || userData.role || '';
+        headerUserRole.textContent = roleLabels[resolvedRole] || resolvedRole || '';
       }
 
-      showUserNavigation(userData.role);
+      showUserNavigation(resolvedRole);
       
       // Załaduj ulubione użytkownika
       loadUserFavorites();

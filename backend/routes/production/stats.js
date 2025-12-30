@@ -142,7 +142,7 @@ router.get('/operator/stats', requireRole(['ADMIN', 'PRODUCTION', 'OPERATOR', 'P
  * GET /api/production/stats
  * Statystyki ogólne produkcji
  */
-router.get('/stats', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+router.get('/', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
     const supabase = req.app.locals.supabase;
     
     if (!supabase) {
@@ -153,26 +153,64 @@ router.get('/stats', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (
     }
 
     try {
+        // Najpierw sprawdzamy strukturę tabeli
         const { data: orders, error } = await supabase
+            .from('ProductionOrder')
+            .select('*')
+            .limit(1);
+
+        if (error) {
+            console.error('[GET /api/production/stats] Error checking table:', error);
+            // Jeśli tabela nie istnieje lub ma błąd, zwracamy zera
+            return res.json({
+                status: 'success',
+                data: {
+                    total: 0,
+                    active: 0,
+                    queue: 0,
+                    completed: 0,
+                    totalQuantity: 0,
+                    completedQuantity: 0
+                }
+            });
+        }
+
+        // Jeśli tabela istnieje, pobieramy dane
+        const { data: allOrders, error: fetchError } = await supabase
             .from('ProductionOrder')
             .select('id, status, quantity, completedquantity')
             .in('status', ['planned', 'approved', 'in_progress', 'paused', 'completed']);
 
-        if (error) {
-            console.error('[GET /api/production/stats] Error:', error);
-            return res.status(500).json({
-                status: 'error',
-                message: 'Błąd pobierania statystyk'
+        if (fetchError) {
+            console.error('[GET /api/production/stats] Fetch error:', fetchError);
+            // Jeśli kolumny nie istnieją, próbujemy bez nich
+            const { data: simpleOrders } = await supabase
+                .from('ProductionOrder')
+                .select('id, status')
+                .in('status', ['planned', 'approved', 'in_progress', 'paused', 'completed']);
+            
+            const stats = {
+                total: (simpleOrders || []).length,
+                active: (simpleOrders || []).filter(o => o.status === 'in_progress' || o.status === 'paused').length,
+                queue: (simpleOrders || []).filter(o => o.status === 'planned' || o.status === 'approved').length,
+                completed: (simpleOrders || []).filter(o => o.status === 'completed').length,
+                totalQuantity: 0,
+                completedQuantity: 0
+            };
+
+            return res.json({
+                status: 'success',
+                data: stats
             });
         }
 
         const stats = {
-            total: (orders || []).length,
-            active: (orders || []).filter(o => o.status === 'in_progress' || o.status === 'paused').length,
-            queue: (orders || []).filter(o => o.status === 'planned' || o.status === 'approved').length,
-            completed: (orders || []).filter(o => o.status === 'completed').length,
-            totalQuantity: (orders || []).reduce((sum, o) => sum + (o.quantity || 0), 0),
-            completedQuantity: (orders || []).reduce((sum, o) => sum + (o.completedquantity || 0), 0)
+            total: (allOrders || []).length,
+            active: (allOrders || []).filter(o => o.status === 'in_progress' || o.status === 'paused').length,
+            queue: (allOrders || []).filter(o => o.status === 'planned' || o.status === 'approved').length,
+            completed: (allOrders || []).filter(o => o.status === 'completed').length,
+            totalQuantity: (allOrders || []).reduce((sum, o) => sum + (o.quantity || 0), 0),
+            completedQuantity: (allOrders || []).reduce((sum, o) => sum + (o.completedquantity || 0), 0)
         };
 
         res.json({

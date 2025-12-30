@@ -11,13 +11,14 @@ const { createClient } = require('@supabase/supabase-js');
 // Import konfiguracji i modułów
 const config = require('./config/env');
 const { requireRole, kioskNetworkGuard } = require('./modules/auth');
-const { createSSEHandler } = require('./modules/sse');
+const sseModule = require('./modules/sse');
+const { createSSEHandler } = sseModule;
 
 // Import routerów
 const authRoutes = require('./routes/auth');
 const orderRoutes = require('./routes/orders');
 const productionRoutes = require('./routes/production');
-const productionExtendedRoutes = require('./routes/production-extended');
+const productionExtendedRoutes = require('./routes/production-extended.js');
 const configRoutes = require('./routes/config');
 const clientsRoutes = require('./routes/clients');
 const favoritesRoutes = require('./routes/favorites');
@@ -35,6 +36,10 @@ const productionStatsRoutes = require('./routes/production/stats');
 const productionPathsRoutes = require('./routes/production/paths');
 const productionOperationsRoutes = require('./routes/production/operations');
 const productionResourcesRoutes = require('./routes/production/resources');
+const productionMachinesRoutes = require('./routes/production/machines');
+const productionMaterialsRoutes = require('./routes/production/materials');
+const productionOperatorsRoutes = require('./routes/production/operators');
+const productionDashboardRoutes = require('./routes/production/dashboard');
 
 // Inicjalizacja aplikacji
 const app = express();
@@ -48,8 +53,9 @@ if (config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY) {
     console.warn('⚠️ Supabase nie jest skonfigurowany - sprawdź zmienne środowiskowe');
 }
 
-// Udostępnienie supabase dla routerów
+// Udostępnienie supabase i SSE dla routerów
 app.locals.supabase = supabase;
+app.locals.sse = sseModule;
 
 // ============================================
 // MIDDLEWARE
@@ -122,12 +128,17 @@ app.get('/api/events', requireRole(['ADMIN', 'SALES_REP', 'SALES_DEPT', 'WAREHOU
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/production/kpi', productionKpiRoutes);
-app.use('/api/production', productionStatsRoutes);
+app.use('/api/production/stats', productionStatsRoutes);
 app.use('/api/production', productionPathsRoutes);
-app.use('/api/production', productionOperationsRoutes);
-app.use('/api/production', productionResourcesRoutes);
+app.use('/api/production/operations', productionOperationsRoutes);
+app.use('/api/production/resources', productionResourcesRoutes);
 app.use('/api/production', productionRoutes);
 app.use('/api/production', productionExtendedRoutes);
+app.use('/api/production/machines', productionMachinesRoutes);
+app.use('/api/production/materials', productionMaterialsRoutes);
+app.use('/api/production/operators', productionOperatorsRoutes);
+app.use('/api/production/dashboard', productionDashboardRoutes);
+app.use('/api/production', productionDashboardRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/clients', clientsRoutes);
 app.use('/api/favorites', favoritesRoutes);
@@ -265,6 +276,11 @@ app.get('/production', requireRole(['PRODUCTION', 'PRODUCTION_MANAGER', 'OPERATO
 // Panel przypisań maszyn
 app.get('/machine-assignments.html', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), (req, res) => {
     res.sendFile(path.join(__dirname, '../machine-assignments.html'));
+});
+
+// Dashboard Executive - Mission Control
+app.get('/dashboard-executive.html', requireRole(['ADMIN', 'PRODUCTION_MANAGER']), (req, res) => {
+    res.sendFile(path.join(__dirname, '../dashboard-executive.html'));
 });
 
 // Kiosk - logowanie PIN

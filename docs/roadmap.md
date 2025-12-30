@@ -55,6 +55,23 @@
 
 Brak aktywnych prac – wszystkie zaplanowane funkcje zaimplementowane.
 
+#### ✅ Ukończone (2025-12-24)
+- [x] **Domknięcie refaktoryzacji backendu (serwisy + routing)**
+  - `backend/app.js` stał się jedynym miejscem konfiguracji Expressa oraz montowania routerów domenowych (`/api/orders`, `/api/production/*`, `/api/admin`, itd.).
+  - `backend/server.js` pełni wyłącznie rolę bootstrapu (start serwera + graceful shutdown) i eksportuje `app` do testów/innych runnerów.
+  - `backend/services/orderService.js` agreguje logikę biznesową zamówień (walidacje, generowanie numerów, uprawnienia), co pozwala na ponowne użycie w routerach i testach jednostkowych.
+  - `backend/services/pdfService.js` opakowuje generatory PDF i audyt druku, dzięki czemu routery `/api/production/.../print` oraz `/api/orders/:id/packing-list/print` korzystają z jednego entrypointu.
+  - `/api/production` zostało rozbite na dedykowane routery (`routes/production/*.js`) montowane w `app.js`, co upraszcza testowanie i dalszą rozbudowę modułu MES.
+  - **Zaimplementowane (Real-time SSE dla produkcji) – 2025-12-24:**
+    - ✅ moduł emisji zdarzeń produkcyjnych (`backend/modules/sse/productionEvents.js`) z typami zdarzeń dla operacji, work orders i KPI;
+    - ✅ emisja zdarzeń SSE w endpointach akcji operatora (`/api/production/operations/:id/{start|pause|complete}`);
+    - ✅ automatyczna aktualizacja statusu work order po zakończeniu operacji z emisją zdarzenia SSE (`updateWorkOrderStatusFromOperations` w `productionService.js`);
+    - ✅ emisja zdarzeń KPI po obliczeniu statystyk (`/api/production/kpi/overview`);
+    - ✅ subskrypcja SSE w panelu operatora (`scripts/production.js`) z obsługą zdarzeń produkcyjnych;
+    - ✅ inteligentna aktualizacja UI bez pełnego fetchu – optymistyczne update'y lokalnego stanu (`handleProductionEvent`, `handleOperationEvent`, `handleWorkOrderEvent`);
+    - ✅ automatyczny fallback do pollingu przy rozłączeniu SSE (reconnect po 3s);
+    - ✅ testy jednostkowe modułu emisji zdarzeń (`backend/modules/sse/productionEvents.test.js`);
+
 #### ✅ Ukończone (2025-12-18)
 - [x] **Multiroom dla operatorów produkcji** – przypisywanie użytkowników do wielu pokoi produkcyjnych
   - Migracja SQL: tabela `UserProductionRoom` (userId, roomId, isPrimary, notes, assignedBy)
@@ -139,9 +156,20 @@ Poniższa lista to zmiany obecne w workspace (status `git diff` / pliki nieśled
 ### 📋 Planowane (niski priorytet)
 
 #### Testy automatyczne
-- [ ] Testy jednostkowe (Vitest)
+- [x] Testy jednostkowe (Vitest) ✅ 2025-12-19
+- [x] CI/CD dla automatycznego uruchamiania (GitHub Actions) ✅ 2025-12-19
 - [ ] Testy E2E (Playwright)
-- [ ] CI/CD dla automatycznego uruchamiania
+
+#### Refaktoryzacja backendu
+- [x] **Modularyzacja server.js** ✅ 2025-12-19
+  - [x] Moduł konfiguracji (`config/env.js`)
+  - [x] Moduł autentykacji (`modules/auth/`)
+  - [x] Moduł SSE (`modules/sse/`)
+  - [x] Serwis produkcji (`services/productionService.js`)
+  - [x] Serwis zamówień (`services/orderService.js`) ✅ 2025-12-24
+  - [x] Serwis PDF (`services/pdfService.js`) ✅ 2025-12-24
+  - [x] Routing (`routes/auth.js`, `routes/orders.js`, `routes/production*.js`) ✅ 2025-12-24
+  - [x] Główna aplikacja (`app.js`) ✅ 2025-12-24
 
 #### Optymalizacje
 - [ ] Cache'owanie listy miejscowości
@@ -178,7 +206,8 @@ Poniższa lista to zmiany obecne w workspace (status `git diff` / pliki nieśled
   - [x] **Dashboard KPI w UI** (`production.html`) – kafle, tabele pokojów i top produktów ✅ 2025-12-10
   - [x] Weryfikacja i dopięcie reguł uprawnień dla produkcji (role: `PRODUCTION`, `OPERATOR`, `ADMIN`, `PRODUCTION_MANAGER`) ✅ 2025-12-09
   - [x] Testy jednostkowe: `backend/production.test.js`, `backend/kpi.test.js` ✅ 2025-12-10
-  - [ ] (po MVP) WebSocket / real‑time updates dla listy zleceń i statystyk
+  - [x] Real-time updates (SSE) dla listy zleceń i statystyk ✅ 2025-12-24
+  - [ ] (opcjonalnie) Migracja z SSE na pełny WebSocket jeśli zajdzie potrzeba interakcji dwukierunkowej
   - [ ] Podstawowy routing w panelu admina
 
 - [ ] **Faza 2: System druku zleceń produkcyjnych**

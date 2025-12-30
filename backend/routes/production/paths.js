@@ -22,30 +22,44 @@ router.get('/paths', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (
     }
 
     try {
+        // Najpierw sprawdź czy tabela istnieje
         const { data: paths, error } = await supabase
             .from('ProductionPath')
             .select('*')
-            .eq('isActive', true)
             .order('name');
 
         if (error) {
             console.error('[GET /api/production/paths] Error:', error);
+            // Jeśli tabela nie istnieje, zwróć pustą listę zamiast błędu
+            if (error.code === 'PGRST116' || error.message.includes('does not exist')) {
+                console.warn('[GET /api/production/paths] Tabela ProductionPath nie istnieje - zwracam pustą listę');
+                return res.json({
+                    status: 'success',
+                    data: [],
+                    warning: 'Tabela ProductionPath nie została jeszcze utworzona'
+                });
+            }
             return res.status(500).json({ 
                 status: 'error', 
-                message: 'Błąd pobierania ścieżek produkcyjnych' 
+                message: 'Błąd pobierania ścieżek produkcyjnych',
+                details: error.message
             });
         }
 
+        // Filtruj tylko aktywne (jeśli kolumna isActive istnieje)
+        const activePaths = (paths || []).filter(p => p.isActive !== false);
+
         res.json({
             status: 'success',
-            data: paths || []
+            data: activePaths
         });
 
     } catch (error) {
         console.error('[GET /api/production/paths] Exception:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Błąd serwera'
+            message: 'Błąd serwera',
+            details: error.message
         });
     }
 });

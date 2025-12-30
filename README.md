@@ -18,7 +18,59 @@ Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
 - **Opis techniczny** – sekcje `5.5` i `6.6` w `docs/SPEC.md`.
 - **Instrukcja dla admina** – sekcja `8.4. Mapowanie produktów (galeria)` w `docs/USER_MANUAL.md`.
 
-### Moduł produkcji (MES)
+### 📊 Moduł Zarządzania Produkcją (Nowość!)
+
+System został rozszerzony o kompleksowy moduł zarządzania produkcją, który zapewnia:
+
+### ✨ Kluczowe funkcje:
+- **Dashboard szefa** - widok ryzyk, KPI i akcji do podjęcia w czasie rzeczywistym
+- **Monitorowanie maszyn** - śledzenie stanów (ok/ostrzeżenie/awaria/konserwacja) z historią zmian
+- **Zarządzanie materiałami** - stany magazynowe z automatycznym wykrywaniem braków i alertami
+- **Przenoszenie operatorów** - inteligentne sugestie transferu na podstawie umiejętności i zatorów
+- **Analiza zatorów** - identyfikacja wąskich gardeł i rekomendacje optymalizacji
+
+### 🔗 Nowe endpointy API:
+```
+/api/production/machines/status          - stany maszyn
+/api/production/machines/:id/status       - aktualizacja statusu
+/api/production/materials/stock          - stany magazynowe
+/api/production/materials/shortages      - braki materiałowe
+/api/production/operators/skills         - umiejętności operatorów
+/api/production/operators/assignments    - przypisania operatorów
+/api/production/operators/transfer       - przenoszenie operatorów
+/api/production/operators/suggestions    - sugestie transferu
+/api/production/dashboard/executive      - dashboard szefa
+/api/production/risks                    - szczegóły ryzyk
+/api/production/bottlenecks              - analiza zatorów
+```
+
+### 📡 Zdarzenia SSE (real-time):
+- `machine_status_changed` - zmiana statusu maszyny
+- `material_shortage` - wykrycie braku materiału
+- `operator_transferred` - przeniesienie operatora
+- `risk_level_changed` - zmiana poziomu ryzyka zamówienia
+
+### 🗄️ Nowe tabele bazy danych:
+- `MachineStatus` - historia stanów maszyn
+- `OperatorSkill` - umiejętności operatorów
+- `OperatorAssignment` - przypisania operatorów
+- `MaterialStock` - stany magazynowe materiałów
+- `ProductMaterial` - powiązania produktów z materiałami
+- `MaterialStockLog` - historia zmian stanów
+
+### 🧪 Testy:
+Kompletny zestaw testów jednostkowych w `backend/tests/production.test.js` pokrywający:
+- Walidację umiejętności przy transferach
+- Wykrywanie braków materiałowych
+- Obsługę awarii maszyn
+- Kalkulację ryzyk na dashboardzie
+- Identyfikację zatorów produkcyjnych
+
+### 📋 Role i uprawnienia:
+- **ADMIN** - pełny dostęp
+- **PRODUCTION_MANAGER** - zarządzanie operatorami, przegląd ryzyk
+- **OPERATOR** - zgłaszanie statusów maszyn
+- **WAREHOUSE** - zarządzanie stanami magazynowymi
 
 - **Model danych i API** – `docs/SPEC_PRODUCTION_PANEL.md` (rozdziały 2–3).
 - **Stan wdrożenia – opis szczegółowy** – podrozdział `2.3.1 Stan wdrożenia (2025-12-06)` w `docs/SPEC_PRODUCTION_PANEL.md`.
@@ -61,9 +113,19 @@ Aplikacja B2B do obsługi sprzedaży pamiątek i gadżetów.
 - ✅ przycisk **„Zlecenia produkcyjne (PDF)”** w szczegółach zamówienia korzysta z nowego endpointu i otwiera jeden plik zamiast wielu wyskakujących okienek (brak problemu z blokadą popupów);
 - ✅ na każdej stronie PDF drukowane są: uwagi do pozycji zamówienia (w tabeli pozycji) oraz wspólna uwaga do całego zamówienia (sekcja „Uwagi do zlecenia”).
 
+**Zaimplementowane (Real-time SSE) – 2025-12-24:**
+- ✅ moduł emisji zdarzeń produkcyjnych (`backend/modules/sse/productionEvents.js`) z typami zdarzeń dla operacji, work orders i KPI;
+- ✅ emisja zdarzeń SSE w endpointach akcji operatora (`/api/production/operations/:id/{start|pause|complete}`);
+- ✅ automatyczna aktualizacja statusu work order po zakończeniu operacji z emisją zdarzenia SSE;
+- ✅ emisja zdarzeń KPI po obliczeniu statystyk (`/api/production/kpi/overview`);
+- ✅ subskrypcja SSE w panelu operatora (`scripts/production.js`) z obsługą zdarzeń produkcyjnych;
+- ✅ inteligentna aktualizacja UI bez pełnego fetchu – optymistyczne update'y lokalnego stanu;
+- ✅ automatyczny fallback do pollingu przy rozłączeniu SSE (reconnect po 3s);
+- ✅ testy jednostkowe modułu emisji zdarzeń (`backend/modules/sse/productionEvents.test.js`).
+
 **Co jest jeszcze do zrobienia (po MVP):**
-- rozważyć dodanie aktualizacji w czasie rzeczywistym (WebSocket) dla listy zleceń i statystyk;
-- dodać przyciski druku dla operatora (ponowny druk zlecenia).
+- dodać przyciski ponownego druku dla operatora (print work order z poziomu panelu);
+- rozważyć migrację z SSE na pełny WebSocket jeśli zajdzie potrzeba interakcji dwukierunkowej.
 
 ---
 

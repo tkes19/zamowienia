@@ -7,7 +7,7 @@
     // Fix: Przycisk edycji użytkownika - dodatkowy listener z capture phase
     document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
-            var usersTable = document.getElementById('users-table-body');
+            var usersTable = document.getElementById('users-table');
             if (usersTable) {
                 // Dodaj listener z capture phase dla pewności
                 usersTable.addEventListener('click', function(e) {

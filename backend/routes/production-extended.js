@@ -8,7 +8,7 @@
  * - POST /api/production/workcenters/:workCenterId/path-mappings - dodaj mapowanie
  * - DELETE /api/production/workcenters/:workCenterId/path-mappings/:pathCode - usuń mapowanie
  * - GET /api/production/orders/:id - szczegóły zamówienia produkcyjnego
- * - POST /api/production/orders/fix-orphaned - napraw osierocone zlecenia
+ * - POST /api/production/orders/fix-orphaned
  */
 
 const express = require('express');
@@ -16,6 +16,8 @@ const { requireRole } = require('../modules/auth');
 const { broadcastEvent } = require('../modules/sse');
 
 const router = express.Router();
+
+console.log(' production-extended.js loaded');
 
 const WORKCENTER_TYPE_TO_PATH_CODES = {
     laser_co2: ['3'],
@@ -47,6 +49,60 @@ router.use((req, res, next) => {
 
 
 // ============================================
+// GET /api/production/rooms - lista pokojów
+// ============================================
+router.get('/rooms', requireRole(['ADMIN', 'PRODUCTION', 'PRODUCTION_MANAGER', 'OPERATOR', 'SALES_DEPT']), async (req, res) => {
+    const supabase = req.app.locals.supabase;
+    
+    if (!supabase) {
+        return res.status(500).json({ 
+            status: 'error', 
+            message: 'Supabase nie jest skonfigurowany' 
+        });
+    }
+
+    try {
+        const { data: rooms, error } = await supabase
+            .from('ProductionRoom')
+            .select(`
+                id, 
+                name, 
+                code, 
+                "isActive",
+                roomManager:User!ProductionRoom_roomManagerUserId_fkey(id, name, email),
+                workCenters:WorkCenter(id, name, code),
+                operators:UserProductionRoom!roomId(
+                    id,
+                    isPrimary,
+                    user:User!userId(id, name, email)
+                )
+            `)
+            .eq('isActive', true)
+            .order('name');
+
+        if (error) {
+            console.error('[GET /api/production/rooms] Error:', error);
+            return res.status(500).json({
+                status: 'error',
+                message: 'Błąd pobierania pokojów'
+            });
+        }
+
+        res.json({
+            status: 'success',
+            data: rooms || []
+        });
+
+    } catch (error) {
+        console.error('[GET /api/production/rooms] Exception:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Błąd serwera'
+        });
+    }
+});
+
+// ============================================
 // GET /api/production/rooms/:id - szczegóły pokoju
 // ============================================
 router.get('/rooms/:id', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
@@ -60,9 +116,15 @@ router.get('/rooms/:id', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), asy
             .select(`
                 *,
                 supervisor:User!ProductionRoom_supervisorId_fkey(id, name, email),
+                roomManager:User!ProductionRoom_roomManagerUserId_fkey(id, name, email),
                 workCenters:WorkCenter(
                     id, name, code, type, description, isActive,
                     workStations:WorkStation(id, name, code, type, status, manufacturer, model)
+                ),
+                operators:UserProductionRoom!roomId(
+                    id,
+                    isPrimary,
+                    user:User!userId(id, name, email)
                 )
             `)
             .eq('id', id)
@@ -88,17 +150,24 @@ router.post('/rooms', requireRole(['ADMIN']), async (req, res) => {
     const { name, code, area, description, supervisorId, roomManagerUserId } = req.body;
 
     try {
+        // Generate code from name if not provided
+        const roomCode = code || name
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+            .substring(0, 10);
+
         const { data, error } = await supabase
             .from('ProductionRoom')
             .insert({
                 name,
-                code,
+                code: roomCode,
                 area,
                 description,
                 supervisorId,
                 roomManagerUserId,
-                isActive: true,
-                createdAt: new Date().toISOString()
+                isActive: true
             })
             .select()
             .single();
@@ -140,8 +209,7 @@ router.patch('/rooms/:id', requireRole(['ADMIN']), async (req, res) => {
                 area,
                 description,
                 supervisorId,
-                roomManagerUserId,
-                updatedAt: new Date().toISOString()
+                roomManagerUserId
             })
             .eq('id', id)
             .select()
@@ -410,7 +478,7 @@ router.get('/work-centers', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), 
             .from('WorkCenter')
             .select(`
                 *,
-                room:ProductionRoom(id, name, code),
+                room:ProductionRoom!roomId(id, name, code),
                 type:WorkCenterType(id, name, code),
                 workStations:WorkStation(id, name, code, status)
             `)
@@ -436,15 +504,47 @@ router.get('/work-centers', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), 
 // ============================================
 router.post('/work-centers', requireRole(['ADMIN']), async (req, res) => {
     const supabase = req.app.locals.supabase;
-    const { name, code, type, roomId, description, capacity } = req.body;
+    const { name, workCenterTypeId, roomId, description, capacity } = req.body;
 
     try {
+        if (!name || !workCenterTypeId) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Nazwa i typ gniazda są wymagane'
+            });
+        }
+
+        // Generate code from name if not provided
+        const workCenterCode = name
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+            .substring(0, 10);
+
+        // If workCenterTypeId is provided, fetch the type code
+        const { data: workCenterType, error: typeError } = await supabase
+                .from('WorkCenterType')
+                .select('code')
+                .eq('id', workCenterTypeId)
+                .eq('isActive', true)
+                .single();
+            
+        if (typeError || !workCenterType?.code) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Nieprawidłowy typ gniazda'
+            });
+        }
+
+        const typeCode = workCenterType.code;
+
         const { data, error } = await supabase
             .from('WorkCenter')
             .insert({
                 name,
-                code,
-                type,
+                code: workCenterCode,
+                type: typeCode,
                 roomId,
                 description,
                 capacity,
@@ -463,6 +563,76 @@ router.post('/work-centers', requireRole(['ADMIN']), async (req, res) => {
         });
     } catch (error) {
         console.error('[POST /api/production/work-centers] Wyjątek:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Błąd serwera',
+            details: error?.message || String(error)
+        });
+    }
+});
+
+// ============================================
+// PATCH /api/production/work-centers/:id - aktualizacja centrum
+// ============================================
+router.patch('/work-centers/:id', requireRole(['ADMIN']), async (req, res) => {
+    const supabase = req.app.locals.supabase;
+    const { id } = req.params;
+    const { name, workCenterTypeId, roomId, description, capacity } = req.body;
+
+    try {
+        // Prepare update data
+        const updateData = {
+            name,
+            roomId,
+            description,
+            capacity,
+            updatedAt: new Date().toISOString()
+        };
+
+        // Generate code from name if provided
+        if (name) {
+            updateData.code = name
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, '_')
+                .replace(/_+/g, '_')
+                .replace(/^_|_$/g, '')
+                .substring(0, 10);
+        }
+
+        // If workCenterTypeId is provided, fetch the type code
+        if (workCenterTypeId) {
+            const { data: workCenterType, error: typeError } = await supabase
+                .from('WorkCenterType')
+                .select('code')
+                .eq('id', workCenterTypeId)
+                .eq('isActive', true)
+                .single();
+            
+            if (typeError || !workCenterType) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Nieprawidłowy typ gniazda'
+                });
+            }
+            updateData.type = workCenterType.code;
+        }
+
+        const { data, error } = await supabase
+            .from('WorkCenter')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        return res.json({
+            status: 'success',
+            message: 'Centrum robocze zostało zaktualizowane',
+            data
+        });
+    } catch (error) {
+        console.error('[PATCH /api/production/work-centers/:id] Wyjątek:', error);
         return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
     }
 });
@@ -479,8 +649,12 @@ router.get('/work-stations', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']),
             .from('WorkStation')
             .select(`
                 *,
-                workCenter:WorkCenter(id, name, code),
-                room:ProductionRoom(id, name, code)
+                workCenter:WorkCenter!workCenterId(
+                    id, 
+                    name, 
+                    code,
+                    roomId
+                )
             `)
             .eq('isActive', true);
 
@@ -490,12 +664,23 @@ router.get('/work-stations', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']),
 
         const { data, error } = await query.order('name');
 
-        if (error) throw error;
+        if (error) {
+            console.error('[GET /api/production/work-stations] Supabase error:', error);
+            return res.status(500).json({
+                status: 'error',
+                message: 'Błąd serwera',
+                details: error.message
+            });
+        }
 
         return res.json({ status: 'success', data: data || [] });
     } catch (error) {
         console.error('[GET /api/production/work-stations] Wyjątek:', error);
-        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+        return res.status(500).json({
+            status: 'error',
+            message: 'Błąd serwera',
+            details: error?.message || String(error)
+        });
     }
 });
 
@@ -504,17 +689,28 @@ router.get('/work-stations', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']),
 // ============================================
 router.post('/work-stations', requireRole(['ADMIN']), async (req, res) => {
     const supabase = req.app.locals.supabase;
-    const { name, code, type, workCenterId, roomId, manufacturer, model, description } = req.body;
+    const { name, type, workCenterId, manufacturer, model, description } = req.body;
 
     try {
+        if (!name || !type) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa i typ maszyny są wymagane' });
+        }
+
+        // Kod maszyny nie jest wysyłany z frontu - generujemy z nazwy
+        const workStationCode = String(name)
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+            .substring(0, 20);
+
         const { data, error } = await supabase
             .from('WorkStation')
             .insert({
                 name,
-                code,
+                code: workStationCode,
                 type,
                 workCenterId,
-                roomId,
                 manufacturer,
                 model,
                 description,
@@ -525,7 +721,10 @@ router.post('/work-stations', requireRole(['ADMIN']), async (req, res) => {
             .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+            console.error('[POST /api/production/work-stations] Supabase error:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+        }
 
         return res.json({
             status: 'success',
@@ -534,7 +733,61 @@ router.post('/work-stations', requireRole(['ADMIN']), async (req, res) => {
         });
     } catch (error) {
         console.error('[POST /api/production/work-stations] Wyjątek:', error);
-        return res.status(500).json({ status: 'error', message: 'Błąd serwera' });
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error?.message || String(error) });
+    }
+});
+
+// ============================================
+// PATCH /api/production/work-stations/:id - aktualizacja maszyny
+// ============================================
+router.patch('/work-stations/:id', requireRole(['ADMIN']), async (req, res) => {
+    const supabase = req.app.locals.supabase;
+    const { id } = req.params;
+    const { name, type, workCenterId, manufacturer, model, description } = req.body;
+
+    try {
+        if (!name || !type) {
+            return res.status(400).json({ status: 'error', message: 'Nazwa i typ maszyny są wymagane' });
+        }
+
+        const workStationCode = String(name)
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+            .substring(0, 20);
+
+        const updateData = {
+            name,
+            code: workStationCode,
+            type,
+            workCenterId: workCenterId || null,
+            manufacturer: manufacturer || null,
+            model: model || null,
+            description: description || null,
+            updatedAt: new Date().toISOString()
+        };
+
+        const { data, error } = await supabase
+            .from('WorkStation')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[PATCH /api/production/work-stations/:id] Supabase error:', error);
+            return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error.message });
+        }
+
+        return res.json({
+            status: 'success',
+            message: 'Maszyna została zaktualizowana',
+            data
+        });
+    } catch (error) {
+        console.error('[PATCH /api/production/work-stations/:id] Wyjątek:', error);
+        return res.status(500).json({ status: 'error', message: 'Błąd serwera', details: error?.message || String(error) });
     }
 });
 
@@ -578,10 +831,12 @@ router.patch('/work-stations/:id/status', requireRole(['ADMIN', 'PRODUCTION']), 
 });
 
 // ============================================
-// GET /api/production/stats - statystyki produkcyjne
+// GET /api/production/stats/rooms - statystyki pokoi/gniazd/maszyn
+// (unikamy kolizji z routes/production/stats.js)
 // ============================================
-router.get('/stats', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (req, res) => {
+router.get('/stats/rooms', requireRole(['ADMIN', 'PRODUCTION', 'PRODUCTION_MANAGER', 'OPERATOR', 'SALES_DEPT']), async (req, res) => {
     const supabase = req.app.locals.supabase;
+    console.log('[GET /api/production/stats] Request received');
 
     try {
         const { dateFrom, dateTo } = req.query;
@@ -589,10 +844,10 @@ router.get('/stats', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (
         // Statystyki zamówień produkcyjnych
         let ordersQuery = supabase
             .from('ProductionOrder')
-            .select('status, quantity, completedquantity, createdAt, completedAt');
+            .select('status, quantity, completedquantity, createdat, actualenddate');
 
-        if (dateFrom) ordersQuery = ordersQuery.gte('createdAt', dateFrom);
-        if (dateTo) ordersQuery = ordersQuery.lte('createdAt', dateTo);
+        if (dateFrom) ordersQuery = ordersQuery.gte('createdat', dateFrom);
+        if (dateTo) ordersQuery = ordersQuery.lte('createdat', dateTo);
 
         const { data: orders, error: ordersError } = await ordersQuery;
         if (ordersError) throw ordersError;
@@ -600,11 +855,36 @@ router.get('/stats', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (
         // Statystyki operacji
         const { data: operations, error: opsError } = await supabase
             .from('ProductionOperation')
-            .select('status, assignedUserId, startedAt, completedAt');
+            .select('status, operatorid, starttime, endtime');
 
         if (opsError) throw opsError;
 
+        // Pobierz statystyki podstawowe
+        const { data: rooms, error: roomsError } = await supabase
+            .from('ProductionRoom')
+            .select('id')
+            .eq('isActive', true);
+        
+        const { data: workCenters, error: centersError } = await supabase
+            .from('WorkCenter')
+            .select('id')
+            .eq('isActive', true);
+        
+        const { data: workStations, error: stationsError } = await supabase
+            .from('WorkStation')
+            .select('id, status')
+            .eq('isActive', true);
+
         const stats = {
+            rooms: rooms?.length || 0,
+            workCenters: workCenters?.length || 0,
+            workStations: workStations?.length || 0,
+            workStationsByStatus: {
+                available: workStations?.filter(ws => ws.status === 'available').length || 0,
+                in_use: workStations?.filter(ws => ws.status === 'in_use').length || 0,
+                maintenance: workStations?.filter(ws => ws.status === 'maintenance').length || 0,
+                breakdown: workStations?.filter(ws => ws.status === 'breakdown').length || 0
+            },
             totalOrders: orders?.length || 0,
             completedOrders: orders?.filter(o => o.status === 'COMPLETED').length || 0,
             inProgressOrders: orders?.filter(o => o.status === 'IN_PROGRESS').length || 0,
@@ -613,6 +893,7 @@ router.get('/stats', requireRole(['ADMIN', 'PRODUCTION', 'SALES_DEPT']), async (
             completedOperations: operations?.filter(o => o.status === 'completed').length || 0
         };
 
+        console.log('[GET /api/production/stats] Returning stats:', stats);
         return res.json({ status: 'success', data: stats });
     } catch (error) {
         console.error('[GET /api/production/stats] Wyjątek:', error);
